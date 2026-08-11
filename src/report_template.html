@@ -1,0 +1,324 @@
+<meta charset="utf-8">
+<title>__TITULO__ — Análisis de vuelo</title>
+<style>
+:root{
+  --bg:#0e0f13; --surface:#16181f; --surface-2:#1c1f28; --tile:#20232d;
+  --ink:#f4f5f7; --ink-2:#b9bdc7; --muted:#7e8391; --line:#2a2e39; --border:rgba(255,255,255,.09);
+  --blue:#4c95ff; --aqua:#2fc39a; --orange:#ff8a4c; --yellow:#f5b83d; --violet:#a98bff; --red:#ff6b6b; --green:#37cf6b;
+  --grid:#242832; --axis:#39404d;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.6;font-size:15.5px;
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:1000px;margin:0 auto;padding:0 22px}
+a{color:var(--blue);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* ---------- HERO ---------- */
+.hero{position:relative;min-height:clamp(560px,80vh,760px);display:flex;flex-direction:column;justify-content:flex-end;
+  background:linear-gradient(180deg,rgba(14,15,19,.15) 0%,rgba(14,15,19,.35) 45%,rgba(14,15,19,.92) 100%),
+    url("__HERO__") center 38%/cover no-repeat;
+  padding:0 0 46px;overflow:hidden}
+.hero-inner{max-width:1000px;margin:0 auto;padding:0 22px;width:100%}
+.kicker{display:inline-flex;align-items:center;gap:9px;text-transform:uppercase;letter-spacing:.22em;
+  font-size:11.5px;font-weight:700;color:#fff;background:rgba(255,255,255,.13);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+  padding:7px 13px;border-radius:100px;border:1px solid rgba(255,255,255,.18)}
+.hero h1{font-size:clamp(38px,7vw,74px);line-height:1.02;font-weight:850;margin:20px 0 10px;letter-spacing:-.02em;
+  text-shadow:0 2px 30px rgba(0,0,0,.5)}
+.hero .lede{font-size:clamp(16px,2vw,20px);color:#eceef2;max-width:620px;margin:0 0 26px;
+  text-shadow:0 1px 14px rgba(0,0,0,.5)}
+.hero-stats{display:flex;flex-wrap:wrap;gap:14px}
+.hs{background:rgba(22,24,31,.62);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border:1px solid var(--border);
+  border-radius:15px;padding:13px 18px;min-width:120px}
+.hs .v{font-size:26px;font-weight:820;letter-spacing:-.02em;line-height:1}
+.hs .v small{font-size:14px;font-weight:600;color:var(--ink-2)}
+.hs .l{font-size:11.5px;color:var(--muted);margin-top:5px;text-transform:uppercase;letter-spacing:.05em}
+.hero-meta{margin-top:24px;font-size:13px;color:#d4d7de;display:flex;gap:20px;flex-wrap:wrap}
+.hero-meta b{color:#fff;font-weight:700}
+
+/* ---------- SECTIONS ---------- */
+section{padding:60px 0}
+.eyebrow{text-transform:uppercase;letter-spacing:.16em;font-size:12px;font-weight:700;color:var(--blue)}
+h2{font-size:clamp(24px,3.4vw,34px);font-weight:820;letter-spacing:-.02em;margin:8px 0 6px;line-height:1.1}
+.sec-sub{color:var(--ink-2);max-width:680px;margin:0 0 26px;font-size:16px}
+h3{font-size:15px;color:var(--ink-2);margin:0 0 10px;font-weight:650}
+
+/* stat grid */
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.tile{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px}
+.tile .v{font-size:30px;font-weight:820;letter-spacing:-.02em;line-height:1}
+.tile .v small{font-size:15px;font-weight:600;color:var(--ink-2)}
+.tile .l{font-size:12px;color:var(--muted);margin-top:9px;text-transform:uppercase;letter-spacing:.05em}
+.tile .k{font-size:12.5px;color:var(--ink-2);margin-top:3px}
+@media(max-width:760px){.tiles{grid-template-columns:repeat(2,1fr)}}
+
+/* momentos gallery */
+.mos{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+@media(max-width:860px){.mos{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:480px){.mos{grid-template-columns:1fr}}
+.mo{margin:0;background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;
+  transition:transform .16s ease,box-shadow .16s ease}
+.mo:hover{transform:translateY(-4px);box-shadow:0 14px 40px rgba(0,0,0,.45)}
+.mo-img{position:relative;aspect-ratio:16/9;overflow:hidden;background:#000}
+.mo-img img{width:100%;height:100%;object-fit:cover;display:block}
+.mo-t{position:absolute;left:9px;bottom:9px;background:rgba(0,0,0,.6);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);
+  color:#fff;font-size:12px;font-weight:700;padding:3px 9px;border-radius:100px;font-variant-numeric:tabular-nums}
+.mo figcaption{padding:12px 14px 14px}
+.mo-label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.mo-metric{font-size:19px;font-weight:800;margin-top:3px;letter-spacing:-.01em}
+.mo-sub{font-size:12px;color:var(--ink-2);margin-top:1px}
+
+/* cards / grids */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:22px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media(max-width:760px){.grid2{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}
+td.n{text-align:right;font-variant-numeric:tabular-nums}
+tbody tr:last-child td{border-bottom:none}
+code{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:1px 7px;
+  font-size:12.5px;font-family:ui-monospace,Menlo,monospace}
+
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-2);margin-bottom:6px}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.sw{width:13px;height:3px;border-radius:2px;display:inline-block}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+.chartbox{position:relative}
+svg{display:block;width:100%;height:auto;overflow:visible}
+.tip{position:absolute;pointer-events:none;background:#fff;color:#14151a;font-size:12px;padding:7px 10px;
+  border-radius:9px;white-space:nowrap;opacity:0;transform:translate(-50%,-124%);transition:opacity .08s;
+  z-index:6;font-variant-numeric:tabular-nums;box-shadow:0 6px 20px rgba(0,0,0,.4);font-weight:600}
+.axlbl{font-size:11px;fill:var(--muted)}
+
+.callout{border-radius:14px;padding:16px 18px;font-size:14px;border:1px solid;margin-top:14px}
+.callout b{display:block;margin-bottom:3px}
+.warn{background:rgba(245,184,61,.10);border-color:rgba(245,184,61,.35)}
+.good{background:rgba(55,207,107,.10);border-color:rgba(55,207,107,.32)}
+
+.chips span{display:inline-block;background:var(--surface-2);border:1px solid var(--border);border-radius:100px;
+  padding:5px 13px;font-size:13px;margin:3px 5px 3px 0;font-variant-numeric:tabular-nums}
+
+.foot{padding:38px 0 60px;border-top:1px solid var(--line);color:var(--muted);font-size:12.5px;text-align:center}
+.divider{height:1px;background:var(--line);margin:0}
+
+/* tira de luz */
+.lstrip{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media(max-width:560px){.lstrip{grid-template-columns:1fr}}
+.lstrip figure{margin:0}
+.lstrip img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:10px;display:block}
+.lstrip figcaption{font-size:12.5px;color:var(--ink-2);margin-top:7px}
+.lstrip figcaption b{color:var(--ink);font-variant-numeric:tabular-nums}
+
+/* marcadores del mapa con foto (CSS puro: :hover en escritorio, :focus al tocar en movil) */
+.kpoverlay{position:absolute;inset:0;pointer-events:none}
+.kpbtn{position:absolute;width:42px;height:42px;margin:-21px 0 0 -21px;padding:0;border:none;background:transparent;
+  cursor:pointer;pointer-events:auto;-webkit-tap-highlight-color:transparent}
+.kpbtn:focus{outline:none}
+.kptip{position:absolute;left:50%;bottom:calc(100% - 12px);transform:translateX(-50%);width:184px;
+  background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;
+  box-shadow:0 12px 34px rgba(0,0,0,.5);opacity:0;visibility:hidden;transition:opacity .12s;pointer-events:none;z-index:9}
+.kptip.kptip-left{left:auto;right:calc(50% - 21px);transform:none}
+.kptip.kptip-right{left:calc(50% - 21px);transform:none}
+.kptip img{width:100%;display:block;aspect-ratio:16/9;object-fit:cover}
+.kptip-b{display:block;padding:8px 11px}
+.kptip-l{display:block;font-size:12.5px;font-weight:700;color:var(--ink)}
+.kptip-m{display:block;font-size:11.5px;color:var(--ink-2);margin-top:1px}
+.kpbtn:hover .kptip,.kpbtn:focus .kptip,.kpbtn:focus-within .kptip{opacity:1;visibility:visible}
+
+/* interaccion de graficas con CSS puro (columnas): linea vertical + valor al tocar/pasar el raton */
+.scrub{position:absolute;pointer-events:none;z-index:4}
+.scol{position:absolute;top:0;bottom:0;padding:0;margin:0;border:none;background:transparent;
+  cursor:crosshair;pointer-events:auto;-webkit-tap-highlight-color:transparent}
+.scol:focus{outline:none}
+.scross{position:absolute;left:50%;top:0;bottom:0;width:1.5px;background:var(--muted);opacity:0;
+  transform:translateX(-50%);transition:opacity .08s}
+.stip{position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);
+  background:#fff;color:#14161c;font-size:12px;font-weight:600;line-height:1.5;padding:7px 10px;border-radius:9px;
+  white-space:nowrap;opacity:0;visibility:hidden;transition:opacity .08s;pointer-events:none;z-index:7;
+  box-shadow:0 6px 20px rgba(0,0,0,.4);font-variant-numeric:tabular-nums}
+.stip b{font-weight:800}
+.stip-left{left:auto;right:0;transform:none}
+.stip-right{left:0;transform:none}
+.scol:hover .scross,.scol:focus .scross{opacity:.9}
+.scol:hover .stip,.scol:focus .stip{opacity:1;visibility:visible}
+
+/* toggle de tema */
+.theme-btn{position:fixed;top:16px;right:16px;z-index:20;background:rgba(22,24,31,.7);
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border:1px solid var(--border);color:var(--ink);
+  width:42px;height:42px;border-radius:100px;font-size:18px;cursor:pointer;display:grid;place-items:center;
+  transition:background .15s}
+.theme-btn:hover{background:rgba(40,44,56,.85)}
+
+/* ---- TEMA CLARO ---- */
+:root[data-theme="light"]{
+  --bg:#f4f5f7; --surface:#ffffff; --surface-2:#eef0f4; --tile:#f7f8fa;
+  --ink:#14161c; --ink-2:#4a4f5a; --muted:#8a909c; --line:#e4e7ec; --border:rgba(20,22,28,.10);
+  --blue:#1f6fe0; --aqua:#0f9e78; --orange:#e06a2c; --yellow:#c98a12; --violet:#6d4fd6; --red:#d94848; --green:#1a9e4b;
+  --grid:#e7eaf0; --axis:#cbd0d9;
+}
+:root[data-theme="light"] .hs{background:rgba(255,255,255,.72)}
+:root[data-theme="light"] .theme-btn{background:rgba(255,255,255,.8)}
+:root[data-theme="light"] .tip{background:#14161c;color:#fff}
+</style>
+
+<button class="theme-btn" id="themeBtn" title="Cambiar tema" aria-label="Cambiar tema">🌙</button>
+
+<header class="hero">
+  <div class="hero-inner">
+    <span class="kicker">🚁 Telemetría de vuelo · DJI Neo 2</span>
+    <h1>__TITULO__</h1>
+    <p class="lede">Un análisis completo del vuelo, fotograma a fotograma: recorrido, altitud, velocidad y los momentos clave capturados por la cámara.</p>
+    <div class="hero-stats">
+      <div class="hs"><div class="v">__DUR__</div><div class="l">Duración</div></div>
+      <div class="hs"><div class="v">__RELMAX__ <small>m</small></div><div class="l">Altura máx.</div></div>
+      <div class="hs"><div class="v">__MAXFAR__ <small>m</small></div><div class="l">Alejamiento</div></div>
+      <div class="hs"><div class="v">__HSMAX__ <small>km/h</small></div><div class="l">Vel. máx.</div></div>
+    </div>
+    <div class="hero-meta">
+      <span>📅 <b>__FECHA__</b></span>
+      <span>🕘 <b>__TSTART__ – __TEND__</b></span>
+      <span>🎞️ <b>__FRAMES__ fotogramas</b> · __FPS__ fps · 4K</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section>
+    <div class="eyebrow">Resumen</div>
+    <h2>El vuelo en cifras</h2>
+    <p class="sec-sub">Todo lo siguiente se extrae del archivo <code>.SRT</code> que el dron graba junto al vídeo: una lectura de sensores por cada fotograma, sincronizada con la imagen.</p>
+    <div class="tiles">
+      <div class="tile"><div class="v">__DUR__</div><div class="l">Duración</div><div class="k">__FRAMES__ fotogramas</div></div>
+      <div class="tile"><div class="v">__RELMAX__ <small>m</small></div><div class="l">Altura máxima</div><div class="k">sobre el despegue</div></div>
+      <div class="tile"><div class="v">__MAXFAR__ <small>m</small></div><div class="l">Alejamiento máx.</div><div class="k">del punto de inicio</div></div>
+      <div class="tile"><div class="v">__DIST__ <small>m</small></div><div class="l">Recorrido total</div><div class="k">distancia horizontal</div></div>
+      <div class="tile"><div class="v">__HSAVG__ <small>km/h</small></div><div class="l">Velocidad media</div><div class="k">máx. __HSMAX__ km/h</div></div>
+      <div class="tile"><div class="v">__VSUP__ <small>m/s</small></div><div class="l">Ascenso máx.</div><div class="k">velocidad vertical</div></div>
+      <div class="tile"><div class="v">__ABMIN__–__ABMAX__ <small>m</small></div><div class="l">Altitud (msnm)</div><div class="k">absoluta</div></div>
+      <div class="tile"><div class="v">__ISOMIN__–__ISOMAX__</div><div class="l">Rango ISO</div><div class="k">la cámara compensó la luz</div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Momentos clave</div>
+    <h2>Ocho instantes del vuelo</h2>
+    <p class="sec-sub">Cada tarjeta es el fotograma real del vídeo en el momento exacto de un hito del vuelo, con su marca de tiempo y su dato destacado.</p>
+    <div class="mos">__GALLERY__</div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Recorrido</div>
+    <h2>El recorrido sobre el terreno</h2>
+    <p class="sec-sub">El recorrido real sobre imagen de satélite. El color de la línea indica la altura: <span style="color:var(--blue)">azul = bajo</span> → <span style="color:var(--orange)">naranja = alto</span>.</p>
+    <div class="card">
+      <div class="legend">
+        <span><span class="dot" style="background:var(--green)"></span>Despegue / aterrizaje</span>
+        <span><span class="dot" style="background:#fff;border:2px solid var(--blue)"></span>Momentos clave (toca o pasa el ratón)</span>
+        <span><span class="sw" style="background:linear-gradient(90deg,var(--blue),var(--orange))"></span>Altura baja → alta</span>
+      </div>
+      <div class="chartbox" style="max-width:600px;margin:0 auto">__MAP_SVG__
+        <div class="kpoverlay">__KPBTNS__</div>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin:14px 0 0;text-align:center">Imagen de satélite: Esri World Imagery · trazado reconstruido con el GPS del vuelo</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Altitud</div>
+    <h2>Perfil de altura</h2>
+    <p class="sec-sub">Altura sobre el punto de despegue a lo largo del tiempo: ascenso inicial ya en curso, crucero en altura y descenso final para aterrizar.</p>
+    <div class="card"><div class="chartbox">__ALT_SVG____ALT_SCRUB__</div></div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Dinámica</div>
+    <h2>Velocidad y distancia</h2>
+    <p class="sec-sub">Velocidad sobre el terreno y velocidad vertical, y cuánto se alejó el dron del punto de despegue a lo largo del vuelo.</p>
+    <div class="card">
+      <h3>Velocidad horizontal y vertical</h3>
+      <div class="legend"><span><span class="sw" style="background:var(--blue)"></span>Horizontal (km/h)</span><span><span class="sw" style="background:var(--violet)"></span>Vertical (m/s)</span></div>
+      <div class="chartbox">__SP_SVG____SP_SCRUB__</div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3>Distancia al punto de despegue</h3>
+      <div class="legend"><span><span class="sw" style="background:var(--aqua)"></span>Distancia (m)</span></div>
+      <div class="chartbox">__FAR_SVG____FAR_SCRUB__</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Cámara</div>
+    <h2>La luz del atardecer</h2>
+    <p class="sec-sub">Los ajustes de exposición van grabados en cada fotograma, así que se ve cómo la cámara compensó la caída de luz: el ISO subió de __ISOMIN__ a __ISOMAX__ y el balance de blancos osciló entre __CTMIN__ y __CTMAX__ K.</p>
+    <div class="card">
+      <h3>ISO y temperatura de color en el tiempo</h3>
+      <div class="legend"><span><span class="sw" style="background:var(--blue)"></span>ISO</span><span><span class="sw" style="background:var(--yellow)"></span>Temp. color (K)</span></div>
+      <div class="chartbox">__CAM_SVG____CAM_SCRUB__</div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <h3>Cómo cambió la luz durante el vuelo</h3>
+      <div class="lstrip">
+        <figure><img src="__LIGHT1__" alt="0:45" loading="lazy"><figcaption><b>0:45</b> · plena luz</figcaption></figure>
+        <figure><img src="__LIGHT2__" alt="3:20" loading="lazy"><figcaption><b>3:20</b> · hora dorada</figcaption></figure>
+        <figure><img src="__LIGHT3__" alt="5:05" loading="lazy"><figcaption><b>5:05</b> · puesta de sol</figcaption></figure>
+      </div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <table>
+        <tbody>
+        <tr><td>ISO</td><td class="n">__ISOMIN__ – __ISOMAX__ (auto)</td></tr>
+        <tr><td>Obturador</td><td class="n">1/__SHMIN__ – 1/__SHMAX__ s</td></tr>
+        <tr><td>Diafragma</td><td class="n">f/__FNUM__ (fijo)</td></tr>
+        <tr><td>Temp. de color</td><td class="n">__CTMIN__ – __CTMAX__ K</td></tr>
+        <tr><td>Resolución</td><td class="n">3840×2160 (4K)</td></tr>
+        <tr><td>Cadencia</td><td class="n">__FPS__ fps</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Ubicación</div>
+    <h2>Dónde voló</h2>
+    <div class="grid2">
+      <div class="card">
+        <h3>Coordenadas</h3>
+        <table><tbody>
+          <tr><td>Despegue / aterrizaje</td><td class="n"><code>__TKLAT__, __TKLON__</code></td></tr>
+          <tr><td>Centro del vuelo</td><td class="n"><code>__CLAT__, __CLON__</code></td></tr>
+        </tbody></table>
+        <p style="font-size:13.5px;color:var(--ink-2);margin:12px 0 0"><a href="__MAPURL__">Ver en Google Maps ↗</a></p>
+      </div>
+      <div class="card">
+        <h3>Archivos generados</h3>
+        <div class="chips">
+          <span>📄 análisis .html</span><span>🌍 .kmz (Google Earth)</span><span>🛰️ .gpx</span><span>📊 .csv (16.585 filas)</span><span>🗺️ .kml</span>
+        </div>
+        <p style="font-size:13.5px;color:var(--ink-2);margin:12px 0 0">El <code>.kmz</code> reproduce el vuelo animado en 3D con los fotogramas de cada punto; el <code>.csv</code> tiene todos los datos por fotograma.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Calidad de los datos</div>
+    <h2>Notas honestas</h2>
+    <div class="callout warn"><b>⚠️ Micro-saltos del GPS</b>Entre fotogramas (cada 20 ms) el GPS tiene pequeños saltos que, sin filtrar, dan velocidades imposibles (hasta __GLMAX__ km/h). Son ruido del receptor. Todas las velocidades y distancias de este informe se calculan en ventanas de 0,5 s para eliminarlos.</div>
+    <div class="callout good"><b>✅ Datos consistentes</b>Altitud, posición, recorrido, ajustes de cámara y duración son coherentes de principio a fin. El vuelo empieza y termina prácticamente en el mismo punto, confirmando despegue y aterrizaje en el mismo lugar.</div>
+  </section>
+
+</div>
+
+<div class="foot">Generado a partir de la telemetría de DJI_20260806212532_0124_D · __FRAMES__ fotogramas analizados · __FECHA__</div>
+
+<script>
+// Todo (mapa, graficas y su interaccion) funciona con SVG estatico + CSS puro, sin depender de JS.
+// Lo unico que usa JS es el boton de cambio de tema, que es opcional.
+try{(function(){var btn=document.getElementById('themeBtn'),root=document.documentElement,cur='dark';
+  btn.addEventListener('click',function(){cur=cur==='dark'?'light':'dark';
+    if(cur==='light'){root.setAttribute('data-theme','light');btn.textContent='☀️';}
+    else{root.removeAttribute('data-theme');btn.textContent='🌙';}});})();}catch(e){console.error(e);}
+</script>
