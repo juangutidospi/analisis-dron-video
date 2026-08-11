@@ -2,6 +2,19 @@
 """Extrae la telemetria de un .SRT de DJI a trabajo/data.json."""
 import re, math, json, datetime, os
 
+def gimbal_pitch(body):
+    """Inclinacion (pitch) de la camara en grados, estimada del cuaternion pp_current
+    del estabilizador (orden w,x,y,z). La convencion exacta de ejes de DJI no esta
+    documentada, asi que el valor es aproximado."""
+    mm=re.search(r'pp_current:\s*([-\d\.]+),\s*([-\d\.]+),\s*([-\d\.]+),\s*([-\d\.]+)', body)
+    if not mm: return None
+    w,x,y,z=[float(mm.group(i)) for i in (1,2,3,4)]
+    s=max(-1.0, min(1.0, 2*(x*z - y*w)))
+    return round(math.degrees(math.asin(s)), 2)
+
+def eis_state(body):
+    mm=re.search(r'eis:\s*([^\],]+)', body); return mm.group(1).strip() if mm else None
+
 def run(cfg):
     SRT=cfg["SRT"]; WORK=cfg["WORK"]
     txt=open(SRT, encoding="utf-8", errors="ignore").read()
@@ -15,7 +28,8 @@ def run(cfg):
         rows.append(dict(cnt=int(m.group(1)), ts=m.group(2),
             lat=g("latitude"), lon=g("longitude"), rel=g("rel_alt"), ab=g("abs_alt"),
             iso=g("iso"), ct=g("ct"), ev=g("ev"), fnum=g("fnum"),
-            shutter=(sh.group(1)[:-2] if sh else None), color_md=(cm.group(1).strip() if cm else "")))
+            shutter=(sh.group(1)[:-2] if sh else None), color_md=(cm.group(1).strip() if cm else ""),
+            pitch=gimbal_pitch(body), eis=eis_state(body)))
     if len(rows)<2: raise SystemExit("SRT sin datos de telemetria")
 
     def pt(s): return datetime.datetime.strptime(s, "%Y-%m-%d %H:%M:%S.%f")
@@ -71,7 +85,7 @@ def run(cfg):
       meta=dict(fname=os.path.basename(SRT), frames=len(rows),
          fps=round((len(rows)-1)/dur) if dur else 0, dur=dur,
          start=rows[0]["ts"], end=rows[-1]["ts"], size_mb=round(os.path.getsize(SRT)/1048576,1)),
-      ranges=dict(rel=rng("rel"), ab=rng("ab"), ct=rng("ct"), lat=rng("lat"), lon=rng("lon"),
+      ranges=dict(rel=rng("rel"), ab=rng("ab"), ct=rng("ct"), pitch=rng("pitch",rows), lat=rng("lat"), lon=rng("lon"),
          hspeed=[min(hspeeds) if hspeeds else 0, max(hspeeds) if hspeeds else 0],
          hspeed_avg=(sum(hspeeds)/len(hspeeds)) if hspeeds else 0,
          vspeed=[min(vspeeds) if vspeeds else 0, max(vspeeds) if vspeeds else 0]),
@@ -79,11 +93,13 @@ def run(cfg):
       takeoff=[lat0,lon0], land=[rows[-1]["lat"],rows[-1]["lon"]],
       center=[sum(r["lat"] for r in valid)/len(valid), sum(r["lon"] for r in valid)/len(valid)],
       cam=dict(iso=isos, shutter=shs, fnum=sorted({r["fnum"] for r in rows if r["fnum"]}),
-         ev=sorted({r["ev"] for r in rows if r["ev"] is not None}), color_md=cmds),
+         ev=sorted({r["ev"] for r in rows if r["ev"] is not None}), color_md=cmds,
+         eis=sorted({r["eis"] for r in rows if r.get("eis")})),
       glitches=glitches, glitch_max=round(gmax,1),
       series=[dict(t=round(r["t"],2), rel=r["rel"], ab=r["ab"],
          hs=(round(r["hs"],3) if r.get("hs") is not None else None),
-         vs=r.get("vs"), lat=r["lat"], lon=r["lon"], iso=r["iso"], ct=r["ct"]) for r in samp],
+         vs=r.get("vs"), lat=r["lat"], lon=r["lon"], iso=r["iso"], ct=r["ct"],
+         pitch=r.get("pitch")) for r in samp],
       track=[[round(r["lat"],6), round(r["lon"],6), r["rel"]] for r in rows[::10] if r["lat"]],
     )
     json.dump(out, open(os.path.join(WORK,"data.json"),"w"))
