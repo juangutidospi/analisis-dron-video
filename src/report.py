@@ -30,7 +30,7 @@ def run(cfg):
     # ---------- series para las graficas ----------
     SER=[{"t":x["t"],"rel":x["rel"],"ab":x["ab"],
           "hs":(x["hs"]*3.6 if x.get("hs") is not None else None),
-          "vs":x["vs"],"far":x["far"],"iso":x["iso"],"ct":x["ct"]} for x in S]
+          "vs":x["vs"],"far":x["far"],"iso":x["iso"],"ct":x["ct"],"pitch":x.get("pitch")} for x in S]
     CHARTS={}
     def svg_timechart(cid,cfgs,W=900,H=300):
         L=44; R=46 if len(cfgs)>1 else 16; Tp=12; B=26
@@ -71,6 +71,7 @@ def run(cfg):
     FAR_SVG=svg_timechart("far",[{"k":"far","color":"--aqua","area":True,"min":0,"fmt":lambda v:f"{round(v)}","label":"Distancia","unit":"m","dec":0}])
     CAM_SVG=svg_timechart("cam",[{"k":"iso","color":"--blue","fmt":lambda v:f"{round(v)}","label":"ISO","unit":"","dec":0},
                            {"k":"ct","color":"--yellow","fmt":lambda v:f"{round(v/100)/10}k","label":"Temp","unit":"K","dec":0}])
+    GB_SVG=svg_timechart("gb",[{"k":"pitch","color":"--green","area":True,"fmt":lambda v:f"{round(v)}°","label":"Pitch","unit":"°","dec":0}])
 
     def scrub_html(cid,N=34):
         c=CHARTS[cid]
@@ -88,7 +89,7 @@ def run(cfg):
             cols+=(f'<button class="scol" style="left:{i/N*100:.3f}%;width:{100/N:.3f}%" aria-label="{mmss(s["t"])}">'
                    f'<span class="scross"></span><span class="stip{ec}">{lines}</span></button>')
         return f'<div class="scrub" style="left:{lp:.3f}%;width:{wp:.3f}%;top:{tpp:.3f}%;height:{hp:.3f}%">{cols}</div>'
-    ALT_SCRUB=scrub_html("alt"); SP_SCRUB=scrub_html("sp"); FAR_SCRUB=scrub_html("far"); CAM_SCRUB=scrub_html("cam")
+    ALT_SCRUB=scrub_html("alt"); SP_SCRUB=scrub_html("sp"); FAR_SCRUB=scrub_html("far"); CAM_SCRUB=scrub_html("cam"); GB_SCRUB=scrub_html("gb")
 
     # ---------- mapa satelite (SVG estatico) ----------
     def svg_map():
@@ -139,8 +140,8 @@ def run(cfg):
     reps={
      "__TITULO__":esc(TITULO),"__HERO__":b64("hero.jpg"),"__DATA__":"{}","__GALLERY__":gallery,
      "__MAP_SVG__":MAP_SVG,"__KPBTNS__":KPBTNS,
-     "__ALT_SVG__":ALT_SVG,"__SP_SVG__":SP_SVG,"__FAR_SVG__":FAR_SVG,"__CAM_SVG__":CAM_SVG,
-     "__ALT_SCRUB__":ALT_SCRUB,"__SP_SCRUB__":SP_SCRUB,"__FAR_SCRUB__":FAR_SCRUB,"__CAM_SCRUB__":CAM_SCRUB,
+     "__ALT_SVG__":ALT_SVG,"__SP_SVG__":SP_SVG,"__FAR_SVG__":FAR_SVG,"__CAM_SVG__":CAM_SVG,"__GB_SVG__":GB_SVG,
+     "__ALT_SCRUB__":ALT_SCRUB,"__SP_SCRUB__":SP_SCRUB,"__FAR_SCRUB__":FAR_SCRUB,"__CAM_SCRUB__":CAM_SCRUB,"__GB_SCRUB__":GB_SCRUB,
      "__LIGHT1__":b64("frames/l1.jpg"),"__LIGHT2__":b64("frames/l2.jpg"),"__LIGHT3__":b64("frames/l3.jpg"),
      "__FECHA__":fecha,"__TSTART__":tstart,"__TEND__":tend,"__DUR__":dur,
      "__FRAMES__":f"{m['frames']:,}".replace(",","."),"__FPS__":str(m["fps"]),
@@ -150,6 +151,7 @@ def run(cfg):
      "__ISOMIN__":f(min(cam["iso"])),"__ISOMAX__":f(max(cam["iso"])),
      "__SHMIN__":cam["shutter"][0],"__SHMAX__":cam["shutter"][-1],"__FNUM__":f(cam["fnum"][0],1),
      "__CTMIN__":f(r["ct"][0]),"__CTMAX__":f(r["ct"][1]),
+     "__PMIN__":f(r["pitch"][0]),"__PMAX__":f(r["pitch"][1]),
      "__TKLAT__":f(tk[0],6),"__TKLON__":f(tk[1],6),
      "__CLAT__":f(d["center"][0],6),"__CLON__":f(d["center"][1],6),
      "__MAPURL__":f"https://www.google.com/maps?q={tk[0]:.6f},{tk[1]:.6f}",

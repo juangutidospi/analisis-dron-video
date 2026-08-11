@@ -282,6 +282,18 @@ svg{display:block;width:100%;height:auto;overflow:visible}
   </section>
 
   <section>
+    <div class="eyebrow">Gimbal</div>
+    <h2>Orientación de la cámara (gimbal)</h2>
+    <p class="sec-sub">El archivo incluye la orientación del estabilizador como cuaterniones (<code>pp_target</code> = objetivo, <code>pp_current</code> = real) en cada fotograma, más el estado del EIS y del recorte de estabilización. De ahí se puede estimar la inclinación de la cámara.</p>
+    <div class="card">
+      <h3>Inclinación estimada de cámara (pitch)</h3>
+      <div class="legend"><span><span class="sw" style="background:var(--green)"></span>Pitch estimado (°)</span></div>
+      <div class="chartbox">__GB_SVG____GB_SCRUB__</div>
+      <p style="font-size:12px;color:var(--muted);margin:14px 0 0">Rango estimado: __PMIN__° a __PMAX__°. Valor derivado del cuaternión; la convención exacta de ejes de DJI no está documentada, tómalo como aproximado.</p>
+    </div>
+  </section>
+
+  <section>
     <div class="eyebrow">Ubicación</div>
     <h2>Dónde voló</h2>
     <div class="grid2">
