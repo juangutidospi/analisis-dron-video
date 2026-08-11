@@ -21,7 +21,8 @@ un paquete completo de análisis:
 
 - Si no indicas el `.MP4`, se busca uno con el mismo nombre junto al `.SRT`.
 - Sin `.MP4` solo se generan GPX/KML/CSV (el informe y el KMZ necesitan el vídeo).
-- Los resultados aparecen en **`outputs/<nombre-del-vuelo>/`** (una carpeta por vuelo).
+- Los resultados aparecen en **`outputs/<vuelo>/`** (dentro del proyecto) y también
+  en **`~/Desktop/analisis-dron-salidas/<vuelo>/`**.
 
 Ejemplo:
 
@@ -34,6 +35,35 @@ Puedes cambiar el título del informe con la variable `TITULO`:
 ```bash
 TITULO="Vuelo sobre el Duero" ./generar.sh vuelo.SRT
 ```
+
+## App de escritorio (portable)
+
+Hay una app con ventana que hace todo con un par de clics, sin usar la terminal.
+
+**Construirla** (una vez):
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install pillow imageio-ffmpeg pyinstaller
+./build_app.sh
+```
+
+Queda en **`dist/Analisis Dron.app`**. Es **autocontenida**: lleva Python,
+ffmpeg y todo dentro (~135 MB), así que puedes copiarla a otro Mac (Apple
+Silicon) y funciona sin instalar nada. No necesita Google Chrome.
+
+**Usarla:** doble clic en la app → *Elegir vuelo (.SRT)* (el vídeo se detecta solo,
+o eleígelo a mano) → *Generar análisis*.
+
+Los resultados se guardan en **dos** carpetas (una por vuelo):
+- `outputs/<vuelo>/` dentro del proyecto (si el proyecto está en el Desktop), y
+- `~/Desktop/analisis-dron-salidas/<vuelo>/`.
+
+> Nota: al ser una app sin firmar, la primera vez macOS puede pedir permiso
+> (clic derecho → Abrir, o Ajustes → Privacidad y seguridad → Abrir igualmente).
+
+## Uso por terminal (alternativa)
 
 ## Requisitos (macOS)
 
