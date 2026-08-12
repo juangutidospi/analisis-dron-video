@@ -1,6 +1,7 @@
 import { DjiElement } from '../../../core/DjiElement.js';
 import { escapeHtml } from '../../../core/escape-html.js';
 import { t } from '../../../i18n/index.js';
+import { reverseGeocode, firstCoords } from '../../../geocode.js';
 import '../../ui/drop-zone/drop-zone.js';
 import { styles } from './upload-view.css.js';
 
@@ -47,9 +48,11 @@ export class UploadView extends DjiElement {
 
   afterRender() {
     const dz = this.$('#dz');
+    this.on(this.$('#title'), 'input', () => { this._titleEdited = true; });
     this.on(dz, 'dz:change', (e) => {
       this.files = e.detail;
       this.$('#gen').classList.toggle('hidden', !this.files.srt);
+      if (this.files.srtText) this._suggestTitle(this.files.srtText);
     });
     this.on(this.$('#addmp4'), 'click', () => dz.pickMp4());
     this.on(this.$('#go'), 'click', () => {
@@ -57,6 +60,17 @@ export class UploadView extends DjiElement {
       const title = (this.$('#title').value || '').trim() || t('form.default_title');
       this.emit('dji:generate', { srtText: this.files.srtText, mp4: this.files.mp4, title });
     });
+  }
+
+  /** Prerellena el título con el lugar del vuelo (geocodificación inversa). */
+  async _suggestTitle(srtText) {
+    if (this._geoSrt === srtText || this._titleEdited) return;
+    this._geoSrt = srtText;
+    const c = firstCoords(srtText);
+    if (!c) return;
+    const place = await reverseGeocode(c[0], c[1]);
+    const input = this.$('#title');
+    if (place && input && !this._titleEdited) input.value = t('form.title_place', { place });
   }
 }
 

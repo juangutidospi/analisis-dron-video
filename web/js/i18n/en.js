@@ -21,6 +21,7 @@ export default {
   'drop.novideo': 'Without video the report still works, just without the moment frames.',
   'form.title_label': 'Report title',
   'form.default_title': 'Flight with DJI Neo 2',
+  'form.title_place': 'Flight over {place}',
   'form.generate': 'Generate report →',
   'form.add_mp4': '🎬 Add .MP4 video (optional, for the frames)',
   'feat.map.t': 'Route over satellite',

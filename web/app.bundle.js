@@ -1228,6 +1228,7 @@ __m["js/components/views/upload-view/upload-view.js"] = function (__x, __req) {
 const { DjiElement } = __req("js/core/DjiElement.js");
 const { escapeHtml } = __req("js/core/escape-html.js");
 const { t } = __req("js/i18n/index.js");
+const { reverseGeocode, firstCoords } = __req("js/geocode.js");
 __req("js/components/ui/drop-zone/drop-zone.js");
 const { styles } = __req("js/components/views/upload-view/upload-view.css.js");
 
@@ -1274,9 +1275,11 @@ class UploadView extends DjiElement {
 
   afterRender() {
     const dz = this.$('#dz');
+    this.on(this.$('#title'), 'input', () => { this._titleEdited = true; });
     this.on(dz, 'dz:change', (e) => {
       this.files = e.detail;
       this.$('#gen').classList.toggle('hidden', !this.files.srt);
+      if (this.files.srtText) this._suggestTitle(this.files.srtText);
     });
     this.on(this.$('#addmp4'), 'click', () => dz.pickMp4());
     this.on(this.$('#go'), 'click', () => {
@@ -1284,6 +1287,17 @@ class UploadView extends DjiElement {
       const title = (this.$('#title').value || '').trim() || t('form.default_title');
       this.emit('dji:generate', { srtText: this.files.srtText, mp4: this.files.mp4, title });
     });
+  }
+
+  /** Prerellena el título con el lugar del vuelo (geocodificación inversa). */
+  async _suggestTitle(srtText) {
+    if (this._geoSrt === srtText || this._titleEdited) return;
+    this._geoSrt = srtText;
+    const c = firstCoords(srtText);
+    if (!c) return;
+    const place = await reverseGeocode(c[0], c[1]);
+    const input = this.$('#title');
+    if (place && input && !this._titleEdited) input.value = t('form.title_place', { place });
   }
 }
 
@@ -1612,6 +1626,41 @@ Object.assign(__x, { mmss, keypoints, tileConfig, projector });
 
 };
 
+__m["js/geocode.js"] = function (__x, __req) {
+// Geocodificación inversa (coordenadas -> lugar) con Nominatim de OpenStreetMap,
+// sin clave. Falla en silencio (devuelve null) si no hay red o la responde mal.
+
+const { getLang } = __req("js/i18n/index.js");
+
+/**
+ * Devuelve el nombre de lugar más adecuado para unas coordenadas.
+ * @param {number} lat @param {number} lon
+ * @returns {Promise<string|null>}
+ */
+async function reverseGeocode(lat, lon) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=12&addressdetails=1&lat=${lat}&lon=${lon}&accept-language=${getLang()}`;
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return null;
+    const d = await res.json();
+    const a = d.address || {};
+    return a.village || a.town || a.city || a.municipality || a.county || a.state_district || a.state || d.name || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Extrae las primeras coordenadas (lat, lon) del texto de un .SRT. */
+function firstCoords(srtText) {
+  const la = srtText.match(/latitude:\s*([-\d.]+)/);
+  const lo = srtText.match(/longitude:\s*([-\d.]+)/);
+  return la && lo ? [parseFloat(la[1]), parseFloat(lo[1])] : null;
+}
+
+Object.assign(__x, { reverseGeocode, firstCoords });
+
+};
+
 __m["js/i18n/en.js"] = function (__x, __req) {
 /** English dictionary. Keep key parity with es.js (checked by the test). */
 __x.default = {
@@ -1636,6 +1685,7 @@ __x.default = {
   'drop.novideo': 'Without video the report still works, just without the moment frames.',
   'form.title_label': 'Report title',
   'form.default_title': 'Flight with DJI Neo 2',
+  'form.title_place': 'Flight over {place}',
   'form.generate': 'Generate report →',
   'form.add_mp4': '🎬 Add .MP4 video (optional, for the frames)',
   'feat.map.t': 'Route over satellite',
@@ -1801,6 +1851,7 @@ __x.default = {
   'drop.novideo': 'Sin vídeo el informe sale igual, pero sin los fotogramas de los momentos.',
   'form.title_label': 'Título del informe',
   'form.default_title': 'Vuelo con DJI Neo 2',
+  'form.title_place': 'Vuelo en {place}',
   'form.generate': 'Generar informe →',
   'form.add_mp4': '🎬 Añadir vídeo .MP4 (opcional, para los fotogramas)',
   'feat.map.t': 'Recorrido sobre satélite',

@@ -21,6 +21,7 @@ export default {
   'drop.novideo': 'Sin vídeo el informe sale igual, pero sin los fotogramas de los momentos.',
   'form.title_label': 'Título del informe',
   'form.default_title': 'Vuelo con DJI Neo 2',
+  'form.title_place': 'Vuelo en {place}',
   'form.generate': 'Generar informe →',
   'form.add_mp4': '🎬 Añadir vídeo .MP4 (opcional, para los fotogramas)',
   'feat.map.t': 'Recorrido sobre satélite',
