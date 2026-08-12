@@ -68,5 +68,8 @@ code { background: var(--color-tile); border: 1px solid var(--color-divider); bo
   section.blk { padding: 44px 0; }
   .tiles { gap: 12px; }
   .mos { gap: 14px; }
+  /* portada: los bloques llenan el ancho en 2 columnas iguales */
+  .hstats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .hstats stat-tile { min-width: 0; }
 }
 `;
