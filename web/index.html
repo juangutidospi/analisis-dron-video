@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Análisis de vuelos DJI</title>
+<meta name="description" content="Convierte la telemetría de tu vuelo DJI en un informe espectacular, todo en tu navegador.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚁</text></svg>">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div class="aurora"><i></i></div>
+
+<header class="topbar">
+  <a class="brand" href="./" aria-label="Análisis de vuelos DJI — inicio">
+    <span class="logo">
+      <svg class="drone" viewBox="0 0 48 48" aria-hidden="true">
+        <g class="arms"><path d="M24 24 11 11M24 24 37 11M24 24 11 37M24 24 37 37"/></g>
+        <g class="hubs"><circle cx="11" cy="11" r="7"/><circle cx="37" cy="11" r="7"/><circle cx="11" cy="37" r="7"/><circle cx="37" cy="37" r="7"/></g>
+        <g class="props">
+          <path class="prop" style="transform-origin:11px 11px" d="M6 11H16M11 6V16"/>
+          <path class="prop" style="transform-origin:37px 11px;animation-delay:-.15s" d="M32 11H42M37 6V16"/>
+          <path class="prop" style="transform-origin:11px 37px;animation-delay:-.3s" d="M6 37H16M11 32V42"/>
+          <path class="prop" style="transform-origin:37px 37px;animation-delay:-.45s" d="M32 37H42M37 32V42"/>
+        </g>
+        <rect class="body" x="19" y="19" width="10" height="10" rx="3.4"/>
+      </svg>
+    </span>
+    <span class="brand-txt">
+      <span class="brand-name">Análisis de vuelos <b>DJI</b></span>
+      <span class="brand-tag">Telemetría · Recorrido · Gimbal</span>
+    </span>
+  </a>
+  <div class="spacer"></div>
+  <button class="pill-btn hidden" id="resetBtn">↺ Otro vuelo</button>
+  <button class="icon-btn" id="themeBtn" title="Cambiar tema" aria-label="Cambiar tema">🌙</button>
+</header>
+
+<main id="app"></main>
+
+<!-- bundle.js (script clásico) para que funcione también con doble clic (file://).
+     Se genera con build.py a partir de los módulos de js/. -->
+<script src="js/bundle.js"></script>
+</body>
+</html>
