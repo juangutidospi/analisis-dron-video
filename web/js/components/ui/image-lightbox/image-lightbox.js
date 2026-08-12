@@ -39,15 +39,20 @@ export class ImageLightbox extends DjiElement {
     b.disabled = true;
     const prev = label.textContent;
     try {
-      // si hay vídeo + tiempo, re-extrae el fotograma a resolución nativa sin pérdidas (PNG)
-      let src = this._src, name = this._name;
+      // máxima calidad: re-extrae el fotograma a resolución nativa sin pérdidas (PNG, como Blob)
       if (this._full) {
         label.textContent = t('lightbox.downloading');
-        src = await grabFullFrame(this._full.file, this._full.secs);
-        name = name.replace(/\.jpg$/, '.png');
+        try {
+          const blob = await grabFullFrame(this._full.file, this._full.secs);
+          downloadBlob(this._name.replace(/\.jpg$/, '.png'), blob);
+          return;
+        } catch (e) {
+          console.warn('Descarga 4K falló; se descarga el fotograma visible.', e);
+        }
       }
-      const blob = await (await fetch(src)).blob();
-      downloadBlob(name, blob);
+      // camino normal / respaldo: descarga el fotograma que se muestra
+      const blob = await (await fetch(this._src)).blob();
+      downloadBlob(this._name, blob);
     } catch (e) {
       console.error(e);
     } finally {

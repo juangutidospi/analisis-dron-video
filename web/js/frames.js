@@ -8,10 +8,9 @@
  * @param {(p:number)=>void} onProgress 0..1
  * @param {number} maxW ancho máximo de salida
  * @param {number} quality calidad JPEG (0..1)
- * @param {string} type tipo MIME de salida ('image/jpeg' | 'image/png')
  * @returns {Promise<string[]>} dataURLs alineados con `times`
  */
-export async function grabFrames(file, times, onProgress = () => {}, maxW = 1600, quality = 0.9, type = 'image/jpeg') {
+export async function grabFrames(file, times, onProgress = () => {}, maxW = 1600, quality = 0.9) {
   const url = URL.createObjectURL(file);
   const v = document.createElement('video');
   v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
@@ -28,7 +27,7 @@ export async function grabFrames(file, times, onProgress = () => {}, maxW = 1600
       const t = Math.max(0, Math.min((v.duration || 1e9) - 0.05, times[i]));
       await seek(v, t);
       ctx.drawImage(v, 0, 0, cw, ch);
-      out.push(canvas.toDataURL(type, quality));
+      out.push(canvas.toDataURL('image/jpeg', quality));
       onProgress((i + 1) / times.length);
     }
     return out;
@@ -39,12 +38,32 @@ export async function grabFrames(file, times, onProgress = () => {}, maxW = 1600
 
 /**
  * Extrae un solo fotograma a resolución nativa del vídeo, sin pérdidas (PNG),
- * para descargar en la máxima calidad posible (limitada por el propio códec del vídeo).
- * @param {File} file @param {number} secs @returns {Promise<string>} dataURL PNG
+ * como Blob (usa toBlob para evitar cadenas gigantes en 4K). Máxima calidad posible.
+ * @param {File} file @param {number} secs @returns {Promise<Blob>} PNG
  */
 export async function grabFullFrame(file, secs) {
-  const [url] = await grabFrames(file, [secs], () => {}, 1e9, 1, 'image/png');
-  return url;
+  const url = URL.createObjectURL(file);
+  const v = document.createElement('video');
+  v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
+  try {
+    await withTimeout(once(v, 'loadedmetadata'), 20000);
+    try { await v.play(); v.pause(); } catch (_) {}
+    const cw = v.videoWidth, ch = v.videoHeight;
+    const canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
+    canvas.getContext('2d').drawImage(v, 0, 0, cw, ch);
+    const t = Math.max(0, Math.min((v.duration || 1e9) - 0.05, secs));
+    await seek(v, t);
+    canvas.getContext('2d').drawImage(v, 0, 0, cw, ch);
+    const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+    if (!blob) throw new Error('No se pudo codificar el fotograma.');
+    return blob;
+  } finally {
+    v.removeAttribute('src'); v.load(); URL.revokeObjectURL(url);
+  }
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
 }
 
 function once(target, ev) {
