@@ -1,0 +1,66 @@
+/* Tokens del sistema. Se enlazan en <head> y se heredan al shadow DOM.
+   Roles de color + escala (espaciado, radios, tipografía, sombras) + acentos y
+   colores de gráfica. Tema por defecto = oscuro; [data-theme="light"] = claro. */
+
+:root {
+  color-scheme: dark;
+
+  /* roles */
+  --color-bg: #0a0b0f;
+  --color-bg-2: #0f1117;
+  --color-surface: rgba(22, 24, 32, .72);
+  --color-surface-solid: #14161d;
+  --color-tile: rgba(28, 31, 41, .6);
+  --color-text: #f5f6f8;
+  --color-divider: rgba(255, 255, 255, .10);
+
+  /* acento y derivados */
+  --color-accent: #5b9dff;
+  --color-accent-2: #2fd0a6;
+  --color-accent-300: color-mix(in srgb, var(--color-accent) 72%, #fff);
+  --color-violet: #a98bff;
+  --color-text-muted: color-mix(in srgb, var(--color-text) 50%, transparent);
+
+  /* colores de gráfica / semánticos */
+  --c-blue: #5b9dff;
+  --c-aqua: #2fd0a6;
+  --c-violet: #a98bff;
+  --c-orange: #ff8a4c;
+  --c-yellow: #f5c451;
+  --c-green: #37cf6b;
+  --c-red: #ff6b6b;
+  --grid: rgba(255, 255, 255, .07);
+
+  /* escala */
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-6: 24px; --space-8: 40px;
+  --radius-sm: 12px; --radius-md: 18px; --radius-lg: 26px;
+  --font-body: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-heading: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --shadow-sm: 0 0 0 1px rgba(255, 255, 255, .06);
+  --shadow-md: 0 10px 30px rgba(0, 0, 0, .4);
+  --shadow-lg: 0 24px 70px rgba(0, 0, 0, .5);
+
+  --maxw: 1080px;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #eef1f6;
+  --color-bg-2: #e7ebf2;
+  --color-surface: rgba(255, 255, 255, .78);
+  --color-surface-solid: #ffffff;
+  --color-tile: rgba(255, 255, 255, .7);
+  --color-text: #10131a;
+  --color-divider: rgba(16, 19, 26, .10);
+  --color-accent: #2f6fe0;
+  --color-accent-300: color-mix(in srgb, var(--color-accent) 72%, #000);
+  --color-violet: #6d4fd6;
+  --c-blue: #2f6fe0;
+  --c-violet: #6d4fd6;
+  --c-orange: #e06a2c;
+  --c-yellow: #c98a12;
+  --grid: rgba(16, 19, 26, .08);
+  --shadow-sm: 0 0 0 1px rgba(16, 19, 26, .06);
+  --shadow-md: 0 10px 30px rgba(16, 30, 60, .12);
+  --shadow-lg: 0 24px 60px rgba(16, 30, 60, .16);
+}
