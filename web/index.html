@@ -6,6 +6,8 @@
 <title>Análisis de vuelos DJI</title>
 <meta name="description" content="Convierte la telemetría de tu vuelo DJI en un informe espectacular, todo en tu navegador.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%235b9dff'/><stop offset='1' stop-color='%23a98bff'/></linearGradient></defs><rect width='48' height='48' rx='12' fill='url(%23g)'/><g stroke='white' stroke-width='2.6' stroke-linecap='round' fill='none'><path d='M24 24 11 11M24 24 37 11M24 24 11 37M24 24 37 37'/></g><g fill='rgba(255,255,255,.18)' stroke='white' stroke-width='2'><circle cx='11' cy='11' r='7'/><circle cx='37' cy='11' r='7'/><circle cx='11' cy='37' r='7'/><circle cx='37' cy='37' r='7'/></g><rect x='19' y='19' width='10' height='10' rx='3' fill='white'/></svg>">
+<!-- tokens del sistema (patrón Web Components) + estilos del informe legacy (transición) -->
+<link rel="stylesheet" href="css/tokens.css">
 <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
@@ -27,19 +29,19 @@
       </svg>
     </span>
     <span class="brand-txt">
-      <span class="brand-name">Análisis de vuelos <b>DJI</b></span>
-      <span class="brand-tag">Telemetría · Recorrido · Gimbal</span>
+      <span class="brand-name" data-i18n="brand.name">Análisis de vuelos DJI</span>
+      <span class="brand-tag" data-i18n="brand.tag">Telemetría · Recorrido · Gimbal</span>
     </span>
   </a>
   <div class="spacer"></div>
-  <button class="pill-btn hidden" id="resetBtn">↺ Otro vuelo</button>
-  <button class="icon-btn" id="themeBtn" title="Cambiar tema" aria-label="Cambiar tema">🌙</button>
+  <button class="pill-btn hidden" id="resetBtn" data-i18n="chrome.reset">↺ Otro vuelo</button>
+  <button class="icon-btn" id="langBtn" data-i18n-title="chrome.lang" aria-label="Cambiar idioma">EN</button>
+  <button class="icon-btn" id="themeBtn" data-i18n-title="chrome.theme" aria-label="Cambiar tema">🌙</button>
 </header>
 
 <main id="app"></main>
 
-<!-- bundle.js (script clásico) para que funcione también con doble clic (file://).
-     Se genera con build.py a partir de los módulos de js/. -->
-<script src="js/bundle.js"></script>
+<!-- app.bundle.js: módulos de web/ unidos (node tools/bundle.mjs). Funciona con doble clic (file://). -->
+<script src="app.bundle.js"></script>
 </body>
 </html>
