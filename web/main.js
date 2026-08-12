@@ -4,10 +4,10 @@
 import './js/components/views/upload-view/upload-view.js';
 import './js/components/views/progress-view/progress-view.js';
 import { t, setLang, getLang, initLang } from './js/i18n/index.js';
+import './js/components/views/flight-report/flight-report.js';
 import { parseSRT } from './js/srt.js';
 import { keypoints } from './js/geo.js';
 import { grabFrames } from './js/frames.js';
-import { buildReport } from './js/report.js';
 
 const app = document.getElementById('app');
 
@@ -89,10 +89,11 @@ async function generate({ srtText, mp4, title }) {
     pv.setStep('map', 'done', 88);
 
     pv.setStep('render', 'active', 92); await wait(80);
-    const report = buildReport(model, assets);
     pv.setStep('render', 'done', 100); await wait(120);
     app.innerHTML = '';
+    const report = document.createElement('flight-report');
     app.appendChild(report);
+    report.show(model, assets);
     window.scrollTo({ top: 0 });
     document.getElementById('resetBtn').classList.remove('hidden');
   } catch (err) {

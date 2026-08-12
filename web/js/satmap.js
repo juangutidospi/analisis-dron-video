@@ -19,7 +19,7 @@ function colorForAlt(v, relmax) {
  * @param {Array} kps keypoints (con .frame = dataURL opcional)
  * @returns {HTMLElement}
  */
-export function buildMap(model, kps) {
+export function buildMap(model, kps, loadingText = '') {
   const tc = tileConfig(model.track);
   const { PX, PY } = projector(tc);
   const W = tc.compW, H = tc.compH;
@@ -29,6 +29,9 @@ export function buildMap(model, kps) {
   const wrap = document.createElement('div');
   wrap.className = 'map-wrap loading';
   wrap.style.aspectRatio = `${W} / ${H}`;
+  const loadingEl = document.createElement('div');
+  loadingEl.className = 'map-loading'; loadingEl.textContent = loadingText;
+  wrap.appendChild(loadingEl);
 
   const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, class: 'map-svg' });
   svg.style.cssText = 'display:block;width:100%;height:auto';
@@ -58,7 +61,7 @@ export function buildMap(model, kps) {
   // despegue
   const tk = model.takeoff;
   const tkC = el('circle', { cx: PX(tk[1]).toFixed(1), cy: PY(tk[0]).toFixed(1), r: 15, stroke: '#fff', 'stroke-width': 4 });
-  tkC.style.fill = 'var(--green)'; svg.appendChild(tkC);
+  tkC.style.fill = 'var(--c-green)'; svg.appendChild(tkC);
 
   // escala 100 m
   const res = 156543.03392 * Math.cos(tk[0] * Math.PI / 180) / (2 ** tc.z);
@@ -69,7 +72,7 @@ export function buildMap(model, kps) {
 
   // marcadores de hitos
   kps.forEach(k => {
-    svg.appendChild(el('circle', { cx: PX(k.lon).toFixed(1), cy: PY(k.lat).toFixed(1), r: 11, fill: '#fff', stroke: 'var(--accent)', 'stroke-width': 4 }));
+    svg.appendChild(el('circle', { cx: PX(k.lon).toFixed(1), cy: PY(k.lat).toFixed(1), r: 11, fill: '#fff', stroke: 'var(--color-accent)', 'stroke-width': 4 }));
   });
 
   wrap.appendChild(svg);

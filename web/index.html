@@ -6,9 +6,57 @@
 <title>Análisis de vuelos DJI</title>
 <meta name="description" content="Convierte la telemetría de tu vuelo DJI en un informe espectacular, todo en tu navegador.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%235b9dff'/><stop offset='1' stop-color='%23a98bff'/></linearGradient></defs><rect width='48' height='48' rx='12' fill='url(%23g)'/><g stroke='white' stroke-width='2.6' stroke-linecap='round' fill='none'><path d='M24 24 11 11M24 24 37 11M24 24 11 37M24 24 37 37'/></g><g fill='rgba(255,255,255,.18)' stroke='white' stroke-width='2'><circle cx='11' cy='11' r='7'/><circle cx='37' cy='11' r='7'/><circle cx='11' cy='37' r='7'/><circle cx='37' cy='37' r='7'/></g><rect x='19' y='19' width='10' height='10' rx='3' fill='white'/></svg>">
-<!-- tokens del sistema (patrón Web Components) + estilos del informe legacy (transición) -->
 <link rel="stylesheet" href="css/tokens.css">
-<link rel="stylesheet" href="css/styles.css">
+<style>
+  /* Chrome global (light DOM): body, aurora y barra superior. Todo con tokens. */
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: var(--color-bg); color: var(--color-text);
+    font-family: var(--font-body); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+  a { color: var(--color-accent); text-decoration: none; }
+  :focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; border-radius: 6px; }
+
+  .aurora { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+  .aurora::before, .aurora::after { content: ""; position: absolute; width: 60vw; height: 60vw; border-radius: 50%;
+    filter: blur(90px); opacity: .5; animation: drift 22s ease-in-out infinite; }
+  .aurora::before { background: radial-gradient(circle, var(--color-accent), transparent 60%); top: -12vw; left: -8vw; }
+  .aurora::after { background: radial-gradient(circle, var(--color-violet), transparent 60%); bottom: -16vw; right: -10vw; animation-delay: -8s; }
+  .aurora i { position: absolute; width: 46vw; height: 46vw; border-radius: 50%; filter: blur(100px); opacity: .38;
+    background: radial-gradient(circle, var(--color-accent-2), transparent 60%); top: 30%; left: 40%; animation: drift 26s ease-in-out infinite reverse; }
+  @keyframes drift { 0%, 100% { transform: translate(0,0) scale(1); } 33% { transform: translate(6vw,4vw) scale(1.12); } 66% { transform: translate(-4vw,2vw) scale(.94); } }
+  @media (prefers-reduced-motion: reduce) { .aurora::before, .aurora::after, .aurora i { animation: none; } }
+
+  .topbar { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 14px; padding: 12px 24px;
+    backdrop-filter: blur(16px) saturate(1.3); -webkit-backdrop-filter: blur(16px) saturate(1.3);
+    background: color-mix(in srgb, var(--color-bg) 68%, transparent); }
+  .topbar::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-accent) 55%, transparent) 30%, color-mix(in srgb, var(--color-violet) 55%, transparent) 70%, transparent); }
+  .brand { display: flex; align-items: center; gap: 13px; text-decoration: none; color: var(--color-text); }
+  .brand .logo { position: relative; width: 42px; height: 42px; display: grid; place-items: center; border-radius: 13px; color: #fff;
+    background: linear-gradient(140deg, var(--color-accent), var(--color-violet) 70%, var(--color-accent-2));
+    box-shadow: 0 8px 22px color-mix(in srgb, var(--color-accent) 42%, transparent), inset 0 1px 0 rgba(255,255,255,.35); overflow: hidden; transition: transform .16s; }
+  .brand .logo::before { content: ""; position: absolute; inset: 0; background: radial-gradient(120% 90% at 20% 0%, rgba(255,255,255,.4), transparent 55%); }
+  .brand:hover .logo { transform: translateY(-1px); }
+  .drone { width: 27px; height: 27px; position: relative; }
+  .drone .arms path { stroke: rgba(255,255,255,.9); stroke-width: 2.6; stroke-linecap: round; fill: none; }
+  .drone .hubs circle { fill: rgba(255,255,255,.16); stroke: rgba(255,255,255,.85); stroke-width: 2; }
+  .drone .props .prop { stroke: #fff; stroke-width: 2.2; stroke-linecap: round; fill: none; transform-box: view-box; animation: spinprop .5s linear infinite; }
+  .drone .body { fill: #fff; }
+  @keyframes spinprop { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .drone .props .prop { animation: none; } }
+  .brand-txt { display: flex; flex-direction: column; line-height: 1.05; }
+  .brand-name { font-weight: 800; font-size: 16px; letter-spacing: -.01em; }
+  .brand-tag { font-size: 10.5px; font-weight: 600; letter-spacing: .13em; text-transform: uppercase; color: var(--color-text-muted); margin-top: 3px; }
+  .spacer { flex: 1; }
+  .pill-btn { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--color-divider); background: var(--color-surface);
+    color: var(--color-text); border-radius: 100px; padding: 9px 15px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+    backdrop-filter: blur(8px); font-family: inherit; transition: transform .12s, border-color .12s; }
+  .pill-btn:hover { transform: translateY(-1px); border-color: var(--color-accent); }
+  .icon-btn { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 100px; font-size: 15px; font-weight: 700;
+    border: 1px solid var(--color-divider); background: var(--color-surface); color: var(--color-text); cursor: pointer;
+    backdrop-filter: blur(8px); font-family: inherit; transition: transform .12s, border-color .12s; }
+  .icon-btn:hover { transform: translateY(-1px); border-color: var(--color-accent); }
+  .hidden { display: none !important; }
+</style>
 </head>
 <body>
 <div class="aurora"><i></i></div>
