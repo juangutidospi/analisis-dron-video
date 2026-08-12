@@ -112,6 +112,7 @@ export default {
   'map.loading': 'Loading satellite imagery…',
   'lightbox.close': 'Close',
   'lightbox.download': 'Download',
+  'lightbox.downloading': 'Preparing 4K…',
 
   // report · altitude
   'alt.eyebrow': 'Altitude',

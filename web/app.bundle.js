@@ -81,7 +81,7 @@ async function generate({ srtText, mp4, title, place }) {
     const kps = keypoints(model);
     pv.setStep('model', 'done', 40);
 
-    const assets = { title, place: place || null, kps, hasFrames: false };
+    const assets = { title, place: place || null, kps, hasFrames: false, mp4File: mp4 || null };
     if (mp4) {
       pv.setStep('frames', 'active', 44);
       const dur = model.meta.dur;
@@ -523,6 +523,7 @@ const { DjiElement } = __req("js/core/DjiElement.js");
 const { escapeHtml } = __req("js/core/escape-html.js");
 const { t } = __req("js/i18n/index.js");
 const { downloadBlob } = __req("js/exports.js");
+const { grabFullFrame } = __req("js/frames.js");
 const { styles } = __req("js/components/ui/image-lightbox/image-lightbox.css.js");
 
 /** Visor de imagen a pantalla completa. Se abre con open(src, {time, metric, label}). */
@@ -555,14 +556,19 @@ class ImageLightbox extends DjiElement {
   async _download() {
     if (!this._src) return;
     const b = this.$('#dl');
+    const label = b.querySelector('span');
     b.disabled = true;
+    const prev = label.textContent;
     try {
-      const blob = await (await fetch(this._src)).blob();
+      // si hay vídeo + tiempo, re-extrae el fotograma a resolución nativa (4K)
+      let src = this._src;
+      if (this._full) { label.textContent = t('lightbox.downloading'); src = await grabFullFrame(this._full.file, this._full.secs); }
+      const blob = await (await fetch(src)).blob();
       downloadBlob(this._name, blob);
     } catch (e) {
       console.error(e);
     } finally {
-      b.disabled = false;
+      b.disabled = false; label.textContent = prev;
     }
   }
 
@@ -570,6 +576,7 @@ class ImageLightbox extends DjiElement {
   open(src, cap = {}) {
     if (!src) return;
     this._src = src;
+    this._full = (cap.mp4File && cap.secs != null) ? { file: cap.mp4File, secs: +cap.secs } : null;
     const base = [cap.title, cap.label, cap.time].filter(Boolean).join(' - ') || 'fotograma';
     this._name = base.replace(/:/g, '-').replace(/[/\\?%*|"<>]/g, '').trim() + '.jpg';
     const img = this.$('#img');
@@ -673,7 +680,8 @@ class MomentCard extends DjiElement {
       box.setAttribute('role', 'button');
       box.setAttribute('tabindex', '0');
       const open = () => this.emit('moment:open', {
-        img, time: this.getAttribute('time'), metric: this.getAttribute('metric'), label: this.getAttribute('label'),
+        img, time: this.getAttribute('time'), metric: this.getAttribute('metric'),
+        label: this.getAttribute('label'), secs: this.getAttribute('secs'),
       });
       this.on(box, 'click', open);
       this.on(box, 'keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
@@ -1021,7 +1029,9 @@ class FlightReport extends DjiElement {
     if (!this._lb) { this._lb = document.createElement('image-lightbox'); document.body.appendChild(this._lb); }
     if (!this._lbWired) {
       this._lbWired = true;
-      this.shadowRoot.addEventListener('moment:open', (e) => this._lb && this._lb.open(e.detail.img, { ...e.detail, title: this.assets?.title }));
+      this.shadowRoot.addEventListener('moment:open', (e) => this._lb && this._lb.open(e.detail.img, {
+        ...e.detail, title: this.assets?.title, mp4File: this.assets?.mp4File, secs: e.detail.secs != null ? +e.detail.secs : null,
+      }));
     }
   }
 
@@ -1087,7 +1097,7 @@ class FlightReport extends DjiElement {
   }
 
   _momentosTpl(a) {
-    const cards = this.kps.map((k) => `<moment-card time="${mmss(k.t)}" label="${escapeHtml(t('kp.' + k.key))}" metric="${escapeHtml(k.metric)}" sub="${escapeHtml(t('kp.' + k.key + '.sub'))}" ${k.frame ? `img="${k.frame}"` : ''}></moment-card>`).join('');
+    const cards = this.kps.map((k) => `<moment-card time="${mmss(k.t)}" secs="${k.t}" label="${escapeHtml(t('kp.' + k.key))}" metric="${escapeHtml(k.metric)}" sub="${escapeHtml(t('kp.' + k.key + '.sub'))}" ${k.frame ? `img="${k.frame}"` : ''}></moment-card>`).join('');
     let callout = '';
     if (!a.hasFrames) {
       const warn = !!a.frameError;
@@ -1243,10 +1253,14 @@ class FlightReport extends DjiElement {
     this.$('#exp').flight = { model: this.model, assets: this.assets };
 
     // tira de luz: también abre el visor (los momentos se cablean en connectedCallback)
-    this.$$('.lstrip figure').forEach((fig) => {
+    const lightFracs = [0.15, 0.5, 0.92];
+    this.$$('.lstrip figure').forEach((fig, i) => {
       const img = fig.querySelector('img'); if (!img) return;
       img.style.cursor = 'zoom-in';
-      this.on(img, 'click', () => this._lb && this._lb.open(img.src, { label: fig.querySelector('figcaption')?.textContent?.trim(), title: this.assets?.title }));
+      this.on(img, 'click', () => this._lb && this._lb.open(img.src, {
+        label: fig.querySelector('figcaption')?.textContent?.trim(), title: this.assets?.title,
+        mp4File: this.assets?.mp4File, secs: this.model.meta.dur * lightFracs[i],
+      }));
     });
   }
 }
@@ -1722,9 +1736,10 @@ __m["js/frames.js"] = function (__x, __req) {
  * @param {number[]} times segundos a capturar
  * @param {(p:number)=>void} onProgress 0..1
  * @param {number} maxW ancho máximo de salida
+ * @param {number} quality calidad JPEG (0..1)
  * @returns {Promise<string[]>} dataURLs alineados con `times`
  */
-async function grabFrames(file, times, onProgress = () => {}, maxW = 960) {
+async function grabFrames(file, times, onProgress = () => {}, maxW = 1600, quality = 0.9) {
   const url = URL.createObjectURL(file);
   const v = document.createElement('video');
   v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
@@ -1741,13 +1756,22 @@ async function grabFrames(file, times, onProgress = () => {}, maxW = 960) {
       const t = Math.max(0, Math.min((v.duration || 1e9) - 0.05, times[i]));
       await seek(v, t);
       ctx.drawImage(v, 0, 0, cw, ch);
-      out.push(canvas.toDataURL('image/jpeg', 0.82));
+      out.push(canvas.toDataURL('image/jpeg', quality));
       onProgress((i + 1) / times.length);
     }
     return out;
   } finally {
     v.removeAttribute('src'); v.load(); URL.revokeObjectURL(url);
   }
+}
+
+/**
+ * Extrae un solo fotograma a resolución nativa del vídeo (para descargar en 4K).
+ * @param {File} file @param {number} secs @returns {Promise<string>} dataURL
+ */
+async function grabFullFrame(file, secs) {
+  const [url] = await grabFrames(file, [secs], () => {}, 1e9, 0.95);
+  return url;
 }
 
 function once(target, ev) {
@@ -1772,7 +1796,7 @@ function seek(v, t) {
   });
 }
 
-Object.assign(__x, { grabFrames });
+Object.assign(__x, { grabFrames, grabFullFrame });
 
 };
 
@@ -1997,6 +2021,7 @@ __x.default = {
   'map.loading': 'Loading satellite imagery…',
   'lightbox.close': 'Close',
   'lightbox.download': 'Download',
+  'lightbox.downloading': 'Preparing 4K…',
 
   // report · altitude
   'alt.eyebrow': 'Altitude',
@@ -2174,6 +2199,7 @@ __x.default = {
   'map.loading': 'Cargando imagen de satélite…',
   'lightbox.close': 'Cerrar',
   'lightbox.download': 'Descargar',
+  'lightbox.downloading': 'Preparando 4K…',
 
   // informe · altitud
   'alt.eyebrow': 'Altitud',

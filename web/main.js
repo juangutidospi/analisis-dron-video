@@ -62,7 +62,7 @@ async function generate({ srtText, mp4, title, place }) {
     const kps = keypoints(model);
     pv.setStep('model', 'done', 40);
 
-    const assets = { title, place: place || null, kps, hasFrames: false };
+    const assets = { title, place: place || null, kps, hasFrames: false, mp4File: mp4 || null };
     if (mp4) {
       pv.setStep('frames', 'active', 44);
       const dur = model.meta.dur;

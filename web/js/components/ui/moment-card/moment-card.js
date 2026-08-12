@@ -32,7 +32,8 @@ export class MomentCard extends DjiElement {
       box.setAttribute('role', 'button');
       box.setAttribute('tabindex', '0');
       const open = () => this.emit('moment:open', {
-        img, time: this.getAttribute('time'), metric: this.getAttribute('metric'), label: this.getAttribute('label'),
+        img, time: this.getAttribute('time'), metric: this.getAttribute('metric'),
+        label: this.getAttribute('label'), secs: this.getAttribute('secs'),
       });
       this.on(box, 'click', open);
       this.on(box, 'keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });

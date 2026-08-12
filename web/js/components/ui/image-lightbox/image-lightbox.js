@@ -2,6 +2,7 @@ import { DjiElement } from '../../../core/DjiElement.js';
 import { escapeHtml } from '../../../core/escape-html.js';
 import { t } from '../../../i18n/index.js';
 import { downloadBlob } from '../../../exports.js';
+import { grabFullFrame } from '../../../frames.js';
 import { styles } from './image-lightbox.css.js';
 
 /** Visor de imagen a pantalla completa. Se abre con open(src, {time, metric, label}). */
@@ -34,14 +35,19 @@ export class ImageLightbox extends DjiElement {
   async _download() {
     if (!this._src) return;
     const b = this.$('#dl');
+    const label = b.querySelector('span');
     b.disabled = true;
+    const prev = label.textContent;
     try {
-      const blob = await (await fetch(this._src)).blob();
+      // si hay vídeo + tiempo, re-extrae el fotograma a resolución nativa (4K)
+      let src = this._src;
+      if (this._full) { label.textContent = t('lightbox.downloading'); src = await grabFullFrame(this._full.file, this._full.secs); }
+      const blob = await (await fetch(src)).blob();
       downloadBlob(this._name, blob);
     } catch (e) {
       console.error(e);
     } finally {
-      b.disabled = false;
+      b.disabled = false; label.textContent = prev;
     }
   }
 
@@ -49,6 +55,7 @@ export class ImageLightbox extends DjiElement {
   open(src, cap = {}) {
     if (!src) return;
     this._src = src;
+    this._full = (cap.mp4File && cap.secs != null) ? { file: cap.mp4File, secs: +cap.secs } : null;
     const base = [cap.title, cap.label, cap.time].filter(Boolean).join(' - ') || 'fotograma';
     this._name = base.replace(/:/g, '-').replace(/[/\\?%*|"<>]/g, '').trim() + '.jpg';
     const img = this.$('#img');

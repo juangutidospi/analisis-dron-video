@@ -63,7 +63,9 @@ export class FlightReport extends DjiElement {
     if (!this._lb) { this._lb = document.createElement('image-lightbox'); document.body.appendChild(this._lb); }
     if (!this._lbWired) {
       this._lbWired = true;
-      this.shadowRoot.addEventListener('moment:open', (e) => this._lb && this._lb.open(e.detail.img, { ...e.detail, title: this.assets?.title }));
+      this.shadowRoot.addEventListener('moment:open', (e) => this._lb && this._lb.open(e.detail.img, {
+        ...e.detail, title: this.assets?.title, mp4File: this.assets?.mp4File, secs: e.detail.secs != null ? +e.detail.secs : null,
+      }));
     }
   }
 
@@ -129,7 +131,7 @@ export class FlightReport extends DjiElement {
   }
 
   _momentosTpl(a) {
-    const cards = this.kps.map((k) => `<moment-card time="${mmss(k.t)}" label="${escapeHtml(t('kp.' + k.key))}" metric="${escapeHtml(k.metric)}" sub="${escapeHtml(t('kp.' + k.key + '.sub'))}" ${k.frame ? `img="${k.frame}"` : ''}></moment-card>`).join('');
+    const cards = this.kps.map((k) => `<moment-card time="${mmss(k.t)}" secs="${k.t}" label="${escapeHtml(t('kp.' + k.key))}" metric="${escapeHtml(k.metric)}" sub="${escapeHtml(t('kp.' + k.key + '.sub'))}" ${k.frame ? `img="${k.frame}"` : ''}></moment-card>`).join('');
     let callout = '';
     if (!a.hasFrames) {
       const warn = !!a.frameError;
@@ -285,10 +287,14 @@ export class FlightReport extends DjiElement {
     this.$('#exp').flight = { model: this.model, assets: this.assets };
 
     // tira de luz: también abre el visor (los momentos se cablean en connectedCallback)
-    this.$$('.lstrip figure').forEach((fig) => {
+    const lightFracs = [0.15, 0.5, 0.92];
+    this.$$('.lstrip figure').forEach((fig, i) => {
       const img = fig.querySelector('img'); if (!img) return;
       img.style.cursor = 'zoom-in';
-      this.on(img, 'click', () => this._lb && this._lb.open(img.src, { label: fig.querySelector('figcaption')?.textContent?.trim(), title: this.assets?.title }));
+      this.on(img, 'click', () => this._lb && this._lb.open(img.src, {
+        label: fig.querySelector('figcaption')?.textContent?.trim(), title: this.assets?.title,
+        mp4File: this.assets?.mp4File, secs: this.model.meta.dur * lightFracs[i],
+      }));
     });
   }
 }
