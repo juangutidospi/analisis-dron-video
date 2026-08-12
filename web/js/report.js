@@ -5,7 +5,8 @@ import { timeChart } from './charts.js';
 import { buildMap } from './satmap.js';
 import { keypoints, mmss } from './geo.js';
 import { hav } from './srt.js';
-import { toGPX, toKML, toCSV, download } from './exports.js';
+import { toGPX, toKML, toCSV, download, downloadBlob } from './exports.js';
+import { buildKMZ } from './kmz.js';
 
 const f = (v, d = 0) => v == null ? '—' : v.toFixed(d);
 const nfmt = (n) => n.toLocaleString('es-ES');
@@ -74,8 +75,11 @@ export function buildReport(model, assets) {
       <div class="eyebrow-2">Momentos clave</div>
       <h2>Ocho instantes del vuelo</h2>
       <p class="sub">Cada tarjeta marca un hito del vuelo con su marca de tiempo y su dato destacado${assets.hasFrames ? ', sobre el fotograma real del vídeo' : ''}.</p>
+      ${!assets.hasFrames ? `<div class="callout ${assets.frameError ? 'warn' : ''}" style="margin:0 0 22px">${assets.frameError
+        ? `<b>⚠️ Vídeo no decodificado</b>${assets.frameError}`
+        : `<b>🎬 Añade el vídeo para ver los fotogramas</b>Vuelve a empezar y añade el <code>.MP4</code> del vuelo: los ocho momentos aparecerán con la imagen real de cada instante. El vídeo se procesa en tu equipo, no se sube.`}</div>` : ''}
       <div class="mos">${kps.map(k => `
-        <figure class="mo"><div class="mo-img">${k.frame ? `<img src="${k.frame}" alt="${esc(k.label)}">` : `<div class="ph">sin vídeo</div>`}<span class="mo-t">${mmss(k.t)}</span></div>
+        <figure class="mo"><div class="mo-img">${k.frame ? `<img src="${k.frame}" alt="${esc(k.label)}">` : `<div class="ph"><span class="ph-ico">🎞️</span></div>`}<span class="mo-t">${mmss(k.t)}</span></div>
         <figcaption class="mo-cap"><div class="mo-label">${esc(k.label)}</div><div class="mo-metric">${esc(k.metric)}</div><div class="mo-sub">${esc(k.sub)}</div></figcaption></figure>`).join('')}</div>
     </section>
 
@@ -164,11 +168,12 @@ export function buildReport(model, assets) {
         <div class="card">
           <h3>Descargar datos del vuelo</h3>
           <div class="exports">
+            <button class="exp-btn exp-kmz" data-exp="kmz">🌍 KMZ 3D para Google Earth</button>
             <button class="exp-btn" data-exp="gpx">🛰️ GPX</button>
             <button class="exp-btn" data-exp="kml">🗺️ KML</button>
             <button class="exp-btn" data-exp="csv">📊 CSV</button>
           </div>
-          <p class="chart-note">El <code>.csv</code> incluye todos los datos por fotograma; <code>.gpx</code>/<code>.kml</code> abren el trazado en Google Earth y apps de mapas.</p>
+          <p class="chart-note">El <code>.kmz</code> reproduce el vuelo <b>animado en 3D</b> en Google Earth, con muros de altitud, los momentos clave y${assets.hasFrames ? '' : ' (si añades el vídeo)'} los fotogramas incrustados. El <code>.csv</code> tiene todos los datos por fotograma; <code>.gpx</code>/<code>.kml</code> abren el trazado en apps de mapas.</p>
         </div>
       </div>
     </section>
@@ -208,6 +213,12 @@ export function buildReport(model, assets) {
       if (kind === 'gpx') download(name + '.gpx', toGPX(model, name), 'application/gpx+xml');
       if (kind === 'kml') download(name + '.kml', toKML(model, name), 'application/vnd.google-earth.kml+xml');
       if (kind === 'csv') download(name + '.csv', toCSV(model), 'text/csv');
+      if (kind === 'kmz') {
+        const prev = b.textContent; b.disabled = true; b.textContent = '⏳ Generando KMZ…';
+        try { const { blob, filename } = buildKMZ(model, { ...assets, kps }); downloadBlob(filename, blob); }
+        catch (e) { console.error(e); alert('No se pudo generar el KMZ: ' + e.message); }
+        finally { b.disabled = false; b.textContent = prev; }
+      }
     }));
   });
 

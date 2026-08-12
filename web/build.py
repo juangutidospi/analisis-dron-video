@@ -6,7 +6,7 @@ este script tras cada cambio: python3 build.py
 """
 import re, os
 
-ORDER = ['srt', 'geo', 'charts', 'satmap', 'exports', 'frames', 'report', 'app']
+ORDER = ['srt', 'geo', 'charts', 'satmap', 'exports', 'zip', 'kmz', 'frames', 'report', 'app']
 HERE = os.path.dirname(os.path.abspath(__file__))
 JS = os.path.join(HERE, 'js')
 

@@ -29,7 +29,11 @@ export function toCSV(model) {
 
 /** Dispara la descarga de un texto como archivo. */
 export function download(filename, text, type = 'text/plain') {
-  const blob = new Blob([text], { type });
+  downloadBlob(filename, new Blob([text], { type }));
+}
+
+/** Dispara la descarga de un Blob como archivo. */
+export function downloadBlob(filename, blob) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = filename;
   document.body.appendChild(a); a.click(); a.remove();
