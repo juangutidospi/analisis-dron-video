@@ -499,6 +499,13 @@ img { max-width: 100%; max-height: 82vh; border-radius: 14px; box-shadow: var(--
 figcaption { color: #e8eaf0; font-size: 14px; display: flex; gap: 10px; align-items: baseline; justify-content: center; flex-wrap: wrap; }
 .cap-time { background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.2); border-radius: 100px; padding: 3px 10px; font-size: 12px; font-weight: 700; }
 .cap-metric { font-weight: 800; font-size: 18px; color: #fff; }
+.dl {
+  display: inline-flex; align-items: center; gap: 8px; border: 1px solid rgba(255,255,255,.22); background: rgba(255,255,255,.12);
+  color: #fff; border-radius: 100px; padding: 10px 18px; font-size: 13.5px; font-weight: 600; cursor: pointer; font-family: inherit;
+  transition: background .12s, transform .12s;
+}
+.dl:hover { background: rgba(255,255,255,.24); transform: translateY(-1px); }
+.dl:disabled { opacity: .6; cursor: default; transform: none; }
 .close {
   position: fixed; top: 18px; right: 18px; width: 44px; height: 44px; border-radius: 100px; border: 1px solid rgba(255,255,255,.22);
   background: rgba(255,255,255,.12); color: #fff; font-size: 18px; cursor: pointer; display: grid; place-items: center;
@@ -515,6 +522,7 @@ __m["js/components/ui/image-lightbox/image-lightbox.js"] = function (__x, __req)
 const { DjiElement } = __req("js/core/DjiElement.js");
 const { escapeHtml } = __req("js/core/escape-html.js");
 const { t } = __req("js/i18n/index.js");
+const { downloadBlob } = __req("js/exports.js");
 const { styles } = __req("js/components/ui/image-lightbox/image-lightbox.css.js");
 
 /** Visor de imagen a pantalla completa. Se abre con open(src, {time, metric, label}). */
@@ -534,17 +542,36 @@ class ImageLightbox extends DjiElement {
       <figure>
         <img id="img" src="" alt="">
         <figcaption id="cap"></figcaption>
+        <button class="dl" id="dl" type="button">⤓ <span>${escapeHtml(t('lightbox.download'))}</span></button>
       </figure>`;
   }
 
   afterRender() {
     this.on(this, 'click', (e) => { if (e.target === this) this.close(); });
     this.on(this.$('#x'), 'click', () => this.close());
+    this.on(this.$('#dl'), 'click', () => this._download());
   }
 
-  /** @param {string} src @param {{time?:string, metric?:string, label?:string}} [cap] */
+  async _download() {
+    if (!this._src) return;
+    const b = this.$('#dl');
+    b.disabled = true;
+    try {
+      const blob = await (await fetch(this._src)).blob();
+      downloadBlob(this._name, blob);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      b.disabled = false;
+    }
+  }
+
+  /** @param {string} src @param {{time?:string, metric?:string, label?:string, title?:string}} [cap] */
   open(src, cap = {}) {
     if (!src) return;
+    this._src = src;
+    const base = [cap.title, cap.label, cap.time].filter(Boolean).join(' - ') || 'fotograma';
+    this._name = base.replace(/:/g, '-').replace(/[/\\?%*|"<>]/g, '').trim() + '.jpg';
     const img = this.$('#img');
     img.src = src; img.alt = cap.label || '';
     this.$('#cap').innerHTML = `${cap.time ? `<span class="cap-time">${escapeHtml(cap.time)}</span>` : ''}`
@@ -994,7 +1021,7 @@ class FlightReport extends DjiElement {
     if (!this._lb) { this._lb = document.createElement('image-lightbox'); document.body.appendChild(this._lb); }
     if (!this._lbWired) {
       this._lbWired = true;
-      this.shadowRoot.addEventListener('moment:open', (e) => this._lb && this._lb.open(e.detail.img, e.detail));
+      this.shadowRoot.addEventListener('moment:open', (e) => this._lb && this._lb.open(e.detail.img, { ...e.detail, title: this.assets?.title }));
     }
   }
 
@@ -1219,7 +1246,7 @@ class FlightReport extends DjiElement {
     this.$$('.lstrip figure').forEach((fig) => {
       const img = fig.querySelector('img'); if (!img) return;
       img.style.cursor = 'zoom-in';
-      this.on(img, 'click', () => this._lb && this._lb.open(img.src, { label: fig.querySelector('figcaption')?.textContent?.trim() }));
+      this.on(img, 'click', () => this._lb && this._lb.open(img.src, { label: fig.querySelector('figcaption')?.textContent?.trim(), title: this.assets?.title }));
     });
   }
 }
@@ -1969,6 +1996,7 @@ __x.default = {
   'route.note': 'Satellite imagery: Esri World Imagery · track reconstructed from the flight GPS',
   'map.loading': 'Loading satellite imagery…',
   'lightbox.close': 'Close',
+  'lightbox.download': 'Download',
 
   // report · altitude
   'alt.eyebrow': 'Altitude',
@@ -2145,6 +2173,7 @@ __x.default = {
   'route.note': 'Imagen de satélite: Esri World Imagery · trazado reconstruido con el GPS del vuelo',
   'map.loading': 'Cargando imagen de satélite…',
   'lightbox.close': 'Cerrar',
+  'lightbox.download': 'Descargar',
 
   // informe · altitud
   'alt.eyebrow': 'Altitud',

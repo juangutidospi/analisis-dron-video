@@ -111,6 +111,7 @@ export default {
   'route.note': 'Imagen de satélite: Esri World Imagery · trazado reconstruido con el GPS del vuelo',
   'map.loading': 'Cargando imagen de satélite…',
   'lightbox.close': 'Cerrar',
+  'lightbox.download': 'Descargar',
 
   // informe · altitud
   'alt.eyebrow': 'Altitud',

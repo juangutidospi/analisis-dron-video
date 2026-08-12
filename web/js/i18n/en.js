@@ -111,6 +111,7 @@ export default {
   'route.note': 'Satellite imagery: Esri World Imagery · track reconstructed from the flight GPS',
   'map.loading': 'Loading satellite imagery…',
   'lightbox.close': 'Close',
+  'lightbox.download': 'Download',
 
   // report · altitude
   'alt.eyebrow': 'Altitude',
