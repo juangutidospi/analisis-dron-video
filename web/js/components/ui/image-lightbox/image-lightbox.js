@@ -39,11 +39,15 @@ export class ImageLightbox extends DjiElement {
     b.disabled = true;
     const prev = label.textContent;
     try {
-      // si hay vídeo + tiempo, re-extrae el fotograma a resolución nativa (4K)
-      let src = this._src;
-      if (this._full) { label.textContent = t('lightbox.downloading'); src = await grabFullFrame(this._full.file, this._full.secs); }
+      // si hay vídeo + tiempo, re-extrae el fotograma a resolución nativa sin pérdidas (PNG)
+      let src = this._src, name = this._name;
+      if (this._full) {
+        label.textContent = t('lightbox.downloading');
+        src = await grabFullFrame(this._full.file, this._full.secs);
+        name = name.replace(/\.jpg$/, '.png');
+      }
       const blob = await (await fetch(src)).blob();
-      downloadBlob(this._name, blob);
+      downloadBlob(name, blob);
     } catch (e) {
       console.error(e);
     } finally {

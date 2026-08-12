@@ -560,11 +560,15 @@ class ImageLightbox extends DjiElement {
     b.disabled = true;
     const prev = label.textContent;
     try {
-      // si hay vídeo + tiempo, re-extrae el fotograma a resolución nativa (4K)
-      let src = this._src;
-      if (this._full) { label.textContent = t('lightbox.downloading'); src = await grabFullFrame(this._full.file, this._full.secs); }
+      // si hay vídeo + tiempo, re-extrae el fotograma a resolución nativa sin pérdidas (PNG)
+      let src = this._src, name = this._name;
+      if (this._full) {
+        label.textContent = t('lightbox.downloading');
+        src = await grabFullFrame(this._full.file, this._full.secs);
+        name = name.replace(/\.jpg$/, '.png');
+      }
       const blob = await (await fetch(src)).blob();
-      downloadBlob(this._name, blob);
+      downloadBlob(name, blob);
     } catch (e) {
       console.error(e);
     } finally {
@@ -1737,9 +1741,10 @@ __m["js/frames.js"] = function (__x, __req) {
  * @param {(p:number)=>void} onProgress 0..1
  * @param {number} maxW ancho máximo de salida
  * @param {number} quality calidad JPEG (0..1)
+ * @param {string} type tipo MIME de salida ('image/jpeg' | 'image/png')
  * @returns {Promise<string[]>} dataURLs alineados con `times`
  */
-async function grabFrames(file, times, onProgress = () => {}, maxW = 1600, quality = 0.9) {
+async function grabFrames(file, times, onProgress = () => {}, maxW = 1600, quality = 0.9, type = 'image/jpeg') {
   const url = URL.createObjectURL(file);
   const v = document.createElement('video');
   v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
@@ -1756,7 +1761,7 @@ async function grabFrames(file, times, onProgress = () => {}, maxW = 1600, quali
       const t = Math.max(0, Math.min((v.duration || 1e9) - 0.05, times[i]));
       await seek(v, t);
       ctx.drawImage(v, 0, 0, cw, ch);
-      out.push(canvas.toDataURL('image/jpeg', quality));
+      out.push(canvas.toDataURL(type, quality));
       onProgress((i + 1) / times.length);
     }
     return out;
@@ -1766,11 +1771,12 @@ async function grabFrames(file, times, onProgress = () => {}, maxW = 1600, quali
 }
 
 /**
- * Extrae un solo fotograma a resolución nativa del vídeo (para descargar en 4K).
- * @param {File} file @param {number} secs @returns {Promise<string>} dataURL
+ * Extrae un solo fotograma a resolución nativa del vídeo, sin pérdidas (PNG),
+ * para descargar en la máxima calidad posible (limitada por el propio códec del vídeo).
+ * @param {File} file @param {number} secs @returns {Promise<string>} dataURL PNG
  */
 async function grabFullFrame(file, secs) {
-  const [url] = await grabFrames(file, [secs], () => {}, 1e9, 0.95);
+  const [url] = await grabFrames(file, [secs], () => {}, 1e9, 1, 'image/png');
   return url;
 }
 

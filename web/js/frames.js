@@ -8,9 +8,10 @@
  * @param {(p:number)=>void} onProgress 0..1
  * @param {number} maxW ancho máximo de salida
  * @param {number} quality calidad JPEG (0..1)
+ * @param {string} type tipo MIME de salida ('image/jpeg' | 'image/png')
  * @returns {Promise<string[]>} dataURLs alineados con `times`
  */
-export async function grabFrames(file, times, onProgress = () => {}, maxW = 1600, quality = 0.9) {
+export async function grabFrames(file, times, onProgress = () => {}, maxW = 1600, quality = 0.9, type = 'image/jpeg') {
   const url = URL.createObjectURL(file);
   const v = document.createElement('video');
   v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
@@ -27,7 +28,7 @@ export async function grabFrames(file, times, onProgress = () => {}, maxW = 1600
       const t = Math.max(0, Math.min((v.duration || 1e9) - 0.05, times[i]));
       await seek(v, t);
       ctx.drawImage(v, 0, 0, cw, ch);
-      out.push(canvas.toDataURL('image/jpeg', quality));
+      out.push(canvas.toDataURL(type, quality));
       onProgress((i + 1) / times.length);
     }
     return out;
@@ -37,11 +38,12 @@ export async function grabFrames(file, times, onProgress = () => {}, maxW = 1600
 }
 
 /**
- * Extrae un solo fotograma a resolución nativa del vídeo (para descargar en 4K).
- * @param {File} file @param {number} secs @returns {Promise<string>} dataURL
+ * Extrae un solo fotograma a resolución nativa del vídeo, sin pérdidas (PNG),
+ * para descargar en la máxima calidad posible (limitada por el propio códec del vídeo).
+ * @param {File} file @param {number} secs @returns {Promise<string>} dataURL PNG
  */
 export async function grabFullFrame(file, secs) {
-  const [url] = await grabFrames(file, [secs], () => {}, 1e9, 0.95);
+  const [url] = await grabFrames(file, [secs], () => {}, 1e9, 1, 'image/png');
   return url;
 }
 
