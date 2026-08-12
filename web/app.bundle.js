@@ -214,9 +214,8 @@ function timeChart(host, series, dur, cfgs) {
 
   const tip = document.createElement('div'); tip.className = 'chart-tip'; host.appendChild(tip);
 
-  const move = (clientX) => {
-    const rect = svg.getBoundingClientRect();
-    const t = Math.max(0, Math.min(dur, ((clientX - rect.left) / rect.width * W - L) / (W - L - R) * dur));
+  // posiciona el cursor (crosshair + puntos + tooltip) en un instante t
+  const showAtTime = (t) => {
     const s = series.reduce((a, b) => Math.abs(b.t - t) < Math.abs(a.t - t) ? b : a);
     const x = X(s.t);
     cross.setAttribute('d', `M${x},${Tp} L${x},${H - B}`); cross.style.opacity = '1';
@@ -228,16 +227,25 @@ function timeChart(host, series, dur, cfgs) {
       html += `<br><i style="background:var(${cf.color})"></i>${cf.label}: ${v.toFixed(cf.dec)}${cf.unit ? ' ' + cf.unit : ''}`;
     });
     tip.innerHTML = html;
-    const px = (x / W) * rect.width;
+    const w = svg.getBoundingClientRect().width || W;
+    const px = (x / W) * w;
     tip.style.left = px + 'px';
-    tip.classList.toggle('flip', px > rect.width * 0.62);
+    tip.classList.toggle('flip', px > w * 0.62);
     tip.style.opacity = '1';
+  };
+  const move = (clientX) => {
+    const rect = svg.getBoundingClientRect();
+    const t = Math.max(0, Math.min(dur, ((clientX - rect.left) / rect.width * W - L) / (W - L - R) * dur));
+    showAtTime(t);
   };
   const leave = () => { cross.style.opacity = '0'; dots.forEach(d => d.style.opacity = '0'); tip.style.opacity = '0'; };
   svg.addEventListener('pointermove', e => move(e.clientX));
   svg.addEventListener('pointerdown', e => move(e.clientX));
   svg.addEventListener('pointerleave', leave);
   svg.style.touchAction = 'pan-y';
+
+  // handle para el reproductor: mover el cursor por tiempo, o esconderlo
+  return { showAtTime, leave };
 }
 
 const mmssLocal = (t) => { t = Math.round(t); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
@@ -503,6 +511,122 @@ class ExportBar extends DjiElement {
 customElements.define('export-bar', ExportBar);
 
 Object.assign(__x, { ExportBar });
+
+};
+
+__m["js/components/ui/flight-player/flight-player.css.js"] = function (__x, __req) {
+const { css } = __req("js/core/css.js");
+
+const styles = css`
+:host { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: flex; justify-content: center; padding: 0 14px 16px; pointer-events: none; }
+:host([hidden]) { display: none; }
+.player {
+  pointer-events: auto; display: flex; align-items: center; gap: 13px; width: min(720px, 100%);
+  background: color-mix(in srgb, var(--color-surface-solid) 92%, transparent); border: 1px solid var(--color-divider);
+  border-radius: 100px; padding: 10px 16px; box-shadow: var(--shadow-lg); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  animation: rise .35s cubic-bezier(.22,1,.36,1) both;
+}
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } }
+@media (prefers-reduced-motion: reduce) { .player { animation: none; } }
+
+.play {
+  width: 42px; height: 42px; flex: none; border-radius: 50%; border: none; cursor: pointer; color: #fff; font-size: 15px;
+  display: grid; place-items: center; background: linear-gradient(135deg, var(--color-accent), var(--color-violet));
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--color-accent) 40%, transparent); transition: transform .12s;
+}
+.play:hover { transform: scale(1.06); }
+.time { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; min-width: 40px; text-align: center; }
+.bar { flex: 1; height: 7px; border-radius: 100px; background: color-mix(in srgb, var(--color-text) 13%, transparent); position: relative; cursor: pointer; touch-action: none; }
+.fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 100px; background: linear-gradient(90deg, var(--color-accent), var(--color-violet)); }
+.fill::after { content: ""; position: absolute; right: -7px; top: 50%; width: 14px; height: 14px; border-radius: 50%; background: #fff; transform: translateY(-50%); box-shadow: 0 1px 5px rgba(0,0,0,.45); }
+.speeds { display: flex; gap: 4px; flex: none; }
+.speeds button {
+  border: 1px solid var(--color-divider); background: transparent; color: var(--color-text-muted); border-radius: 8px;
+  padding: 5px 8px; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; min-width: 32px;
+}
+.speeds button.on { color: #fff; background: var(--color-accent); border-color: transparent; }
+
+@media (max-width: 480px) {
+  .player { gap: 10px; padding: 9px 12px; }
+  .speeds button { padding: 5px 6px; min-width: 28px; font-size: 11px; }
+  .time { min-width: 34px; font-size: 11.5px; }
+}
+`;
+
+Object.assign(__x, { styles });
+
+};
+
+__m["js/components/ui/flight-player/flight-player.js"] = function (__x, __req) {
+const { DjiElement } = __req("js/core/DjiElement.js");
+const { mmss } = __req("js/geo.js");
+const { t } = __req("js/i18n/index.js");
+const { styles } = __req("js/components/ui/flight-player/flight-player.css.js");
+
+/**
+ * Barra de reproducción del vuelo (flotante). Recibe el reloj por propiedad:
+ *   el.clock = playerClock
+ * y traduce sus acciones (play/pausa, buscar, velocidad) al reloj.
+ */
+class FlightPlayer extends DjiElement {
+  static styles = [styles];
+
+  /** @param {import('../../../core/player-clock.js').PlayerClock} c */
+  set clock(c) { this._clock = c; if (this.isConnected) this._paint(); }
+  get clock() { return this._clock; }
+
+  render() {
+    this.shadowRoot.innerHTML = `
+      <div class="player">
+        <button class="play" id="play" type="button" aria-label="${t('player.play')}">▶</button>
+        <span class="time" id="cur">0:00</span>
+        <div class="bar" id="bar" role="slider" aria-label="${t('player.seek')}"><div class="fill" id="fill"></div></div>
+        <span class="time" id="tot">0:00</span>
+        <div class="speeds">
+          <button data-sp="1" type="button">1×</button>
+          <button data-sp="2" type="button">2×</button>
+          <button data-sp="4" type="button">4×</button>
+        </div>
+      </div>`;
+  }
+
+  afterRender() {
+    const c = this._clock;
+    if (!c) return;
+    this.$('#tot').textContent = mmss(c.dur);
+    this.on(this.$('#play'), 'click', () => c.toggle());
+    this.$$('[data-sp]').forEach((b) => this.on(b, 'click', () => c.setSpeed(+b.dataset.sp)));
+
+    const bar = this.$('#bar');
+    const seekFromX = (x) => { const r = bar.getBoundingClientRect(); c.seek(Math.max(0, Math.min(1, (x - r.left) / r.width)) * c.dur); };
+    this.on(bar, 'pointerdown', (e) => { bar.setPointerCapture(e.pointerId); this._drag = true; c.pause(); seekFromX(e.clientX); });
+    this.on(bar, 'pointermove', (e) => { if (this._drag) seekFromX(e.clientX); });
+    this.on(bar, 'pointerup', () => { this._drag = false; });
+
+    // suscripción única al reloj (sobrevive a los re-render de i18n)
+    if (!this._subbed) {
+      this._subbed = true;
+      const sync = () => this._sync();
+      c.addEventListener('tick', sync);
+      c.addEventListener('state', sync);
+    }
+    this._sync();
+  }
+
+  _sync() {
+    const c = this._clock;
+    if (!c || !this.isConnected) return;
+    const f = c.dur ? c.t / c.dur : 0;
+    const fill = this.$('#fill'); if (fill) fill.style.width = (f * 100) + '%';
+    const cur = this.$('#cur'); if (cur) cur.textContent = mmss(c.t);
+    const play = this.$('#play'); if (play) { play.textContent = c.playing ? '❚❚' : '▶'; play.setAttribute('aria-label', t(c.playing ? 'player.pause' : 'player.play')); }
+    this.$$('[data-sp]').forEach((b) => b.classList.toggle('on', +b.dataset.sp === c.speed));
+  }
+}
+
+customElements.define('flight-player', FlightPlayer);
+
+Object.assign(__x, { FlightPlayer });
 
 };
 
@@ -796,8 +920,15 @@ class SatMap extends DjiElement {
   afterRender() {
     const f = this._flight;
     if (!f) return;
-    this.$('#slot').replaceChildren(buildMap(f.model, f.kps, t('map.loading')));
+    this._map = buildMap(f.model, f.kps, t('map.loading'));
+    this.$('#slot').replaceChildren(this._map.el);
   }
+
+  /** Mueve el dron al instante t (reproducción). */
+  playhead(t) { this._map && this._map.setPlayhead(t); }
+
+  /** Esconde el dron. */
+  clearPlayhead() { this._map && this._map.clearPlayhead(); }
 }
 
 customElements.define('sat-map', SatMap);
@@ -914,8 +1045,14 @@ class TimeChart extends DjiElement {
   afterRender() {
     const d = this._data;
     if (!d) return;
-    timeChart(this.$('#box'), d.series, d.dur, d.cfgs);
+    this._chart = timeChart(this.$('#box'), d.series, d.dur, d.cfgs);
   }
+
+  /** Coloca el cursor en el instante t (reproducción). */
+  playhead(t) { this._chart && this._chart.showAtTime(t); }
+
+  /** Esconde el cursor de reproducción. */
+  clearPlayhead() { this._chart && this._chart.leave(); }
 }
 
 customElements.define('time-chart', TimeChart);
@@ -1019,6 +1156,8 @@ __req("js/components/ui/time-chart/time-chart.js");
 __req("js/components/ui/sat-map/sat-map.js");
 __req("js/components/ui/export-bar/export-bar.js");
 __req("js/components/ui/image-lightbox/image-lightbox.js");
+__req("js/components/ui/flight-player/flight-player.js");
+const { PlayerClock } = __req("js/core/player-clock.js");
 const { styles } = __req("js/components/views/flight-report/flight-report.css.js");
 
 const f = (v, d = 0) => (v == null ? '—' : v.toFixed(d));
@@ -1080,6 +1219,8 @@ class FlightReport extends DjiElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     if (this._lb) { this._lb.remove(); this._lb = null; }
+    if (this._clock) { this._clock.destroy(); this._clock = null; }
+    if (this._player) { this._player.remove(); this._player = null; }
   }
 
   _heroTpl(m, r, dur, relmax, hsmax) {
@@ -1304,6 +1445,28 @@ class FlightReport extends DjiElement {
         mp4File: this.assets?.mp4File, secs: this.model.meta.dur * lightFracs[i],
       }));
     });
+
+    this._setupPlayer();
+  }
+
+  /** Reproducción del vuelo: reloj + barra flotante + sincronía de mapa y gráficas. */
+  _setupPlayer() {
+    if (!this.model) return;
+    if (!this._clock) {
+      this._clock = new PlayerClock(this.model.meta.dur);
+      this._clock.addEventListener('tick', (e) => this._onTick(e.detail.t));
+    }
+    if (!this._player) {
+      this._player = document.createElement('flight-player');
+      document.body.appendChild(this._player);
+    }
+    this._player.clock = this._clock;
+  }
+
+  /** Propaga el instante actual al mapa y a todas las gráficas. */
+  _onTick(t) {
+    this.$('#map')?.playhead(t);
+    this.$$('time-chart').forEach((c) => c.playhead(t));
   }
 }
 
@@ -1671,6 +1834,85 @@ function escapeHtml(value) {
 }
 
 Object.assign(__x, { escapeHtml });
+
+};
+
+__m["js/core/player-clock.js"] = function (__x, __req) {
+// Reloj de reproducción del vuelo: mantiene el instante actual (t) y avisa a
+// quien se suscriba (mapa, gráficas, vídeo) en cada fotograma. Es un EventTarget:
+//   clock.addEventListener('tick', (e) => ...e.detail.t...)   // instante
+//   clock.addEventListener('state', (e) => ...playing/speed...) // controles
+
+class PlayerClock extends EventTarget {
+  /** @param {number} dur duración del vuelo en segundos */
+  constructor(dur) {
+    super();
+    this.dur = dur || 0;
+    this.t = 0;
+    this.playing = false;
+    this.speed = 1;
+    this._raf = 0;
+    this._last = 0;
+  }
+
+  play() {
+    if (this.playing || this.dur <= 0) return;
+    if (this.t >= this.dur) this.t = 0;
+    this.playing = true;
+    this._last = performance.now();
+    this._emit('state');
+    this._loop();
+  }
+
+  pause() {
+    if (!this.playing) return;
+    this.playing = false;
+    cancelAnimationFrame(this._raf);
+    this._emit('state');
+  }
+
+  toggle() { this.playing ? this.pause() : this.play(); }
+
+  /** Salta a un instante (segundos). */
+  seek(t) {
+    this.t = Math.max(0, Math.min(this.dur, t));
+    this._emit('tick');
+    if (!this.playing) this._emit('state');
+  }
+
+  /** @param {number} s velocidad (1, 2, 4…) */
+  setSpeed(s) {
+    this.speed = s;
+    this._emit('state');
+  }
+
+  /** Detiene el bucle y libera (al desmontar el informe). */
+  destroy() { cancelAnimationFrame(this._raf); this.playing = false; }
+
+  _loop() {
+    this._raf = requestAnimationFrame((now) => {
+      if (!this.playing) return;
+      const dt = ((now - this._last) / 1000) * this.speed;
+      this._last = now;
+      this.t += dt;
+      if (this.t >= this.dur) {
+        this.t = this.dur; this.playing = false;
+        this._emit('tick'); this._emit('state');
+        return;
+      }
+      this._emit('tick');
+      this._loop();
+    });
+  }
+
+  _emit(type) {
+    this.dispatchEvent(new CustomEvent(type, {
+      detail: { t: this.t, playing: this.playing, speed: this.speed, dur: this.dur },
+    }));
+  }
+}
+
+Object.assign(__x, { PlayerClock });
 
 };
 
@@ -2151,6 +2393,9 @@ __x.default = {
   'route.leg.height': 'Low → high',
   'route.note': 'Satellite imagery: Esri World Imagery · track reconstructed from the flight GPS',
   'map.loading': 'Loading satellite imagery…',
+  'player.play': 'Play the flight',
+  'player.pause': 'Pause',
+  'player.seek': 'Seek in the flight',
   'lightbox.close': 'Close',
   'lightbox.download': 'Download',
   'lightbox.downloading': 'Preparing…',
@@ -2333,6 +2578,9 @@ __x.default = {
   'route.leg.height': 'Altura baja → alta',
   'route.note': 'Imagen de satélite: Esri World Imagery · trazado reconstruido con el GPS del vuelo',
   'map.loading': 'Cargando imagen de satélite…',
+  'player.play': 'Reproducir el vuelo',
+  'player.pause': 'Pausa',
+  'player.seek': 'Buscar en el vuelo',
   'lightbox.close': 'Cerrar',
   'lightbox.download': 'Descargar',
   'lightbox.downloading': 'Preparando…',
@@ -2798,8 +3046,28 @@ function buildMap(model, kps, loadingText = '') {
     btn.innerHTML = `<span class="kp-tip${edge}">${k.frame ? `<img src="${k.frame}" alt="">` : ''}<span class="kp-b"><span class="kp-l">${k.label}</span><span class="kp-m">${mmss(k.t)} · ${k.metric}</span></span></span>`;
     ov.appendChild(btn);
   });
+  // marcador del dron para la reproducción (interpola su posición por el tiempo)
+  const droneMk = el('circle', { r: 13, 'stroke-width': 3.5, opacity: 0 });
+  droneMk.style.fill = 'var(--c-blue)'; droneMk.style.stroke = '#fff';
+  droneMk.style.filter = 'drop-shadow(0 2px 5px rgba(0,0,0,.55))';
+  svg.appendChild(droneMk);
+  const S = model.series;
+  const setPlayhead = (t) => {
+    let i = 1;
+    while (i < S.length && S[i].t < t) i++;
+    const a = S[i - 1], b = S[Math.min(i, S.length - 1)];
+    if (!a || !a.lat || !b.lat) return;
+    const span = (b.t - a.t) || 1;
+    const f = Math.max(0, Math.min(1, (t - a.t) / span));
+    const lat = a.lat + (b.lat - a.lat) * f, lon = a.lon + (b.lon - a.lon) * f;
+    droneMk.setAttribute('cx', PX(lon).toFixed(1));
+    droneMk.setAttribute('cy', PY(lat).toFixed(1));
+    droneMk.setAttribute('opacity', '1');
+  };
+  const clearPlayhead = () => droneMk.setAttribute('opacity', '0');
+
   wrap.appendChild(ov);
-  return wrap;
+  return { el: wrap, setPlayhead, clearPlayhead };
 }
 
 const mmss = (t) => { t = Math.round(t); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };

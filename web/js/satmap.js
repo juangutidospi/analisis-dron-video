@@ -88,8 +88,28 @@ export function buildMap(model, kps, loadingText = '') {
     btn.innerHTML = `<span class="kp-tip${edge}">${k.frame ? `<img src="${k.frame}" alt="">` : ''}<span class="kp-b"><span class="kp-l">${k.label}</span><span class="kp-m">${mmss(k.t)} · ${k.metric}</span></span></span>`;
     ov.appendChild(btn);
   });
+  // marcador del dron para la reproducción (interpola su posición por el tiempo)
+  const droneMk = el('circle', { r: 13, 'stroke-width': 3.5, opacity: 0 });
+  droneMk.style.fill = 'var(--c-blue)'; droneMk.style.stroke = '#fff';
+  droneMk.style.filter = 'drop-shadow(0 2px 5px rgba(0,0,0,.55))';
+  svg.appendChild(droneMk);
+  const S = model.series;
+  const setPlayhead = (t) => {
+    let i = 1;
+    while (i < S.length && S[i].t < t) i++;
+    const a = S[i - 1], b = S[Math.min(i, S.length - 1)];
+    if (!a || !a.lat || !b.lat) return;
+    const span = (b.t - a.t) || 1;
+    const f = Math.max(0, Math.min(1, (t - a.t) / span));
+    const lat = a.lat + (b.lat - a.lat) * f, lon = a.lon + (b.lon - a.lon) * f;
+    droneMk.setAttribute('cx', PX(lon).toFixed(1));
+    droneMk.setAttribute('cy', PY(lat).toFixed(1));
+    droneMk.setAttribute('opacity', '1');
+  };
+  const clearPlayhead = () => droneMk.setAttribute('opacity', '0');
+
   wrap.appendChild(ov);
-  return wrap;
+  return { el: wrap, setPlayhead, clearPlayhead };
 }
 
 const mmss = (t) => { t = Math.round(t); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };

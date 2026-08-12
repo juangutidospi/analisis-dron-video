@@ -11,6 +11,8 @@ import '../../ui/time-chart/time-chart.js';
 import '../../ui/sat-map/sat-map.js';
 import '../../ui/export-bar/export-bar.js';
 import '../../ui/image-lightbox/image-lightbox.js';
+import '../../ui/flight-player/flight-player.js';
+import { PlayerClock } from '../../../core/player-clock.js';
 import { styles } from './flight-report.css.js';
 
 const f = (v, d = 0) => (v == null ? '—' : v.toFixed(d));
@@ -72,6 +74,8 @@ export class FlightReport extends DjiElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     if (this._lb) { this._lb.remove(); this._lb = null; }
+    if (this._clock) { this._clock.destroy(); this._clock = null; }
+    if (this._player) { this._player.remove(); this._player = null; }
   }
 
   _heroTpl(m, r, dur, relmax, hsmax) {
@@ -296,6 +300,28 @@ export class FlightReport extends DjiElement {
         mp4File: this.assets?.mp4File, secs: this.model.meta.dur * lightFracs[i],
       }));
     });
+
+    this._setupPlayer();
+  }
+
+  /** Reproducción del vuelo: reloj + barra flotante + sincronía de mapa y gráficas. */
+  _setupPlayer() {
+    if (!this.model) return;
+    if (!this._clock) {
+      this._clock = new PlayerClock(this.model.meta.dur);
+      this._clock.addEventListener('tick', (e) => this._onTick(e.detail.t));
+    }
+    if (!this._player) {
+      this._player = document.createElement('flight-player');
+      document.body.appendChild(this._player);
+    }
+    this._player.clock = this._clock;
+  }
+
+  /** Propaga el instante actual al mapa y a todas las gráficas. */
+  _onTick(t) {
+    this.$('#map')?.playhead(t);
+    this.$$('time-chart').forEach((c) => c.playhead(t));
   }
 }
 

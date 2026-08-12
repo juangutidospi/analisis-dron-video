@@ -19,8 +19,15 @@ export class SatMap extends DjiElement {
   afterRender() {
     const f = this._flight;
     if (!f) return;
-    this.$('#slot').replaceChildren(buildMap(f.model, f.kps, t('map.loading')));
+    this._map = buildMap(f.model, f.kps, t('map.loading'));
+    this.$('#slot').replaceChildren(this._map.el);
   }
+
+  /** Mueve el dron al instante t (reproducción). */
+  playhead(t) { this._map && this._map.setPlayhead(t); }
+
+  /** Esconde el dron. */
+  clearPlayhead() { this._map && this._map.clearPlayhead(); }
 }
 
 customElements.define('sat-map', SatMap);
