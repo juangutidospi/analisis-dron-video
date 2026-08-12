@@ -27,19 +27,26 @@ export function buildMap(model, kps) {
   const relmax = Math.max(...T.map(p => p[2] || 0)) || 1;
 
   const wrap = document.createElement('div');
-  wrap.className = 'map-wrap';
+  wrap.className = 'map-wrap loading';
+  wrap.style.aspectRatio = `${W} / ${H}`;
 
   const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, class: 'map-svg' });
   svg.style.cssText = 'display:block;width:100%;height:auto';
 
-  // teselas
+  // teselas (con skeleton mientras cargan)
+  let pending = 0;
+  const doneOne = () => { if (--pending <= 0) wrap.classList.remove('loading'); };
   for (let ri = 0, y = tc.y0; y <= tc.y1; y++, ri++)
     for (let ci = 0, x = tc.x0; x <= tc.x1; x++, ci++) {
       const img = el('image', { x: ci * 256, y: ri * 256, width: 257, height: 257, preserveAspectRatio: 'none' });
       img.setAttribute('href', `${ESRI}/${tc.z}/${y}/${x}`);
       img.setAttribute('crossorigin', 'anonymous');
+      pending++;
+      img.addEventListener('load', doneOne, { once: true });
+      img.addEventListener('error', doneOne, { once: true });
       svg.appendChild(img);
     }
+  setTimeout(() => wrap.classList.remove('loading'), 6000); // salvavidas
   svg.appendChild(el('rect', { x: 1, y: 1, width: W - 2, height: H - 2, fill: 'none', stroke: 'rgba(255,255,255,.15)', 'stroke-width': 2 }));
 
   // track: halo + segmentos por color

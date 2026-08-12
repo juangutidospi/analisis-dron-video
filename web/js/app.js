@@ -11,7 +11,9 @@ const state = { srt: null, srtText: null, mp4: null, title: 'Vuelo con DJI Neo 2
 function initTheme() {
   const btn = document.getElementById('themeBtn');
   const saved = localStorage.getItem('dji-theme');
-  if (saved === 'light') { document.documentElement.setAttribute('data-theme', 'light'); btn.textContent = '☀️'; }
+  const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+  const light = saved ? saved === 'light' : prefersLight;
+  if (light) { document.documentElement.setAttribute('data-theme', 'light'); btn.textContent = '☀️'; }
   btn.addEventListener('click', () => {
     const light = document.documentElement.getAttribute('data-theme') === 'light';
     if (light) { document.documentElement.removeAttribute('data-theme'); btn.textContent = '🌙'; localStorage.setItem('dji-theme', 'dark'); }
@@ -27,7 +29,7 @@ function renderLanding() {
     <h1>Convierte la telemetría de tu dron en un informe espectacular</h1>
     <p class="sub">Suelta el <b>.SRT</b> de tu vuelo (y, si quieres, el <b>.MP4</b>) y obtén al instante un informe con recorrido sobre satélite, altitud, velocidad, cámara y orientación del gimbal. Todo en tu navegador: nada se sube a ningún servidor.</p>
 
-    <div class="drop" id="drop">
+    <div class="drop" id="drop" role="button" tabindex="0" aria-label="Elegir o soltar el archivo .SRT del vuelo">
       <div class="ico">📈</div>
       <h3>Suelta aquí tu archivo .SRT</h3>
       <p>o haz clic para elegirlo — también puedes añadir el vídeo .MP4</p>
@@ -79,6 +81,7 @@ function renderLanding() {
 
   $('#pickSrt').addEventListener('click', (e) => { e.stopPropagation(); srtInput.click(); });
   drop.addEventListener('click', () => srtInput.click());
+  drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); srtInput.click(); } });
   srtInput.addEventListener('change', () => takeFiles(srtInput.files));
   mp4Input.addEventListener('change', () => takeFiles(mp4Input.files));
   ['dragover', 'dragenter'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
@@ -107,7 +110,7 @@ function renderProgress() {
     <div class="progress">
       <h3>Generando tu informe…</h3>
       <p>Todo el procesado ocurre en tu navegador.</p>
-      <div class="steps">${STEPS.map(([id, t]) => `<div class="pstep" data-step="${id}"><span class="bullet">•</span><span>${t}</span></div>`).join('')}</div>
+      <div class="steps" role="status" aria-live="polite">${STEPS.map(([id, t]) => `<div class="pstep" data-step="${id}"><span class="bullet">•</span><span>${t}</span></div>`).join('')}</div>
       <div class="pbar"><span id="pbarFill"></span></div>
     </div>
   </div>`;
@@ -138,6 +141,7 @@ async function run() {
     step('model', 'done', 40);
 
     const assets = { title: state.title, kps, hasFrames: false };
+    const setFramesLabel = (txt) => { const s = app.querySelector('[data-step="frames"]'); if (s) s.querySelector('span:last-child').textContent = txt; };
     if (state.mp4) {
       step('frames', 'active', 44);
       const dur = model.meta.dur;
@@ -145,16 +149,21 @@ async function run() {
       const lightTimes = [dur * 0.15, dur * 0.5, dur * 0.92];
       const heroT = kps.find(k => k.key === 'hi')?.t ?? dur * 0.3;
       const times = [...kpTimes, ...lightTimes, heroT];
-      let done = 0;
-      const frames = await grabFrames(state.mp4, times, (p) => step('frames', 'active', 44 + Math.round(p * 26)));
-      kps.forEach((k, i) => k.frame = frames[i]);
-      assets.light = frames.slice(kpTimes.length, kpTimes.length + 3);
-      assets.hero = frames[frames.length - 1];
-      assets.hasFrames = true;
-      step('frames', 'done', 70);
+      try {
+        const frames = await grabFrames(state.mp4, times, (p) => step('frames', 'active', 44 + Math.round(p * 26)));
+        kps.forEach((k, i) => k.frame = frames[i]);
+        assets.light = frames.slice(kpTimes.length, kpTimes.length + 3);
+        assets.hero = frames[frames.length - 1];
+        assets.hasFrames = true;
+        step('frames', 'done', 70);
+      } catch (e) {
+        // el navegador no pudo decodificar el vídeo: seguimos sin fotogramas
+        assets.frameError = 'No se pudieron recortar los fotogramas (el navegador no decodifica este vídeo; suele ser HEVC/H.265). El resto del informe está completo.';
+        step('frames', 'done', 70); setFramesLabel('El vídeo no se pudo decodificar: informe sin fotogramas');
+      }
     } else {
       step('frames', 'done', 70);
-      const s = app.querySelector('[data-step="frames"]'); if (s) s.querySelector('span:last-child').textContent = 'Sin vídeo: se omiten los fotogramas';
+      setFramesLabel('Sin vídeo: se omiten los fotogramas');
     }
 
     step('map', 'active', 74); await wait(80);
