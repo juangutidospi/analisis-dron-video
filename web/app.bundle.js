@@ -499,11 +499,14 @@ img { max-width: 100%; max-height: 82vh; border-radius: 14px; box-shadow: var(--
 figcaption { color: #e8eaf0; font-size: 14px; display: flex; gap: 10px; align-items: baseline; justify-content: center; flex-wrap: wrap; }
 .cap-time { background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.2); border-radius: 100px; padding: 3px 10px; font-size: 12px; font-weight: 700; }
 .cap-metric { font-weight: 800; font-size: 18px; color: #fff; }
+.dlrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.dllabel { color: rgba(255,255,255,.7); font-size: 13px; }
 .dl {
-  display: inline-flex; align-items: center; gap: 8px; border: 1px solid rgba(255,255,255,.22); background: rgba(255,255,255,.12);
-  color: #fff; border-radius: 100px; padding: 10px 18px; font-size: 13.5px; font-weight: 600; cursor: pointer; font-family: inherit;
-  transition: background .12s, transform .12s;
+  display: inline-flex; align-items: center; gap: 7px; border: 1px solid rgba(255,255,255,.22); background: rgba(255,255,255,.12);
+  color: #fff; border-radius: 100px; padding: 9px 16px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
+  min-width: 62px; justify-content: center; transition: background .12s, transform .12s;
 }
+.dl small { font-weight: 500; opacity: .7; }
 .dl:hover { background: rgba(255,255,255,.24); transform: translateY(-1px); }
 .dl:disabled { opacity: .6; cursor: default; transform: none; }
 .close {
@@ -543,41 +546,48 @@ class ImageLightbox extends DjiElement {
       <figure>
         <img id="img" src="" alt="">
         <figcaption id="cap"></figcaption>
-        <button class="dl" id="dl" type="button">⤓ <span>${escapeHtml(t('lightbox.download'))}</span></button>
+        <div class="dlrow">
+          <span class="dllabel">⤓ ${escapeHtml(t('lightbox.download'))}</span>
+          <button class="dl" data-fmt="jpg" type="button">JPG</button>
+          <button class="dl" data-fmt="png" type="button">PNG <small>${escapeHtml(t('lightbox.lossless'))}</small></button>
+        </div>
       </figure>`;
   }
 
   afterRender() {
     this.on(this, 'click', (e) => { if (e.target === this) this.close(); });
     this.on(this.$('#x'), 'click', () => this.close());
-    this.on(this.$('#dl'), 'click', () => this._download());
+    this.$$('.dl').forEach((b) => this.on(b, 'click', () => this._download(b.dataset.fmt)));
   }
 
-  async _download() {
+  /** @param {'jpg'|'png'} fmt */
+  async _download(fmt) {
     if (!this._src) return;
-    const b = this.$('#dl');
-    const label = b.querySelector('span');
-    b.disabled = true;
-    const prev = label.textContent;
+    const btns = this.$$('.dl');
+    const clicked = this.$(`.dl[data-fmt="${fmt}"]`);
+    const prev = clicked.innerHTML;
+    btns.forEach((b) => (b.disabled = true));
     try {
-      // máxima calidad: re-extrae el fotograma a resolución nativa sin pérdidas (PNG, como Blob)
+      // resolución nativa; PNG sin pérdidas o JPG de alta calidad
       if (this._full) {
-        label.textContent = t('lightbox.downloading');
+        clicked.textContent = '…';
         try {
-          const blob = await grabFullFrame(this._full.file, this._full.secs);
-          downloadBlob(this._name.replace(/\.jpg$/, '.png'), blob);
+          const type = fmt === 'png' ? 'image/png' : 'image/jpeg';
+          const blob = await grabFullFrame(this._full.file, this._full.secs, type, fmt === 'jpg' ? 0.95 : undefined);
+          downloadBlob(this._nameBase + '.' + fmt, blob);
           return;
         } catch (e) {
-          console.warn('Descarga 4K falló; se descarga el fotograma visible.', e);
+          console.warn('Re-extracción falló; se descarga el fotograma visible.', e);
         }
       }
-      // camino normal / respaldo: descarga el fotograma que se muestra
+      // respaldo: descarga el fotograma que se muestra (JPG)
       const blob = await (await fetch(this._src)).blob();
-      downloadBlob(this._name, blob);
+      downloadBlob(this._nameBase + '.jpg', blob);
     } catch (e) {
       console.error(e);
     } finally {
-      b.disabled = false; label.textContent = prev;
+      btns.forEach((b) => (b.disabled = false));
+      clicked.innerHTML = prev;
     }
   }
 
@@ -587,7 +597,7 @@ class ImageLightbox extends DjiElement {
     this._src = src;
     this._full = (cap.mp4File && cap.secs != null) ? { file: cap.mp4File, secs: +cap.secs } : null;
     const base = [cap.title, cap.label, cap.time].filter(Boolean).join(' - ') || 'fotograma';
-    this._name = base.replace(/:/g, '-').replace(/[/\\?%*|"<>]/g, '').trim() + '.jpg';
+    this._nameBase = base.replace(/:/g, '-').replace(/[/\\?%*|"<>]/g, '').trim();
     const img = this.$('#img');
     img.src = src; img.alt = cap.label || '';
     this.$('#cap').innerHTML = `${cap.time ? `<span class="cap-time">${escapeHtml(cap.time)}</span>` : ''}`
@@ -1775,11 +1785,14 @@ async function grabFrames(file, times, onProgress = () => {}, maxW = 1600, quali
 }
 
 /**
- * Extrae un solo fotograma a resolución nativa del vídeo, sin pérdidas (PNG),
- * como Blob (usa toBlob para evitar cadenas gigantes en 4K). Máxima calidad posible.
- * @param {File} file @param {number} secs @returns {Promise<Blob>} PNG
+ * Extrae un solo fotograma a resolución nativa del vídeo como Blob (usa toBlob
+ * para evitar cadenas gigantes en 4K). PNG sin pérdidas o JPEG de alta calidad.
+ * @param {File} file @param {number} secs
+ * @param {string} [type='image/png'] MIME de salida
+ * @param {number} [quality] calidad JPEG (0..1); ignorado en PNG
+ * @returns {Promise<Blob>}
  */
-async function grabFullFrame(file, secs) {
+async function grabFullFrame(file, secs, type = 'image/png', quality) {
   const url = URL.createObjectURL(file);
   const v = document.createElement('video');
   v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
@@ -1792,7 +1805,7 @@ async function grabFullFrame(file, secs) {
     const t = Math.max(0, Math.min((v.duration || 1e9) - 0.05, secs));
     await seek(v, t);
     canvas.getContext('2d').drawImage(v, 0, 0, cw, ch);
-    const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+    const blob = await new Promise((res) => canvas.toBlob(res, type, quality));
     if (!blob) throw new Error('No se pudo codificar el fotograma.');
     return blob;
   } finally {
@@ -2051,7 +2064,8 @@ __x.default = {
   'map.loading': 'Loading satellite imagery…',
   'lightbox.close': 'Close',
   'lightbox.download': 'Download',
-  'lightbox.downloading': 'Preparing 4K…',
+  'lightbox.downloading': 'Preparing…',
+  'lightbox.lossless': 'lossless',
 
   // report · altitude
   'alt.eyebrow': 'Altitude',
@@ -2229,7 +2243,8 @@ __x.default = {
   'map.loading': 'Cargando imagen de satélite…',
   'lightbox.close': 'Cerrar',
   'lightbox.download': 'Descargar',
-  'lightbox.downloading': 'Preparando 4K…',
+  'lightbox.downloading': 'Preparando…',
+  'lightbox.lossless': 'sin pérdidas',
 
   // informe · altitud
   'alt.eyebrow': 'Altitud',

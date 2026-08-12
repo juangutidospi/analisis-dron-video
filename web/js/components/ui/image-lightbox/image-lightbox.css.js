@@ -13,11 +13,14 @@ img { max-width: 100%; max-height: 82vh; border-radius: 14px; box-shadow: var(--
 figcaption { color: #e8eaf0; font-size: 14px; display: flex; gap: 10px; align-items: baseline; justify-content: center; flex-wrap: wrap; }
 .cap-time { background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.2); border-radius: 100px; padding: 3px 10px; font-size: 12px; font-weight: 700; }
 .cap-metric { font-weight: 800; font-size: 18px; color: #fff; }
+.dlrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.dllabel { color: rgba(255,255,255,.7); font-size: 13px; }
 .dl {
-  display: inline-flex; align-items: center; gap: 8px; border: 1px solid rgba(255,255,255,.22); background: rgba(255,255,255,.12);
-  color: #fff; border-radius: 100px; padding: 10px 18px; font-size: 13.5px; font-weight: 600; cursor: pointer; font-family: inherit;
-  transition: background .12s, transform .12s;
+  display: inline-flex; align-items: center; gap: 7px; border: 1px solid rgba(255,255,255,.22); background: rgba(255,255,255,.12);
+  color: #fff; border-radius: 100px; padding: 9px 16px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
+  min-width: 62px; justify-content: center; transition: background .12s, transform .12s;
 }
+.dl small { font-weight: 500; opacity: .7; }
 .dl:hover { background: rgba(255,255,255,.24); transform: translateY(-1px); }
 .dl:disabled { opacity: .6; cursor: default; transform: none; }
 .close {

@@ -37,11 +37,14 @@ export async function grabFrames(file, times, onProgress = () => {}, maxW = 1600
 }
 
 /**
- * Extrae un solo fotograma a resolución nativa del vídeo, sin pérdidas (PNG),
- * como Blob (usa toBlob para evitar cadenas gigantes en 4K). Máxima calidad posible.
- * @param {File} file @param {number} secs @returns {Promise<Blob>} PNG
+ * Extrae un solo fotograma a resolución nativa del vídeo como Blob (usa toBlob
+ * para evitar cadenas gigantes en 4K). PNG sin pérdidas o JPEG de alta calidad.
+ * @param {File} file @param {number} secs
+ * @param {string} [type='image/png'] MIME de salida
+ * @param {number} [quality] calidad JPEG (0..1); ignorado en PNG
+ * @returns {Promise<Blob>}
  */
-export async function grabFullFrame(file, secs) {
+export async function grabFullFrame(file, secs, type = 'image/png', quality) {
   const url = URL.createObjectURL(file);
   const v = document.createElement('video');
   v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
@@ -54,7 +57,7 @@ export async function grabFullFrame(file, secs) {
     const t = Math.max(0, Math.min((v.duration || 1e9) - 0.05, secs));
     await seek(v, t);
     canvas.getContext('2d').drawImage(v, 0, 0, cw, ch);
-    const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+    const blob = await new Promise((res) => canvas.toBlob(res, type, quality));
     if (!blob) throw new Error('No se pudo codificar el fotograma.');
     return blob;
   } finally {

@@ -22,41 +22,48 @@ export class ImageLightbox extends DjiElement {
       <figure>
         <img id="img" src="" alt="">
         <figcaption id="cap"></figcaption>
-        <button class="dl" id="dl" type="button">⤓ <span>${escapeHtml(t('lightbox.download'))}</span></button>
+        <div class="dlrow">
+          <span class="dllabel">⤓ ${escapeHtml(t('lightbox.download'))}</span>
+          <button class="dl" data-fmt="jpg" type="button">JPG</button>
+          <button class="dl" data-fmt="png" type="button">PNG <small>${escapeHtml(t('lightbox.lossless'))}</small></button>
+        </div>
       </figure>`;
   }
 
   afterRender() {
     this.on(this, 'click', (e) => { if (e.target === this) this.close(); });
     this.on(this.$('#x'), 'click', () => this.close());
-    this.on(this.$('#dl'), 'click', () => this._download());
+    this.$$('.dl').forEach((b) => this.on(b, 'click', () => this._download(b.dataset.fmt)));
   }
 
-  async _download() {
+  /** @param {'jpg'|'png'} fmt */
+  async _download(fmt) {
     if (!this._src) return;
-    const b = this.$('#dl');
-    const label = b.querySelector('span');
-    b.disabled = true;
-    const prev = label.textContent;
+    const btns = this.$$('.dl');
+    const clicked = this.$(`.dl[data-fmt="${fmt}"]`);
+    const prev = clicked.innerHTML;
+    btns.forEach((b) => (b.disabled = true));
     try {
-      // máxima calidad: re-extrae el fotograma a resolución nativa sin pérdidas (PNG, como Blob)
+      // resolución nativa; PNG sin pérdidas o JPG de alta calidad
       if (this._full) {
-        label.textContent = t('lightbox.downloading');
+        clicked.textContent = '…';
         try {
-          const blob = await grabFullFrame(this._full.file, this._full.secs);
-          downloadBlob(this._name.replace(/\.jpg$/, '.png'), blob);
+          const type = fmt === 'png' ? 'image/png' : 'image/jpeg';
+          const blob = await grabFullFrame(this._full.file, this._full.secs, type, fmt === 'jpg' ? 0.95 : undefined);
+          downloadBlob(this._nameBase + '.' + fmt, blob);
           return;
         } catch (e) {
-          console.warn('Descarga 4K falló; se descarga el fotograma visible.', e);
+          console.warn('Re-extracción falló; se descarga el fotograma visible.', e);
         }
       }
-      // camino normal / respaldo: descarga el fotograma que se muestra
+      // respaldo: descarga el fotograma que se muestra (JPG)
       const blob = await (await fetch(this._src)).blob();
-      downloadBlob(this._name, blob);
+      downloadBlob(this._nameBase + '.jpg', blob);
     } catch (e) {
       console.error(e);
     } finally {
-      b.disabled = false; label.textContent = prev;
+      btns.forEach((b) => (b.disabled = false));
+      clicked.innerHTML = prev;
     }
   }
 
@@ -66,7 +73,7 @@ export class ImageLightbox extends DjiElement {
     this._src = src;
     this._full = (cap.mp4File && cap.secs != null) ? { file: cap.mp4File, secs: +cap.secs } : null;
     const base = [cap.title, cap.label, cap.time].filter(Boolean).join(' - ') || 'fotograma';
-    this._name = base.replace(/:/g, '-').replace(/[/\\?%*|"<>]/g, '').trim() + '.jpg';
+    this._nameBase = base.replace(/:/g, '-').replace(/[/\\?%*|"<>]/g, '').trim();
     const img = this.$('#img');
     img.src = src; img.alt = cap.label || '';
     this.$('#cap').innerHTML = `${cap.time ? `<span class="cap-time">${escapeHtml(cap.time)}</span>` : ''}`
