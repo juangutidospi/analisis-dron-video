@@ -8,7 +8,15 @@ export const styles = css`
   &:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); }
 }
 .img { position: relative; aspect-ratio: 16/9; background: #000; overflow: hidden; }
-.img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.img img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .3s ease; }
+.img.clickable { cursor: zoom-in; }
+.img.clickable::after {
+  content: "⤢"; position: absolute; top: 8px; right: 9px; width: 26px; height: 26px; display: grid; place-items: center;
+  border-radius: 8px; background: rgba(0,0,0,.5); color: #fff; font-size: 14px; opacity: 0; pointer-events: none;
+  backdrop-filter: blur(4px); transition: opacity .15s;
+}
+.mo:hover .img.clickable::after { opacity: 1; }
+.mo:hover .img.clickable img { transform: scale(1.04); }
 .ph {
   width: 100%; height: 100%; display: grid; place-items: center;
   background: linear-gradient(135deg, var(--color-tile), color-mix(in srgb, var(--color-violet) 10%, var(--color-surface-solid)));

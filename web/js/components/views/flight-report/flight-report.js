@@ -10,6 +10,7 @@ import '../../ui/callout/callout.js';
 import '../../ui/time-chart/time-chart.js';
 import '../../ui/sat-map/sat-map.js';
 import '../../ui/export-bar/export-bar.js';
+import '../../ui/image-lightbox/image-lightbox.js';
 import { styles } from './flight-report.css.js';
 
 const f = (v, d = 0) => (v == null ? '—' : v.toFixed(d));
@@ -54,6 +55,21 @@ export class FlightReport extends DjiElement {
         ${this._notesTpl()}
       </div>
       <div class="foot">${escapeHtml(t('foot', { n: nfmt(m.frames), fecha: fecha(m.start) }))}</div>`;
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    // el visor vive en el body (overlay a pantalla completa, sobre el chrome)
+    if (!this._lb) { this._lb = document.createElement('image-lightbox'); document.body.appendChild(this._lb); }
+    if (!this._lbWired) {
+      this._lbWired = true;
+      this.shadowRoot.addEventListener('moment:open', (e) => this._lb && this._lb.open(e.detail.img, e.detail));
+    }
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._lb) { this._lb.remove(); this._lb = null; }
   }
 
   _heroTpl(m, r, dur, relmax, hsmax) {
@@ -267,6 +283,13 @@ export class FlightReport extends DjiElement {
 
     this.$('#map').flight = { model: this.model, kps: this.kps };
     this.$('#exp').flight = { model: this.model, assets: this.assets };
+
+    // tira de luz: también abre el visor (los momentos se cablean en connectedCallback)
+    this.$$('.lstrip figure').forEach((fig) => {
+      const img = fig.querySelector('img'); if (!img) return;
+      img.style.cursor = 'zoom-in';
+      this.on(img, 'click', () => this._lb && this._lb.open(img.src, { label: fig.querySelector('figcaption')?.textContent?.trim() }));
+    });
   }
 }
 

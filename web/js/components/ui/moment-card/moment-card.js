@@ -13,7 +13,7 @@ export class MomentCard extends DjiElement {
     const img = this.img || this.getAttribute('img');
     this.shadowRoot.innerHTML = `
       <div class="mo">
-        <div class="img">
+        <div class="img${img ? ' clickable' : ''}">
           ${img ? `<img src="${img}" alt="${escapeHtml(this.getAttribute('label'))}">` : `<div class="ph"><span class="ico">🎞️</span></div>`}
           <span class="t">${escapeHtml(this.getAttribute('time'))}</span>
         </div>
@@ -23,6 +23,20 @@ export class MomentCard extends DjiElement {
           <div class="sub">${escapeHtml(this.getAttribute('sub'))}</div>
         </div>
       </div>`;
+  }
+
+  afterRender() {
+    const img = this.img || this.getAttribute('img');
+    const box = this.$('.img.clickable');
+    if (img && box) {
+      box.setAttribute('role', 'button');
+      box.setAttribute('tabindex', '0');
+      const open = () => this.emit('moment:open', {
+        img, time: this.getAttribute('time'), metric: this.getAttribute('metric'), label: this.getAttribute('label'),
+      });
+      this.on(box, 'click', open);
+      this.on(box, 'keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    }
   }
 }
 

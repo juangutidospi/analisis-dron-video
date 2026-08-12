@@ -483,6 +483,95 @@ Object.assign(__x, { ExportBar });
 
 };
 
+__m["js/components/ui/image-lightbox/image-lightbox.css.js"] = function (__x, __req) {
+const { css } = __req("js/core/css.js");
+
+const styles = css`
+:host {
+  position: fixed; inset: 0; z-index: 2147483000; display: none; place-items: center; padding: 24px;
+  background: rgba(6, 7, 10, .92); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+:host([open]) { display: grid; animation: fade .18s ease; }
+@keyframes fade { from { opacity: 0; } }
+figure { margin: 0; display: flex; flex-direction: column; gap: 14px; align-items: center; max-width: min(1100px, 94vw); }
+img { max-width: 100%; max-height: 82vh; border-radius: 14px; box-shadow: var(--shadow-lg); object-fit: contain; animation: pop .22s cubic-bezier(.22,1,.36,1); }
+@keyframes pop { from { opacity: 0; transform: scale(.96); } }
+figcaption { color: #e8eaf0; font-size: 14px; display: flex; gap: 10px; align-items: baseline; justify-content: center; flex-wrap: wrap; }
+.cap-time { background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.2); border-radius: 100px; padding: 3px 10px; font-size: 12px; font-weight: 700; }
+.cap-metric { font-weight: 800; font-size: 18px; color: #fff; }
+.close {
+  position: fixed; top: 18px; right: 18px; width: 44px; height: 44px; border-radius: 100px; border: 1px solid rgba(255,255,255,.22);
+  background: rgba(255,255,255,.12); color: #fff; font-size: 18px; cursor: pointer; display: grid; place-items: center;
+  backdrop-filter: blur(6px); transition: background .12s;
+}
+.close:hover { background: rgba(255,255,255,.24); }
+`;
+
+Object.assign(__x, { styles });
+
+};
+
+__m["js/components/ui/image-lightbox/image-lightbox.js"] = function (__x, __req) {
+const { DjiElement } = __req("js/core/DjiElement.js");
+const { escapeHtml } = __req("js/core/escape-html.js");
+const { t } = __req("js/i18n/index.js");
+const { styles } = __req("js/components/ui/image-lightbox/image-lightbox.css.js");
+
+/** Visor de imagen a pantalla completa. Se abre con open(src, {time, metric, label}). */
+class ImageLightbox extends DjiElement {
+  static styles = [styles];
+
+  constructor() {
+    super();
+    this._esc = (e) => { if (e.key === 'Escape') this.close(); };
+  }
+
+  render() {
+    this.setAttribute('role', 'dialog');
+    this.setAttribute('aria-modal', 'true');
+    this.shadowRoot.innerHTML = `
+      <button class="close" id="x" aria-label="${escapeHtml(t('lightbox.close'))}">✕</button>
+      <figure>
+        <img id="img" src="" alt="">
+        <figcaption id="cap"></figcaption>
+      </figure>`;
+  }
+
+  afterRender() {
+    this.on(this, 'click', (e) => { if (e.target === this) this.close(); });
+    this.on(this.$('#x'), 'click', () => this.close());
+  }
+
+  /** @param {string} src @param {{time?:string, metric?:string, label?:string}} [cap] */
+  open(src, cap = {}) {
+    if (!src) return;
+    const img = this.$('#img');
+    img.src = src; img.alt = cap.label || '';
+    this.$('#cap').innerHTML = `${cap.time ? `<span class="cap-time">${escapeHtml(cap.time)}</span>` : ''}`
+      + `${cap.metric ? `<span class="cap-metric">${escapeHtml(cap.metric)}</span>` : ''}`
+      + `${cap.label ? `<span>${escapeHtml(cap.label)}</span>` : ''}`;
+    this.setAttribute('open', '');
+    document.addEventListener('keydown', this._esc);
+  }
+
+  close() {
+    this.removeAttribute('open');
+    this.$('#img').src = '';
+    document.removeEventListener('keydown', this._esc);
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    document.removeEventListener('keydown', this._esc);
+  }
+}
+
+customElements.define('image-lightbox', ImageLightbox);
+
+Object.assign(__x, { ImageLightbox });
+
+};
+
 __m["js/components/ui/moment-card/moment-card.css.js"] = function (__x, __req) {
 const { css } = __req("js/core/css.js");
 
@@ -494,7 +583,15 @@ const styles = css`
   &:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); }
 }
 .img { position: relative; aspect-ratio: 16/9; background: #000; overflow: hidden; }
-.img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.img img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .3s ease; }
+.img.clickable { cursor: zoom-in; }
+.img.clickable::after {
+  content: "⤢"; position: absolute; top: 8px; right: 9px; width: 26px; height: 26px; display: grid; place-items: center;
+  border-radius: 8px; background: rgba(0,0,0,.5); color: #fff; font-size: 14px; opacity: 0; pointer-events: none;
+  backdrop-filter: blur(4px); transition: opacity .15s;
+}
+.mo:hover .img.clickable::after { opacity: 1; }
+.mo:hover .img.clickable img { transform: scale(1.04); }
 .ph {
   width: 100%; height: 100%; display: grid; place-items: center;
   background: linear-gradient(135deg, var(--color-tile), color-mix(in srgb, var(--color-violet) 10%, var(--color-surface-solid)));
@@ -530,7 +627,7 @@ class MomentCard extends DjiElement {
     const img = this.img || this.getAttribute('img');
     this.shadowRoot.innerHTML = `
       <div class="mo">
-        <div class="img">
+        <div class="img${img ? ' clickable' : ''}">
           ${img ? `<img src="${img}" alt="${escapeHtml(this.getAttribute('label'))}">` : `<div class="ph"><span class="ico">🎞️</span></div>`}
           <span class="t">${escapeHtml(this.getAttribute('time'))}</span>
         </div>
@@ -540,6 +637,20 @@ class MomentCard extends DjiElement {
           <div class="sub">${escapeHtml(this.getAttribute('sub'))}</div>
         </div>
       </div>`;
+  }
+
+  afterRender() {
+    const img = this.img || this.getAttribute('img');
+    const box = this.$('.img.clickable');
+    if (img && box) {
+      box.setAttribute('role', 'button');
+      box.setAttribute('tabindex', '0');
+      const open = () => this.emit('moment:open', {
+        img, time: this.getAttribute('time'), metric: this.getAttribute('metric'), label: this.getAttribute('label'),
+      });
+      this.on(box, 'click', open);
+      this.on(box, 'keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    }
   }
 }
 
@@ -830,6 +941,7 @@ __req("js/components/ui/callout/callout.js");
 __req("js/components/ui/time-chart/time-chart.js");
 __req("js/components/ui/sat-map/sat-map.js");
 __req("js/components/ui/export-bar/export-bar.js");
+__req("js/components/ui/image-lightbox/image-lightbox.js");
 const { styles } = __req("js/components/views/flight-report/flight-report.css.js");
 
 const f = (v, d = 0) => (v == null ? '—' : v.toFixed(d));
@@ -874,6 +986,21 @@ class FlightReport extends DjiElement {
         ${this._notesTpl()}
       </div>
       <div class="foot">${escapeHtml(t('foot', { n: nfmt(m.frames), fecha: fecha(m.start) }))}</div>`;
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    // el visor vive en el body (overlay a pantalla completa, sobre el chrome)
+    if (!this._lb) { this._lb = document.createElement('image-lightbox'); document.body.appendChild(this._lb); }
+    if (!this._lbWired) {
+      this._lbWired = true;
+      this.shadowRoot.addEventListener('moment:open', (e) => this._lb && this._lb.open(e.detail.img, e.detail));
+    }
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._lb) { this._lb.remove(); this._lb = null; }
   }
 
   _heroTpl(m, r, dur, relmax, hsmax) {
@@ -1087,6 +1214,13 @@ class FlightReport extends DjiElement {
 
     this.$('#map').flight = { model: this.model, kps: this.kps };
     this.$('#exp').flight = { model: this.model, assets: this.assets };
+
+    // tira de luz: también abre el visor (los momentos se cablean en connectedCallback)
+    this.$$('.lstrip figure').forEach((fig) => {
+      const img = fig.querySelector('img'); if (!img) return;
+      img.style.cursor = 'zoom-in';
+      this.on(img, 'click', () => this._lb && this._lb.open(img.src, { label: fig.querySelector('figcaption')?.textContent?.trim() }));
+    });
   }
 }
 
@@ -1834,6 +1968,7 @@ __x.default = {
   'route.leg.height': 'Low → high',
   'route.note': 'Satellite imagery: Esri World Imagery · track reconstructed from the flight GPS',
   'map.loading': 'Loading satellite imagery…',
+  'lightbox.close': 'Close',
 
   // report · altitude
   'alt.eyebrow': 'Altitude',
@@ -2009,6 +2144,7 @@ __x.default = {
   'route.leg.height': 'Altura baja → alta',
   'route.note': 'Imagen de satélite: Esri World Imagery · trazado reconstruido con el GPS del vuelo',
   'map.loading': 'Cargando imagen de satélite…',
+  'lightbox.close': 'Cerrar',
 
   // informe · altitud
   'alt.eyebrow': 'Altitud',

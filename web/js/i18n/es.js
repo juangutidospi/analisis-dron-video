@@ -110,6 +110,7 @@ export default {
   'route.leg.height': 'Altura baja → alta',
   'route.note': 'Imagen de satélite: Esri World Imagery · trazado reconstruido con el GPS del vuelo',
   'map.loading': 'Cargando imagen de satélite…',
+  'lightbox.close': 'Cerrar',
 
   // informe · altitud
   'alt.eyebrow': 'Altitud',
