@@ -58,7 +58,7 @@ export class UploadView extends DjiElement {
     this.on(this.$('#go'), 'click', () => {
       if (!this.files.srtText) return;
       const title = (this.$('#title').value || '').trim() || t('form.default_title');
-      this.emit('dji:generate', { srtText: this.files.srtText, mp4: this.files.mp4, title });
+      this.emit('dji:generate', { srtText: this.files.srtText, mp4: this.files.mp4, title, place: this._place || null });
     });
   }
 
@@ -69,8 +69,10 @@ export class UploadView extends DjiElement {
     const c = firstCoords(srtText);
     if (!c) return;
     const place = await reverseGeocode(c[0], c[1]);
+    if (!place) return;
+    this._place = place;
     const input = this.$('#title');
-    if (place && input && !this._titleEdited) input.value = t('form.title_place', { place });
+    if (input && !this._titleEdited) input.value = t('form.title_place', { place });
   }
 }
 

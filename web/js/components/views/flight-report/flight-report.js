@@ -3,6 +3,7 @@ import { escapeHtml } from '../../../core/escape-html.js';
 import { t, getLang } from '../../../i18n/index.js';
 import { keypoints, mmss } from '../../../geo.js';
 import { hav } from '../../../srt.js';
+import { dayBand } from '../../../daypart.js';
 import '../../ui/stat-tile/stat-tile.js';
 import '../../ui/moment-card/moment-card.js';
 import '../../ui/callout/callout.js';
@@ -65,7 +66,7 @@ export class FlightReport extends DjiElement {
         <div class="inner">
           <span class="kick">${escapeHtml(t('hero.kicker'))}</span>
           <h1>${escapeHtml(a.title || 'DJI')}</h1>
-          <p class="lede">${escapeHtml(t('hero.lede'))}</p>
+          <p class="lede">${escapeHtml(this._lede(m))}</p>
           <div class="hstats">
             ${stat(mmss(dur), '', t('hero.duration'))}
             ${stat(relmax, 'm', t('hero.altmax'))}
@@ -79,6 +80,16 @@ export class FlightReport extends DjiElement {
           </div>
         </div>
       </header>`;
+  }
+
+  /** Descripción dinámica: duración + franja del día + lugar. */
+  _lede(m) {
+    const mins = Math.max(1, Math.floor(m.dur / 60));
+    const dur = mins === 1 ? t('dur.one') : t('dur.many', { n: mins });
+    const band = dayBand(m.start, this.model.takeoff[0], this.model.takeoff[1]);
+    let lede = t('hero.lede.base', { dur, daypart: t('daypart.' + band) });
+    if (this.assets.place) lede += t('hero.lede.place', { place: this.assets.place });
+    return lede + t('hero.lede.tail');
   }
 
   _resumenTpl(m, r, dur, relmax, hsavg, hsmax, iso) {

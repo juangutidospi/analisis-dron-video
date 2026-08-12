@@ -46,7 +46,16 @@ export default {
 
   // informe · portada
   'hero.kicker': '🚁 Telemetría de vuelo · DJI',
-  'hero.lede': 'Un análisis completo del vuelo, fotograma a fotograma: recorrido, altitud, velocidad, cámara y los momentos clave.',
+  'hero.lede.base': 'Un análisis completo, fotograma a fotograma, de un vuelo de {dur} {daypart}',
+  'hero.lede.place': ' sobre {place}',
+  'hero.lede.tail': ': recorrido, altitud, velocidad y los momentos clave capturados por la cámara.',
+  'dur.one': 'un minuto',
+  'dur.many': '{n} minutos',
+  'daypart.sunrise': 'al amanecer',
+  'daypart.sunset': 'al atardecer',
+  'daypart.morning': 'por la mañana',
+  'daypart.afternoon': 'por la tarde',
+  'daypart.night': 'nocturno',
   'hero.duration': 'Duración',
   'hero.altmax': 'Altura máx.',
   'hero.away': 'Alejamiento',

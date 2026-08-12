@@ -67,7 +67,7 @@ function showUpload() {
   app.appendChild(v);
 }
 
-async function generate({ srtText, mp4, title }) {
+async function generate({ srtText, mp4, title, place }) {
   app.innerHTML = '';
   const pv = document.createElement('progress-view');
   app.appendChild(pv);
@@ -81,7 +81,7 @@ async function generate({ srtText, mp4, title }) {
     const kps = keypoints(model);
     pv.setStep('model', 'done', 40);
 
-    const assets = { title, kps, hasFrames: false };
+    const assets = { title, place: place || null, kps, hasFrames: false };
     if (mp4) {
       pv.setStep('frames', 'active', 44);
       const dur = model.meta.dur;
@@ -823,6 +823,7 @@ const { escapeHtml } = __req("js/core/escape-html.js");
 const { t, getLang } = __req("js/i18n/index.js");
 const { keypoints, mmss } = __req("js/geo.js");
 const { hav } = __req("js/srt.js");
+const { dayBand } = __req("js/daypart.js");
 __req("js/components/ui/stat-tile/stat-tile.js");
 __req("js/components/ui/moment-card/moment-card.js");
 __req("js/components/ui/callout/callout.js");
@@ -885,7 +886,7 @@ class FlightReport extends DjiElement {
         <div class="inner">
           <span class="kick">${escapeHtml(t('hero.kicker'))}</span>
           <h1>${escapeHtml(a.title || 'DJI')}</h1>
-          <p class="lede">${escapeHtml(t('hero.lede'))}</p>
+          <p class="lede">${escapeHtml(this._lede(m))}</p>
           <div class="hstats">
             ${stat(mmss(dur), '', t('hero.duration'))}
             ${stat(relmax, 'm', t('hero.altmax'))}
@@ -899,6 +900,16 @@ class FlightReport extends DjiElement {
           </div>
         </div>
       </header>`;
+  }
+
+  /** Descripción dinámica: duración + franja del día + lugar. */
+  _lede(m) {
+    const mins = Math.max(1, Math.floor(m.dur / 60));
+    const dur = mins === 1 ? t('dur.one') : t('dur.many', { n: mins });
+    const band = dayBand(m.start, this.model.takeoff[0], this.model.takeoff[1]);
+    let lede = t('hero.lede.base', { dur, daypart: t('daypart.' + band) });
+    if (this.assets.place) lede += t('hero.lede.place', { place: this.assets.place });
+    return lede + t('hero.lede.tail');
   }
 
   _resumenTpl(m, r, dur, relmax, hsavg, hsmax, iso) {
@@ -1285,7 +1296,7 @@ class UploadView extends DjiElement {
     this.on(this.$('#go'), 'click', () => {
       if (!this.files.srtText) return;
       const title = (this.$('#title').value || '').trim() || t('form.default_title');
-      this.emit('dji:generate', { srtText: this.files.srtText, mp4: this.files.mp4, title });
+      this.emit('dji:generate', { srtText: this.files.srtText, mp4: this.files.mp4, title, place: this._place || null });
     });
   }
 
@@ -1296,8 +1307,10 @@ class UploadView extends DjiElement {
     const c = firstCoords(srtText);
     if (!c) return;
     const place = await reverseGeocode(c[0], c[1]);
+    if (!place) return;
+    this._place = place;
     const input = this.$('#title');
-    if (place && input && !this._titleEdited) input.value = t('form.title_place', { place });
+    if (input && !this._titleEdited) input.value = t('form.title_place', { place });
   }
 }
 
@@ -1441,6 +1454,53 @@ function escapeHtml(value) {
 }
 
 Object.assign(__x, { escapeHtml });
+
+};
+
+__m["js/daypart.js"] = function (__x, __req) {
+// Franja del día del vuelo a partir de la elevación del sol en el instante,
+// lugar y fecha de inicio (algoritmo NOAA, sin dependencias).
+
+const RAD = Math.PI / 180;
+
+/**
+ * Elevación solar (grados) y signo del ángulo horario (mañana<0 / tarde>0).
+ * @param {Date} date instante (UTC) @param {number} lat @param {number} lon
+ */
+function solarElevation(date, lat, lon) {
+  const yearStart = Date.UTC(date.getUTCFullYear(), 0, 0);
+  const dayOfYear = Math.floor((date - yearStart) / 86400000);
+  const hourUTC = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+  const g = (2 * Math.PI / 365) * (dayOfYear - 1 + (hourUTC - 12) / 24);
+  const eqtime = 229.18 * (0.000075 + 0.001868 * Math.cos(g) - 0.032077 * Math.sin(g)
+    - 0.014615 * Math.cos(2 * g) - 0.040849 * Math.sin(2 * g));
+  const decl = 0.006918 - 0.399912 * Math.cos(g) + 0.070257 * Math.sin(g) - 0.006758 * Math.cos(2 * g)
+    + 0.000907 * Math.sin(2 * g) - 0.002697 * Math.cos(3 * g) + 0.00148 * Math.sin(3 * g);
+  const tst = hourUTC * 60 + eqtime + 4 * lon; // tiempo solar verdadero (min)
+  const ha = (tst / 4 - 180) * RAD;            // ángulo horario (rad)
+  const latR = lat * RAD;
+  const cosZ = Math.sin(latR) * Math.sin(decl) + Math.cos(latR) * Math.cos(decl) * Math.cos(ha);
+  const elevation = 90 - Math.acos(Math.max(-1, Math.min(1, cosZ))) / RAD;
+  return { elevation, ha };
+}
+
+/**
+ * Clasifica la franja del día.
+ * @param {string} startStr fecha/hora local del SRT ("YYYY-MM-DD HH:MM:SS")
+ * @param {number} lat @param {number} lon
+ * @returns {'sunrise'|'sunset'|'morning'|'afternoon'|'night'}
+ */
+function dayBand(startStr, lat, lon) {
+  const date = new Date(startStr.replace(' ', 'T')); // hora local → instante UTC (según zona del navegador)
+  const { elevation, ha } = solarElevation(date, lat, lon);
+  // orto/ocaso y noche por posición solar; mañana/tarde por hora de reloj (más natural)
+  if (elevation < -6) return 'night';
+  if (elevation <= 8) return ha < 0 ? 'sunrise' : 'sunset';
+  const localHour = parseInt(startStr.slice(11, 13), 10) + parseInt(startStr.slice(14, 16), 10) / 60;
+  return localHour < 12 ? 'morning' : 'afternoon';
+}
+
+Object.assign(__x, { dayBand });
 
 };
 
@@ -1710,7 +1770,16 @@ __x.default = {
 
   // report · hero
   'hero.kicker': '🚁 Flight telemetry · DJI',
-  'hero.lede': 'A complete flight analysis, frame by frame: route, altitude, speed, camera and the key moments.',
+  'hero.lede.base': 'A complete frame-by-frame analysis of a {dur} flight {daypart}',
+  'hero.lede.place': ' over {place}',
+  'hero.lede.tail': ': route, altitude, speed and the key moments captured by the camera.',
+  'dur.one': 'one-minute',
+  'dur.many': '{n}-minute',
+  'daypart.sunrise': 'at sunrise',
+  'daypart.sunset': 'at sunset',
+  'daypart.morning': 'in the morning',
+  'daypart.afternoon': 'in the afternoon',
+  'daypart.night': 'at night',
   'hero.duration': 'Duration',
   'hero.altmax': 'Max height',
   'hero.away': 'Farthest',
@@ -1876,7 +1945,16 @@ __x.default = {
 
   // informe · portada
   'hero.kicker': '🚁 Telemetría de vuelo · DJI',
-  'hero.lede': 'Un análisis completo del vuelo, fotograma a fotograma: recorrido, altitud, velocidad, cámara y los momentos clave.',
+  'hero.lede.base': 'Un análisis completo, fotograma a fotograma, de un vuelo de {dur} {daypart}',
+  'hero.lede.place': ' sobre {place}',
+  'hero.lede.tail': ': recorrido, altitud, velocidad y los momentos clave capturados por la cámara.',
+  'dur.one': 'un minuto',
+  'dur.many': '{n} minutos',
+  'daypart.sunrise': 'al amanecer',
+  'daypart.sunset': 'al atardecer',
+  'daypart.morning': 'por la mañana',
+  'daypart.afternoon': 'por la tarde',
+  'daypart.night': 'nocturno',
   'hero.duration': 'Duración',
   'hero.altmax': 'Altura máx.',
   'hero.away': 'Alejamiento',

@@ -46,7 +46,16 @@ export default {
 
   // report · hero
   'hero.kicker': '🚁 Flight telemetry · DJI',
-  'hero.lede': 'A complete flight analysis, frame by frame: route, altitude, speed, camera and the key moments.',
+  'hero.lede.base': 'A complete frame-by-frame analysis of a {dur} flight {daypart}',
+  'hero.lede.place': ' over {place}',
+  'hero.lede.tail': ': route, altitude, speed and the key moments captured by the camera.',
+  'dur.one': 'one-minute',
+  'dur.many': '{n}-minute',
+  'daypart.sunrise': 'at sunrise',
+  'daypart.sunset': 'at sunset',
+  'daypart.morning': 'in the morning',
+  'daypart.afternoon': 'in the afternoon',
+  'daypart.night': 'at night',
   'hero.duration': 'Duration',
   'hero.altmax': 'Max height',
   'hero.away': 'Farthest',
