@@ -45,7 +45,7 @@ export default {
   'error.back': '← Back',
 
   // report · hero
-  'hero.kicker': '🚁 Flight telemetry · DJI',
+  'hero.kicker': '🚁 Flight telemetry · DJI Neo 2',
   'hero.lede.base': 'A complete frame-by-frame analysis of a {dur} flight {daypart}',
   'hero.lede.place': ' over {place}',
   'hero.lede.tail': ': route, altitude, speed and the key moments captured by the camera.',

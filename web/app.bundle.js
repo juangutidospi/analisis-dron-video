@@ -1903,7 +1903,7 @@ __x.default = {
   'error.back': '← Back',
 
   // report · hero
-  'hero.kicker': '🚁 Flight telemetry · DJI',
+  'hero.kicker': '🚁 Flight telemetry · DJI Neo 2',
   'hero.lede.base': 'A complete frame-by-frame analysis of a {dur} flight {daypart}',
   'hero.lede.place': ' over {place}',
   'hero.lede.tail': ': route, altitude, speed and the key moments captured by the camera.',
@@ -2079,7 +2079,7 @@ __x.default = {
   'error.back': '← Volver',
 
   // informe · portada
-  'hero.kicker': '🚁 Telemetría de vuelo · DJI',
+  'hero.kicker': '🚁 Telemetría de vuelo · DJI Neo 2',
   'hero.lede.base': 'Un análisis completo, fotograma a fotograma, de un vuelo de {dur} {daypart}',
   'hero.lede.place': ' sobre {place}',
   'hero.lede.tail': ': recorrido, altitud, velocidad y los momentos clave capturados por la cámara.',

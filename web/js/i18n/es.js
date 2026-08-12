@@ -45,7 +45,7 @@ export default {
   'error.back': '← Volver',
 
   // informe · portada
-  'hero.kicker': '🚁 Telemetría de vuelo · DJI',
+  'hero.kicker': '🚁 Telemetría de vuelo · DJI Neo 2',
   'hero.lede.base': 'Un análisis completo, fotograma a fotograma, de un vuelo de {dur} {daypart}',
   'hero.lede.place': ' sobre {place}',
   'hero.lede.tail': ': recorrido, altitud, velocidad y los momentos clave capturados por la cámara.',
