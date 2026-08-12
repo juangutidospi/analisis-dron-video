@@ -30,7 +30,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       # Regenera app.bundle.js desde los módulos de web/js (única fuente de verdad)
       - name: Empaquetar
