@@ -160,7 +160,10 @@ export default {
   'loc.gmaps': 'Open in Google Maps ↗',
   'loc.downloads': 'Download flight data',
   'exp.kmz': '🌍 3D KMZ for Google Earth',
+  'exp.html': 'HTML report',
   'exp.kmz.gen': '⏳ Generating KMZ…',
+  'exp.kmz.hint': 'Downloaded. Open it with Google Earth Pro (double-click), or import it into {link} (Projects menu → Import KML file).',
+  'exp.earthweb': 'Google Earth Web',
   'exp.note': 'The .kmz replays the flight animated in 3D in Google Earth, with altitude walls, the key moments and the embedded frames. The .csv has all per-frame data; .gpx/.kml open the track in map apps.',
   'exp.kmz.error': 'Could not generate the KMZ: {msg}',
 

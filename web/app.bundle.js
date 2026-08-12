@@ -424,6 +424,9 @@ const styles = css`
   &:hover { border-color: transparent; }
 }
 .note { font-size: 12px; color: var(--color-text-muted); margin: 14px 0 0; line-height: 1.5; }
+.kmz-hint { margin-top: 8px; padding: 9px 11px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent); background: color-mix(in srgb, var(--color-accent) 8%, transparent); color: color-mix(in srgb, var(--color-text) 82%, transparent); }
+.kmz-hint a { font-weight: 600; }
+.hidden { display: none; }
 `;
 
 Object.assign(__x, { styles });
@@ -432,9 +435,11 @@ Object.assign(__x, { styles });
 
 __m["js/components/ui/export-bar/export-bar.js"] = function (__x, __req) {
 const { DjiElement } = __req("js/core/DjiElement.js");
+const { escapeHtml } = __req("js/core/escape-html.js");
 const { t } = __req("js/i18n/index.js");
 const { toGPX, toKML, toCSV, download, downloadBlob } = __req("js/exports.js");
 const { buildKMZ } = __req("js/kmz.js");
+const { buildStandaloneHtml } = __req("js/export-html.js");
 const { styles } = __req("js/components/ui/export-bar/export-bar.css.js");
 
 /** Botones de descarga del vuelo. Recibe los datos por propiedad: el.flight = { model, assets }. */
@@ -449,11 +454,13 @@ class ExportBar extends DjiElement {
     this.shadowRoot.innerHTML = `
       <div class="exports">
         <button class="exp-btn exp-kmz" data-exp="kmz" type="button">${t('exp.kmz')}</button>
+        <button class="exp-btn" data-exp="html" type="button">📄 ${t('exp.html')}</button>
         <button class="exp-btn" data-exp="gpx" type="button">🛰️ GPX</button>
         <button class="exp-btn" data-exp="kml" type="button">🗺️ KML</button>
         <button class="exp-btn" data-exp="csv" type="button">📊 CSV</button>
       </div>
-      <p class="note">${t('exp.note')}</p>`;
+      <p class="note">${t('exp.note')}</p>
+      <p class="note kmz-hint hidden" id="kmzHint"></p>`;
   }
 
   afterRender() {
@@ -468,12 +475,28 @@ class ExportBar extends DjiElement {
     if (kind === 'gpx') download(name + '.gpx', toGPX(model, name), 'application/gpx+xml');
     if (kind === 'kml') download(name + '.kml', toKML(model, name), 'application/vnd.google-earth.kml+xml');
     if (kind === 'csv') download(name + '.csv', toCSV(model), 'text/csv');
+    if (kind === 'html') {
+      const report = this.getRootNode().host; // el <flight-report>
+      const theme = document.documentElement.getAttribute('data-theme') || '';
+      download(name + '.html', buildStandaloneHtml(report, { title: name, theme }), 'text/html');
+    }
     if (kind === 'kmz') {
       const prev = b.textContent; b.disabled = true; b.textContent = t('exp.kmz.gen');
-      try { const { blob, filename } = buildKMZ(model, assets); downloadBlob(filename, blob); }
-      catch (e) { console.error(e); alert(t('exp.kmz.error', { msg: e.message })); }
+      try {
+        const { blob, filename } = buildKMZ(model, assets);
+        downloadBlob(filename, blob);
+        this._showKmzHint();
+      } catch (e) { console.error(e); alert(t('exp.kmz.error', { msg: e.message })); }
       finally { b.disabled = false; b.textContent = prev; }
     }
+  }
+
+  /** Muestra cómo abrir el KMZ (Google Earth Pro o Earth Web). */
+  _showKmzHint() {
+    const hint = this.$('#kmzHint');
+    const link = `<a href="https://earth.google.com/web/" target="_blank" rel="noopener">${escapeHtml(t('exp.earthweb'))} ↗</a>`;
+    hint.innerHTML = t('exp.kmz.hint', { link });
+    hint.classList.remove('hidden');
   }
 }
 
@@ -1233,7 +1256,7 @@ class FlightReport extends DjiElement {
             </tbody></table>
             <p style="margin:12px 0 0"><a href="https://www.google.com/maps?q=${d.takeoff[0]},${d.takeoff[1]}" target="_blank" rel="noopener">${escapeHtml(t('loc.gmaps'))}</a></p>
           </div>
-          <div class="card">
+          <div class="card" data-noexport>
             <h3>${escapeHtml(t('loc.downloads'))}</h3>
             <export-bar id="exp"></export-bar>
           </div>
@@ -1698,6 +1721,72 @@ Object.assign(__x, { dayBand });
 
 };
 
+__m["js/export-html.js"] = function (__x, __req) {
+// Genera un informe HTML autónomo a partir del <flight-report> ya renderizado.
+// Serializa el árbol (incluidos los Shadow DOM, como declarative shadow DOM) e
+// incrusta los estilos adoptados y los tokens, para un único archivo abrible offline
+// (las teselas de satélite se cargan online). Se omiten los nodos con data-noexport.
+
+const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+
+function cssTextOf(sheet) {
+  try { return Array.from(sheet.cssRules).map((r) => r.cssText).join('\n'); } catch (_) { return ''; }
+}
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const escAttr = (s) => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+function serialize(node) {
+  if (node.nodeType === Node.TEXT_NODE) return esc(node.nodeValue);
+  if (node.nodeType !== Node.ELEMENT_NODE) return '';
+  const el = node;
+  if (el.nodeType === Node.ELEMENT_NODE && el.hasAttribute && el.hasAttribute('data-noexport')) return '';
+  const tag = el.tagName.toLowerCase();
+  let attrs = '';
+  for (const a of el.attributes) attrs += ` ${a.name}="${escAttr(a.value)}"`;
+  if (VOID.has(tag)) return `<${tag}${attrs}>`;
+  if (tag === 'style' || tag === 'script') return `<${tag}${attrs}>${el.textContent}</${tag}>`;
+  let inner = '';
+  if (el.shadowRoot) {
+    const css = el.shadowRoot.adoptedStyleSheets.map(cssTextOf).join('\n');
+    let sh = '';
+    for (const c of el.shadowRoot.childNodes) sh += serialize(c);
+    inner += `<template shadowrootmode="open">${css ? `<style>${css}</style>` : ''}${sh}</template>`;
+  }
+  for (const c of el.childNodes) inner += serialize(c);
+  return `<${tag}${attrs}>${inner}</${tag}>`;
+}
+
+/**
+ * @param {HTMLElement} reportEl  el <flight-report> renderizado
+ * @param {{title?:string, theme?:string}} [opts]
+ * @returns {string} documento HTML completo y autónomo
+ */
+function buildStandaloneHtml(reportEl, opts = {}) {
+  const title = opts.title || 'Vuelo';
+  const theme = opts.theme || '';
+  let tokens = '';
+  for (const s of document.styleSheets) {
+    if (s.href && s.href.includes('tokens.css')) tokens = cssTextOf(s);
+  }
+  const chrome = 'body{margin:0;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body,system-ui)}'
+    + '*{box-sizing:border-box}img{max-width:100%}';
+  const body = serialize(reportEl);
+  return `<!doctype html>
+<html lang="es"${theme ? ` data-theme="${theme}"` : ''}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)}</title>
+<style>${tokens}\n${chrome}</style>
+</head>
+<body>${body}</body>
+</html>`;
+}
+
+Object.assign(__x, { buildStandaloneHtml });
+
+};
+
 __m["js/exports.js"] = function (__x, __req) {
 // Exportaciones del vuelo: GPX, KML y CSV, generadas en el navegador desde el modelo.
 
@@ -2112,7 +2201,10 @@ __x.default = {
   'loc.gmaps': 'Open in Google Maps ↗',
   'loc.downloads': 'Download flight data',
   'exp.kmz': '🌍 3D KMZ for Google Earth',
+  'exp.html': 'HTML report',
   'exp.kmz.gen': '⏳ Generating KMZ…',
+  'exp.kmz.hint': 'Downloaded. Open it with Google Earth Pro (double-click), or import it into {link} (Projects menu → Import KML file).',
+  'exp.earthweb': 'Google Earth Web',
   'exp.note': 'The .kmz replays the flight animated in 3D in Google Earth, with altitude walls, the key moments and the embedded frames. The .csv has all per-frame data; .gpx/.kml open the track in map apps.',
   'exp.kmz.error': 'Could not generate the KMZ: {msg}',
 
@@ -2291,7 +2383,10 @@ __x.default = {
   'loc.gmaps': 'Ver en Google Maps ↗',
   'loc.downloads': 'Descargar datos del vuelo',
   'exp.kmz': '🌍 KMZ 3D para Google Earth',
+  'exp.html': 'Informe HTML',
   'exp.kmz.gen': '⏳ Generando KMZ…',
+  'exp.kmz.hint': 'Descargado. Ábrelo con Google Earth Pro (doble clic), o impórtalo en {link} (menú Proyectos → Importar archivo KML).',
+  'exp.earthweb': 'Google Earth Web',
   'exp.note': 'El .kmz reproduce el vuelo animado en 3D en Google Earth, con muros de altitud, los momentos clave y los fotogramas incrustados. El .csv tiene todos los datos por fotograma; .gpx/.kml abren el trazado en apps de mapas.',
   'exp.kmz.error': 'No se pudo generar el KMZ: {msg}',
 

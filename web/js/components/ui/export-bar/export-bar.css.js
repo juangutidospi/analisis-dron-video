@@ -16,4 +16,7 @@ export const styles = css`
   &:hover { border-color: transparent; }
 }
 .note { font-size: 12px; color: var(--color-text-muted); margin: 14px 0 0; line-height: 1.5; }
+.kmz-hint { margin-top: 8px; padding: 9px 11px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent); background: color-mix(in srgb, var(--color-accent) 8%, transparent); color: color-mix(in srgb, var(--color-text) 82%, transparent); }
+.kmz-hint a { font-weight: 600; }
+.hidden { display: none; }
 `;

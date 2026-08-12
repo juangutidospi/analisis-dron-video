@@ -248,7 +248,7 @@ export class FlightReport extends DjiElement {
             </tbody></table>
             <p style="margin:12px 0 0"><a href="https://www.google.com/maps?q=${d.takeoff[0]},${d.takeoff[1]}" target="_blank" rel="noopener">${escapeHtml(t('loc.gmaps'))}</a></p>
           </div>
-          <div class="card">
+          <div class="card" data-noexport>
             <h3>${escapeHtml(t('loc.downloads'))}</h3>
             <export-bar id="exp"></export-bar>
           </div>
