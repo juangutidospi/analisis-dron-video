@@ -37,6 +37,16 @@ jobs:
         run: node tools/bundle.mjs
         working-directory: web
 
+      # Cache-busting solo en el despliegue: estampa un hash del bundle en el
+      # index.html publicado, para que los navegadores recojan el bundle nuevo.
+      # El index.html del repo se queda limpio (app.bundle.js sin ?v=), así el
+      # doble clic con file:// sigue funcionando.
+      - name: Versionar bundle en index.html
+        run: |
+          HASH=$(sha1sum web/app.bundle.js | cut -c1-8)
+          sed -i "s#src=\"app.bundle.js\"#src=\"app.bundle.js?v=$HASH\"#" web/index.html
+          echo "Estampado app.bundle.js?v=$HASH"
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
