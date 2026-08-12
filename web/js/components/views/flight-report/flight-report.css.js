@@ -60,4 +60,13 @@ tbody tr:last-child td { border-bottom: none; }
 code { background: var(--color-tile); border: 1px solid var(--color-divider); border-radius: 6px; padding: 1px 7px; font-size: 12.5px; font-family: ui-monospace, Menlo, monospace; }
 
 .foot { padding: 40px 0 70px; border-top: 1px solid var(--color-divider); color: var(--color-text-muted); font-size: 12.5px; text-align: center; }
+
+/* Móvil: margen lateral de 1rem, consistente en todas las secciones y la portada */
+@media (max-width: 560px) {
+  .wrap { padding: 0 16px; }
+  .r-hero .inner { padding: 0 16px; }
+  section.blk { padding: 44px 0; }
+  .tiles { gap: 12px; }
+  .mos { gap: 14px; }
+}
 `;
