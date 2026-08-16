@@ -1,7 +1,9 @@
 import { css } from '../../../core/css.js';
 
 export const styles = css`
-:host { display: block; animation: rise .6s cubic-bezier(.22,1,.36,1) both; }
+:host { display: block; animation: rise .6s cubic-bezier(.22,1,.36,1) both; padding-bottom: clamp(96px, 14vh, 140px); }
+/* con vídeo, la miniatura (PiP) sube más: reserva algo más de hueco al final */
+:host(.has-video) { padding-bottom: clamp(150px, 24vh, 240px); }
 @keyframes rise { from { opacity: 0; transform: translateY(16px); } }
 .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
 

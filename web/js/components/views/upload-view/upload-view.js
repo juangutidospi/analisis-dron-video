@@ -30,8 +30,12 @@ export class UploadView extends DjiElement {
         <div class="gen ${this.files.srt ? '' : 'hidden'}" id="gen">
           <label>${escapeHtml(t('form.title_label'))}</label>
           <input id="title" value="${escapeHtml(t('form.default_title'))}">
+          <button class="addmp4" id="addmp4" type="button">
+            <span class="mp4-ico">🎬</span>
+            <span class="mp4-txt"><span class="mp4-t">${escapeHtml(t('form.add_mp4'))}</span><span class="mp4-sub">${escapeHtml(t('form.add_mp4.sub'))}</span></span>
+            <span class="mp4-badge">${escapeHtml(t('form.recommended'))}</span>
+          </button>
           <button class="go" id="go" type="button">${escapeHtml(t('form.generate'))}</button>
-          <button class="addmp4" id="addmp4" type="button">${escapeHtml(t('form.add_mp4'))}</button>
         </div>
 
         <div class="feats">
@@ -52,14 +56,26 @@ export class UploadView extends DjiElement {
     this.on(dz, 'dz:change', (e) => {
       this.files = e.detail;
       this.$('#gen').classList.toggle('hidden', !this.files.srt);
+      this._updateMp4Btn();
       if (this.files.srtText) this._suggestTitle(this.files.srtText);
     });
     this.on(this.$('#addmp4'), 'click', () => dz.pickMp4());
+    this._updateMp4Btn();
     this.on(this.$('#go'), 'click', () => {
       if (!this.files.srtText) return;
       const title = (this.$('#title').value || '').trim() || t('form.default_title');
       this.emit('dji:generate', { srtText: this.files.srtText, mp4: this.files.mp4, title, place: this._place || null });
     });
+  }
+
+  /** Refleja en el botón si ya hay vídeo (estado "añadido"). */
+  _updateMp4Btn() {
+    const btn = this.$('#addmp4'); if (!btn) return;
+    const has = !!(this.files && this.files.mp4);
+    btn.classList.toggle('has', has);
+    const ico = btn.querySelector('.mp4-ico'), tt = btn.querySelector('.mp4-t'), sub = btn.querySelector('.mp4-sub'), badge = btn.querySelector('.mp4-badge');
+    if (has) { ico.textContent = '✓'; tt.textContent = t('form.mp4_added'); sub.textContent = this.files.mp4.name; badge.hidden = true; }
+    else { ico.textContent = '🎬'; tt.textContent = t('form.add_mp4'); sub.textContent = t('form.add_mp4.sub'); badge.hidden = false; }
   }
 
   /** Prerellena el título con el lugar del vuelo (geocodificación inversa). */

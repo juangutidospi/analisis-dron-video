@@ -20,8 +20,14 @@ export class TimeChart extends DjiElement {
   afterRender() {
     const d = this._data;
     if (!d) return;
-    timeChart(this.$('#box'), d.series, d.dur, d.cfgs);
+    this._chart = timeChart(this.$('#box'), d.series, d.dur, d.cfgs);
   }
+
+  /** Coloca el cursor en el instante t (reproducción). */
+  playhead(t) { this._chart && this._chart.showAtTime(t); }
+
+  /** Esconde el cursor de reproducción. */
+  clearPlayhead() { this._chart && this._chart.leave(); }
 }
 
 customElements.define('time-chart', TimeChart);

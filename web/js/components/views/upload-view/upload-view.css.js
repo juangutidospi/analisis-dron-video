@@ -22,17 +22,38 @@ p.sub { font-size: clamp(16px, 2.1vw, 20px); color: color-mix(in srgb, var(--col
   padding: 12px 14px; color: var(--color-text); font-size: 15px; font-family: inherit; backdrop-filter: blur(8px);
 }
 .gen .go {
-  margin-top: 14px; width: 100%; border: none; cursor: pointer; color: #fff; font-weight: 700; font-size: 15px;
+  margin-top: 0; width: 100%; border: none; cursor: pointer; color: #fff; font-weight: 700; font-size: 15px;
   padding: 14px 26px; border-radius: 100px; background: linear-gradient(135deg, var(--color-accent-2), var(--color-accent));
   box-shadow: 0 10px 26px color-mix(in srgb, var(--color-accent) 38%, transparent); transition: transform .12s;
   &:hover { transform: translateY(-2px); }
 }
+/* Botón de vídeo resaltado (encima de Generar), con barrido de brillo animado. */
 .gen .addmp4 {
-  margin-top: 10px; width: 100%; justify-content: center; display: inline-flex; align-items: center; gap: 8px;
-  border: 1px solid var(--color-divider); background: var(--color-surface); color: var(--color-text);
-  border-radius: 100px; padding: 11px 15px; font-size: 13.5px; font-weight: 600; cursor: pointer; backdrop-filter: blur(8px);
-  &:hover { border-color: var(--color-accent); }
+  position: relative; overflow: hidden; margin-top: 14px; margin-bottom: 12px; width: 100%; display: flex; align-items: center; gap: 12px;
+  text-align: left; cursor: pointer; color: var(--color-text); font-family: inherit; border-radius: 16px; padding: 13px 15px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 9%, var(--color-surface));
+  box-shadow: 0 0 26px -10px color-mix(in srgb, var(--color-accent) 60%, transparent);
+  transition: transform .14s, box-shadow .14s, border-color .14s;
+  &:hover { transform: translateY(-1px); box-shadow: 0 0 34px -6px color-mix(in srgb, var(--color-accent) 68%, transparent); }
 }
+.gen .addmp4::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(100deg, transparent 34%, color-mix(in srgb, var(--color-accent) 28%, transparent) 50%, transparent 66%);
+  transform: translateX(-120%); animation: mp4shine 3.6s ease-in-out infinite;
+}
+@keyframes mp4shine { 0%, 55% { transform: translateX(-120%); } 100% { transform: translateX(120%); } }
+@media (prefers-reduced-motion: reduce) { .gen .addmp4::after { animation: none; opacity: 0; } }
+.mp4-ico { position: relative; z-index: 1; flex: none; width: 42px; height: 42px; display: grid; place-items: center; font-size: 22px;
+  border-radius: 12px; background: color-mix(in srgb, var(--color-accent) 18%, transparent); }
+.mp4-txt { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.mp4-t { font-size: 14.5px; font-weight: 750; letter-spacing: -.01em; }
+.mp4-sub { font-size: 12px; color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp4-badge { position: relative; z-index: 1; flex: none; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .07em;
+  color: #fff; background: linear-gradient(135deg, var(--color-accent), var(--color-violet)); border-radius: 100px; padding: 4px 10px; }
+.gen .addmp4.has { border-color: color-mix(in srgb, var(--c-green) 50%, transparent); background: color-mix(in srgb, var(--c-green) 10%, var(--color-surface)); box-shadow: none; }
+.gen .addmp4.has::after { display: none; }
+.gen .addmp4.has .mp4-ico { background: color-mix(in srgb, var(--c-green) 22%, transparent); color: var(--c-green); }
 
 .feats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; max-width: 720px; margin: 44px auto 0; }
 @media (max-width: 620px) { .feats { grid-template-columns: 1fr; } }

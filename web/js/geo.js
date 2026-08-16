@@ -39,8 +39,17 @@ export function tileConfig(track) {
   const lats = T.map(p => p[0]), lons = T.map(p => p[1]);
   let la0 = Math.min(...lats), la1 = Math.max(...lats);
   let lo0 = Math.min(...lons), lo1 = Math.max(...lons);
-  const dla = (la1 - la0) * 0.18 || 1e-4, dlo = (lo1 - lo0) * 0.18 || 1e-4;
+  const dla = (la1 - la0) * 0.08 || 1e-4, dlo = (lo1 - lo0) * 0.08 || 1e-4;
   la0 -= dla; la1 += dla; lo0 -= dlo; lo1 += dlo;
+  // ensancha el encuadre a formato apaisado para que el mapa llene el bloque,
+  // pero sin pasarse: encuadre ceñido al recorrido para que no se vea pequeño.
+  const targetAR = 1.25;
+  const cosLat = Math.cos(((la0 + la1) / 2) * Math.PI / 180);
+  const wSpan = (lo1 - lo0) * cosLat, hSpan = (la1 - la0);
+  if (wSpan / hSpan < targetAR) {
+    const add = (hSpan * targetAR / cosLat - (lo1 - lo0)) / 2;
+    lo0 -= add; lo1 += add;
+  }
   const tilesAt = (z) => {
     const n = 2 ** z;
     const xt = (lon) => (lon + 180) / 360 * n;

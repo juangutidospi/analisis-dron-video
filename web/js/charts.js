@@ -72,9 +72,8 @@ export function timeChart(host, series, dur, cfgs) {
 
   const tip = document.createElement('div'); tip.className = 'chart-tip'; host.appendChild(tip);
 
-  const move = (clientX) => {
-    const rect = svg.getBoundingClientRect();
-    const t = Math.max(0, Math.min(dur, ((clientX - rect.left) / rect.width * W - L) / (W - L - R) * dur));
+  // posiciona el cursor (crosshair + puntos + tooltip) en un instante t
+  const showAtTime = (t) => {
     const s = series.reduce((a, b) => Math.abs(b.t - t) < Math.abs(a.t - t) ? b : a);
     const x = X(s.t);
     cross.setAttribute('d', `M${x},${Tp} L${x},${H - B}`); cross.style.opacity = '1';
@@ -86,16 +85,25 @@ export function timeChart(host, series, dur, cfgs) {
       html += `<br><i style="background:var(${cf.color})"></i>${cf.label}: ${v.toFixed(cf.dec)}${cf.unit ? ' ' + cf.unit : ''}`;
     });
     tip.innerHTML = html;
-    const px = (x / W) * rect.width;
+    const w = svg.getBoundingClientRect().width || W;
+    const px = (x / W) * w;
     tip.style.left = px + 'px';
-    tip.classList.toggle('flip', px > rect.width * 0.62);
+    tip.classList.toggle('flip', px > w * 0.62);
     tip.style.opacity = '1';
+  };
+  const move = (clientX) => {
+    const rect = svg.getBoundingClientRect();
+    const t = Math.max(0, Math.min(dur, ((clientX - rect.left) / rect.width * W - L) / (W - L - R) * dur));
+    showAtTime(t);
   };
   const leave = () => { cross.style.opacity = '0'; dots.forEach(d => d.style.opacity = '0'); tip.style.opacity = '0'; };
   svg.addEventListener('pointermove', e => move(e.clientX));
   svg.addEventListener('pointerdown', e => move(e.clientX));
   svg.addEventListener('pointerleave', leave);
   svg.style.touchAction = 'pan-y';
+
+  // handle para el reproductor: mover el cursor por tiempo, o esconderlo
+  return { showAtTime, leave };
 }
 
 const mmssLocal = (t) => { t = Math.round(t); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };

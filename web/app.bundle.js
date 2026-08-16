@@ -214,9 +214,8 @@ function timeChart(host, series, dur, cfgs) {
 
   const tip = document.createElement('div'); tip.className = 'chart-tip'; host.appendChild(tip);
 
-  const move = (clientX) => {
-    const rect = svg.getBoundingClientRect();
-    const t = Math.max(0, Math.min(dur, ((clientX - rect.left) / rect.width * W - L) / (W - L - R) * dur));
+  // posiciona el cursor (crosshair + puntos + tooltip) en un instante t
+  const showAtTime = (t) => {
     const s = series.reduce((a, b) => Math.abs(b.t - t) < Math.abs(a.t - t) ? b : a);
     const x = X(s.t);
     cross.setAttribute('d', `M${x},${Tp} L${x},${H - B}`); cross.style.opacity = '1';
@@ -228,16 +227,25 @@ function timeChart(host, series, dur, cfgs) {
       html += `<br><i style="background:var(${cf.color})"></i>${cf.label}: ${v.toFixed(cf.dec)}${cf.unit ? ' ' + cf.unit : ''}`;
     });
     tip.innerHTML = html;
-    const px = (x / W) * rect.width;
+    const w = svg.getBoundingClientRect().width || W;
+    const px = (x / W) * w;
     tip.style.left = px + 'px';
-    tip.classList.toggle('flip', px > rect.width * 0.62);
+    tip.classList.toggle('flip', px > w * 0.62);
     tip.style.opacity = '1';
+  };
+  const move = (clientX) => {
+    const rect = svg.getBoundingClientRect();
+    const t = Math.max(0, Math.min(dur, ((clientX - rect.left) / rect.width * W - L) / (W - L - R) * dur));
+    showAtTime(t);
   };
   const leave = () => { cross.style.opacity = '0'; dots.forEach(d => d.style.opacity = '0'); tip.style.opacity = '0'; };
   svg.addEventListener('pointermove', e => move(e.clientX));
   svg.addEventListener('pointerdown', e => move(e.clientX));
   svg.addEventListener('pointerleave', leave);
   svg.style.touchAction = 'pan-y';
+
+  // handle para el reproductor: mover el cursor por tiempo, o esconderlo
+  return { showAtTime, leave };
 }
 
 const mmssLocal = (t) => { t = Math.round(t); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
@@ -506,6 +514,149 @@ Object.assign(__x, { ExportBar });
 
 };
 
+__m["js/components/ui/flight-player/flight-player.css.js"] = function (__x, __req) {
+const { css } = __req("js/core/css.js");
+
+const styles = css`
+:host { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: flex; justify-content: center; padding: 0 14px 16px; pointer-events: none; }
+:host([hidden]) { display: none; }
+.stack { display: flex; flex-direction: column; align-items: center; gap: 10px; width: min(720px, 100%); }
+.pip {
+  pointer-events: auto; width: clamp(168px, 24vw, 260px); aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden;
+  border: 1px solid var(--color-divider); box-shadow: var(--shadow-lg); background: #000; display: none;
+  animation: rise .35s cubic-bezier(.22,1,.36,1) both;
+}
+.pip.on { display: block; }
+.pip video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.player {
+  pointer-events: auto; display: flex; align-items: center; gap: 13px; width: 100%;
+  background: color-mix(in srgb, var(--color-surface-solid) 92%, transparent); border: 1px solid var(--color-divider);
+  border-radius: 100px; padding: 10px 16px; box-shadow: var(--shadow-lg); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  animation: rise .35s cubic-bezier(.22,1,.36,1) both;
+}
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } }
+@media (prefers-reduced-motion: reduce) { .player { animation: none; } }
+
+.play {
+  width: 42px; height: 42px; flex: none; border-radius: 50%; border: none; cursor: pointer; color: #fff; font-size: 15px;
+  display: grid; place-items: center; background: linear-gradient(135deg, var(--color-accent), var(--color-violet));
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--color-accent) 40%, transparent); transition: transform .12s;
+}
+.play:hover { transform: scale(1.06); }
+.time { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; min-width: 40px; text-align: center; }
+.bar { flex: 1; height: 7px; border-radius: 100px; background: color-mix(in srgb, var(--color-text) 13%, transparent); position: relative; cursor: pointer; touch-action: none; }
+.fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 100px; background: linear-gradient(90deg, var(--color-accent), var(--color-violet)); }
+.fill::after { content: ""; position: absolute; right: -7px; top: 50%; width: 14px; height: 14px; border-radius: 50%; background: #fff; transform: translateY(-50%); box-shadow: 0 1px 5px rgba(0,0,0,.45); }
+.speeds { display: flex; gap: 4px; flex: none; }
+.speeds button {
+  border: 1px solid var(--color-divider); background: transparent; color: var(--color-text-muted); border-radius: 8px;
+  padding: 5px 8px; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; min-width: 32px;
+}
+.speeds button.on { color: #fff; background: var(--color-accent); border-color: transparent; }
+
+@media (max-width: 480px) {
+  .player { gap: 10px; padding: 9px 12px; }
+  .speeds button { padding: 5px 6px; min-width: 28px; font-size: 11px; }
+  .time { min-width: 34px; font-size: 11.5px; }
+}
+`;
+
+Object.assign(__x, { styles });
+
+};
+
+__m["js/components/ui/flight-player/flight-player.js"] = function (__x, __req) {
+const { DjiElement } = __req("js/core/DjiElement.js");
+const { mmss } = __req("js/geo.js");
+const { t } = __req("js/i18n/index.js");
+const { styles } = __req("js/components/ui/flight-player/flight-player.css.js");
+
+/**
+ * Barra de reproducción del vuelo (flotante). Recibe el reloj por propiedad:
+ *   el.clock = playerClock
+ * y traduce sus acciones (play/pausa, buscar, velocidad) al reloj.
+ */
+class FlightPlayer extends DjiElement {
+  static styles = [styles];
+
+  /** @param {import('../../../core/player-clock.js').PlayerClock} c */
+  set clock(c) { this._clock = c; if (this.isConnected) this._paint(); }
+  get clock() { return this._clock; }
+
+  /** @param {HTMLVideoElement|null} v miniatura de vídeo sincronizada (opcional) */
+  set video(v) { this._video = v; if (this.isConnected) this._mountVideo(); }
+  get video() { return this._video; }
+
+  render() {
+    this.shadowRoot.innerHTML = `
+      <div class="stack">
+        <div class="pip" id="pip"></div>
+        <div class="player">
+          <button class="play" id="play" type="button" aria-label="${t('player.play')}">▶</button>
+          <span class="time" id="cur">0:00</span>
+          <div class="bar" id="bar" role="slider" aria-label="${t('player.seek')}"><div class="fill" id="fill"></div></div>
+          <span class="time" id="tot">0:00</span>
+          <div class="speeds">
+            <button data-sp="1" type="button">1×</button>
+            <button data-sp="2" type="button">2×</button>
+            <button data-sp="4" type="button">4×</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  _mountVideo() {
+    const pip = this.$('#pip');
+    if (!pip) return;
+    if (this._video) {
+      if (this._video.parentElement !== pip) pip.appendChild(this._video);
+      pip.classList.add('on');
+    } else {
+      pip.classList.remove('on');
+    }
+  }
+
+  afterRender() {
+    this._mountVideo();
+    const c = this._clock;
+    if (!c) return;
+    this.$('#tot').textContent = mmss(c.dur);
+    this.on(this.$('#play'), 'click', () => c.toggle());
+    this.$$('[data-sp]').forEach((b) => this.on(b, 'click', () => c.setSpeed(+b.dataset.sp)));
+
+    const bar = this.$('#bar');
+    const seekFromX = (x) => { const r = bar.getBoundingClientRect(); c.seek(Math.max(0, Math.min(1, (x - r.left) / r.width)) * c.dur); };
+    this.on(bar, 'pointerdown', (e) => { bar.setPointerCapture(e.pointerId); this._drag = true; c.pause(); seekFromX(e.clientX); });
+    this.on(bar, 'pointermove', (e) => { if (this._drag) seekFromX(e.clientX); });
+    this.on(bar, 'pointerup', () => { this._drag = false; });
+
+    // suscripción única al reloj (sobrevive a los re-render de i18n)
+    if (!this._subbed) {
+      this._subbed = true;
+      const sync = () => this._sync();
+      c.addEventListener('tick', sync);
+      c.addEventListener('state', sync);
+    }
+    this._sync();
+  }
+
+  _sync() {
+    const c = this._clock;
+    if (!c || !this.isConnected) return;
+    const f = c.dur ? c.t / c.dur : 0;
+    const fill = this.$('#fill'); if (fill) fill.style.width = (f * 100) + '%';
+    const cur = this.$('#cur'); if (cur) cur.textContent = mmss(c.t);
+    const play = this.$('#play'); if (play) { play.textContent = c.playing ? '❚❚' : '▶'; play.setAttribute('aria-label', t(c.playing ? 'player.pause' : 'player.play')); }
+    this.$$('[data-sp]').forEach((b) => b.classList.toggle('on', +b.dataset.sp === c.speed));
+  }
+}
+
+customElements.define('flight-player', FlightPlayer);
+
+Object.assign(__x, { FlightPlayer });
+
+};
+
 __m["js/components/ui/image-lightbox/image-lightbox.css.js"] = function (__x, __req) {
 const { css } = __req("js/core/css.js");
 
@@ -742,7 +893,8 @@ const { css } = __req("js/core/css.js");
 
 const styles = css`
 :host { display: block; }
-.map-wrap { position: relative; max-width: 640px; margin: 0 auto; border-radius: 14px; overflow: hidden; }
+/* Llena el bloque a lo ancho y se limita por alto (74vh) sin deformar. */
+.map-wrap { position: relative; width: min(100%, calc(74vh * var(--ar, 1.5))); margin: 0 auto; border-radius: 14px; overflow: hidden; }
 .map-svg { border-radius: 14px; display: block; width: 100%; height: auto; }
 .map-wrap.loading::before {
   content: ""; position: absolute; inset: 0; z-index: 2; border-radius: 14px;
@@ -796,8 +948,15 @@ class SatMap extends DjiElement {
   afterRender() {
     const f = this._flight;
     if (!f) return;
-    this.$('#slot').replaceChildren(buildMap(f.model, f.kps, t('map.loading')));
+    this._map = buildMap(f.model, f.kps, t('map.loading'));
+    this.$('#slot').replaceChildren(this._map.el);
   }
+
+  /** Mueve el dron al instante t (reproducción). */
+  playhead(t) { this._map && this._map.setPlayhead(t); }
+
+  /** Esconde el dron. */
+  clearPlayhead() { this._map && this._map.clearPlayhead(); }
 }
 
 customElements.define('sat-map', SatMap);
@@ -914,8 +1073,14 @@ class TimeChart extends DjiElement {
   afterRender() {
     const d = this._data;
     if (!d) return;
-    timeChart(this.$('#box'), d.series, d.dur, d.cfgs);
+    this._chart = timeChart(this.$('#box'), d.series, d.dur, d.cfgs);
   }
+
+  /** Coloca el cursor en el instante t (reproducción). */
+  playhead(t) { this._chart && this._chart.showAtTime(t); }
+
+  /** Esconde el cursor de reproducción. */
+  clearPlayhead() { this._chart && this._chart.leave(); }
 }
 
 customElements.define('time-chart', TimeChart);
@@ -928,7 +1093,9 @@ __m["js/components/views/flight-report/flight-report.css.js"] = function (__x, _
 const { css } = __req("js/core/css.js");
 
 const styles = css`
-:host { display: block; animation: rise .6s cubic-bezier(.22,1,.36,1) both; }
+:host { display: block; animation: rise .6s cubic-bezier(.22,1,.36,1) both; padding-bottom: clamp(96px, 14vh, 140px); }
+/* con vídeo, la miniatura (PiP) sube más: reserva algo más de hueco al final */
+:host(.has-video) { padding-bottom: clamp(150px, 24vh, 240px); }
 @keyframes rise { from { opacity: 0; transform: translateY(16px); } }
 .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
 
@@ -1019,6 +1186,8 @@ __req("js/components/ui/time-chart/time-chart.js");
 __req("js/components/ui/sat-map/sat-map.js");
 __req("js/components/ui/export-bar/export-bar.js");
 __req("js/components/ui/image-lightbox/image-lightbox.js");
+__req("js/components/ui/flight-player/flight-player.js");
+const { PlayerClock } = __req("js/core/player-clock.js");
 const { styles } = __req("js/components/views/flight-report/flight-report.css.js");
 
 const f = (v, d = 0) => (v == null ? '—' : v.toFixed(d));
@@ -1080,6 +1249,10 @@ class FlightReport extends DjiElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     if (this._lb) { this._lb.remove(); this._lb = null; }
+    if (this._clock) { this._clock.destroy(); this._clock = null; }
+    if (this._player) { this._player.remove(); this._player = null; }
+    if (this._video) { this._video.removeAttribute('src'); this._video.load(); this._video = null; }
+    if (this._videoUrl) { URL.revokeObjectURL(this._videoUrl); this._videoUrl = null; }
   }
 
   _heroTpl(m, r, dur, relmax, hsmax) {
@@ -1304,6 +1477,39 @@ class FlightReport extends DjiElement {
         mp4File: this.assets?.mp4File, secs: this.model.meta.dur * lightFracs[i],
       }));
     });
+
+    this._setupPlayer();
+  }
+
+  /** Reproducción del vuelo: reloj + barra flotante + sincronía de mapa y gráficas. */
+  _setupPlayer() {
+    if (!this.model) return;
+    if (!this._clock) {
+      this._clock = new PlayerClock(this.model.meta.dur);
+      this._clock.addEventListener('tick', (e) => this._onTick(e.detail.t));
+    }
+    // si hay vídeo: úsalo como fuente de tiempo y muéstralo como miniatura sincronizada
+    if (this.assets?.mp4File && !this._video) {
+      this._videoUrl = URL.createObjectURL(this.assets.mp4File);
+      this._video = document.createElement('video');
+      this._video.src = this._videoUrl;
+      this._video.muted = true; this._video.playsInline = true; this._video.preload = 'auto';
+      this._clock.setSource(this._video);
+    }
+    if (!this._player) {
+      this._player = document.createElement('flight-player');
+      document.body.appendChild(this._player);
+    }
+    this._player.clock = this._clock;
+    this._player.video = this._video || null;
+    // reserva hueco al final para que la barra fija del reproductor no tape el contenido
+    this.classList.toggle('has-video', !!this._video);
+  }
+
+  /** Propaga el instante actual al mapa y a todas las gráficas. */
+  _onTick(t) {
+    this.$('#map')?.playhead(t);
+    this.$$('time-chart').forEach((c) => c.playhead(t));
   }
 }
 
@@ -1427,17 +1633,38 @@ p.sub { font-size: clamp(16px, 2.1vw, 20px); color: color-mix(in srgb, var(--col
   padding: 12px 14px; color: var(--color-text); font-size: 15px; font-family: inherit; backdrop-filter: blur(8px);
 }
 .gen .go {
-  margin-top: 14px; width: 100%; border: none; cursor: pointer; color: #fff; font-weight: 700; font-size: 15px;
+  margin-top: 0; width: 100%; border: none; cursor: pointer; color: #fff; font-weight: 700; font-size: 15px;
   padding: 14px 26px; border-radius: 100px; background: linear-gradient(135deg, var(--color-accent-2), var(--color-accent));
   box-shadow: 0 10px 26px color-mix(in srgb, var(--color-accent) 38%, transparent); transition: transform .12s;
   &:hover { transform: translateY(-2px); }
 }
+/* Botón de vídeo resaltado (encima de Generar), con barrido de brillo animado. */
 .gen .addmp4 {
-  margin-top: 10px; width: 100%; justify-content: center; display: inline-flex; align-items: center; gap: 8px;
-  border: 1px solid var(--color-divider); background: var(--color-surface); color: var(--color-text);
-  border-radius: 100px; padding: 11px 15px; font-size: 13.5px; font-weight: 600; cursor: pointer; backdrop-filter: blur(8px);
-  &:hover { border-color: var(--color-accent); }
+  position: relative; overflow: hidden; margin-top: 14px; margin-bottom: 12px; width: 100%; display: flex; align-items: center; gap: 12px;
+  text-align: left; cursor: pointer; color: var(--color-text); font-family: inherit; border-radius: 16px; padding: 13px 15px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 9%, var(--color-surface));
+  box-shadow: 0 0 26px -10px color-mix(in srgb, var(--color-accent) 60%, transparent);
+  transition: transform .14s, box-shadow .14s, border-color .14s;
+  &:hover { transform: translateY(-1px); box-shadow: 0 0 34px -6px color-mix(in srgb, var(--color-accent) 68%, transparent); }
 }
+.gen .addmp4::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(100deg, transparent 34%, color-mix(in srgb, var(--color-accent) 28%, transparent) 50%, transparent 66%);
+  transform: translateX(-120%); animation: mp4shine 3.6s ease-in-out infinite;
+}
+@keyframes mp4shine { 0%, 55% { transform: translateX(-120%); } 100% { transform: translateX(120%); } }
+@media (prefers-reduced-motion: reduce) { .gen .addmp4::after { animation: none; opacity: 0; } }
+.mp4-ico { position: relative; z-index: 1; flex: none; width: 42px; height: 42px; display: grid; place-items: center; font-size: 22px;
+  border-radius: 12px; background: color-mix(in srgb, var(--color-accent) 18%, transparent); }
+.mp4-txt { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.mp4-t { font-size: 14.5px; font-weight: 750; letter-spacing: -.01em; }
+.mp4-sub { font-size: 12px; color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp4-badge { position: relative; z-index: 1; flex: none; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .07em;
+  color: #fff; background: linear-gradient(135deg, var(--color-accent), var(--color-violet)); border-radius: 100px; padding: 4px 10px; }
+.gen .addmp4.has { border-color: color-mix(in srgb, var(--c-green) 50%, transparent); background: color-mix(in srgb, var(--c-green) 10%, var(--color-surface)); box-shadow: none; }
+.gen .addmp4.has::after { display: none; }
+.gen .addmp4.has .mp4-ico { background: color-mix(in srgb, var(--c-green) 22%, transparent); color: var(--c-green); }
 
 .feats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; max-width: 720px; margin: 44px auto 0; }
 @media (max-width: 620px) { .feats { grid-template-columns: 1fr; } }
@@ -1485,8 +1712,12 @@ class UploadView extends DjiElement {
         <div class="gen ${this.files.srt ? '' : 'hidden'}" id="gen">
           <label>${escapeHtml(t('form.title_label'))}</label>
           <input id="title" value="${escapeHtml(t('form.default_title'))}">
+          <button class="addmp4" id="addmp4" type="button">
+            <span class="mp4-ico">🎬</span>
+            <span class="mp4-txt"><span class="mp4-t">${escapeHtml(t('form.add_mp4'))}</span><span class="mp4-sub">${escapeHtml(t('form.add_mp4.sub'))}</span></span>
+            <span class="mp4-badge">${escapeHtml(t('form.recommended'))}</span>
+          </button>
           <button class="go" id="go" type="button">${escapeHtml(t('form.generate'))}</button>
-          <button class="addmp4" id="addmp4" type="button">${escapeHtml(t('form.add_mp4'))}</button>
         </div>
 
         <div class="feats">
@@ -1507,14 +1738,26 @@ class UploadView extends DjiElement {
     this.on(dz, 'dz:change', (e) => {
       this.files = e.detail;
       this.$('#gen').classList.toggle('hidden', !this.files.srt);
+      this._updateMp4Btn();
       if (this.files.srtText) this._suggestTitle(this.files.srtText);
     });
     this.on(this.$('#addmp4'), 'click', () => dz.pickMp4());
+    this._updateMp4Btn();
     this.on(this.$('#go'), 'click', () => {
       if (!this.files.srtText) return;
       const title = (this.$('#title').value || '').trim() || t('form.default_title');
       this.emit('dji:generate', { srtText: this.files.srtText, mp4: this.files.mp4, title, place: this._place || null });
     });
+  }
+
+  /** Refleja en el botón si ya hay vídeo (estado "añadido"). */
+  _updateMp4Btn() {
+    const btn = this.$('#addmp4'); if (!btn) return;
+    const has = !!(this.files && this.files.mp4);
+    btn.classList.toggle('has', has);
+    const ico = btn.querySelector('.mp4-ico'), tt = btn.querySelector('.mp4-t'), sub = btn.querySelector('.mp4-sub'), badge = btn.querySelector('.mp4-badge');
+    if (has) { ico.textContent = '✓'; tt.textContent = t('form.mp4_added'); sub.textContent = this.files.mp4.name; badge.hidden = true; }
+    else { ico.textContent = '🎬'; tt.textContent = t('form.add_mp4'); sub.textContent = t('form.add_mp4.sub'); badge.hidden = false; }
   }
 
   /** Prerellena el título con el lugar del vuelo (geocodificación inversa). */
@@ -1671,6 +1914,94 @@ function escapeHtml(value) {
 }
 
 Object.assign(__x, { escapeHtml });
+
+};
+
+__m["js/core/player-clock.js"] = function (__x, __req) {
+// Reloj de reproducción del vuelo: mantiene el instante actual (t) y avisa a
+// quien se suscriba (mapa, gráficas, vídeo) en cada fotograma. Es un EventTarget:
+//   clock.addEventListener('tick', (e) => ...e.detail.t...)   // instante
+//   clock.addEventListener('state', (e) => ...playing/speed...) // controles
+
+class PlayerClock extends EventTarget {
+  /** @param {number} dur duración del vuelo en segundos */
+  constructor(dur) {
+    super();
+    this.dur = dur || 0;
+    this.t = 0;
+    this.playing = false;
+    this.speed = 1;
+    this._raf = 0;
+    this._last = 0;
+    this._src = null; // <video> opcional como fuente de tiempo
+  }
+
+  /** Usa un vídeo como fuente de tiempo (reproducción nativa, suave). */
+  setSource(video) { this._src = video || null; }
+
+  play() {
+    if (this.playing || this.dur <= 0) return;
+    if (this.t >= this.dur) this.t = 0;
+    this.playing = true;
+    if (this._src) { this._src.playbackRate = this.speed; this._src.currentTime = this.t; this._src.play().catch(() => {}); }
+    else this._last = performance.now();
+    this._emit('state');
+    this._loop();
+  }
+
+  pause() {
+    if (!this.playing) return;
+    this.playing = false;
+    if (this._src) this._src.pause();
+    cancelAnimationFrame(this._raf);
+    this._emit('state');
+  }
+
+  toggle() { this.playing ? this.pause() : this.play(); }
+
+  /** Salta a un instante (segundos). */
+  seek(t) {
+    this.t = Math.max(0, Math.min(this.dur, t));
+    if (this._src) this._src.currentTime = this.t;
+    this._emit('tick');
+    if (!this.playing) this._emit('state');
+  }
+
+  /** @param {number} s velocidad (1, 2, 4…) */
+  setSpeed(s) {
+    this.speed = s;
+    if (this._src) this._src.playbackRate = s;
+    this._emit('state');
+  }
+
+  /** Detiene el bucle y libera (al desmontar el informe). */
+  destroy() { cancelAnimationFrame(this._raf); this.playing = false; }
+
+  _loop() {
+    this._raf = requestAnimationFrame((now) => {
+      if (!this.playing) return;
+      if (this._src) {
+        this.t = this._src.currentTime;
+        if (this._src.ended || this.t >= this.dur) { this.t = this.dur; this.playing = false; this._emit('tick'); this._emit('state'); return; }
+      } else {
+        const dt = ((now - this._last) / 1000) * this.speed;
+        this._last = now;
+        this.t += dt;
+        if (this.t >= this.dur) { this.t = this.dur; this.playing = false; this._emit('tick'); this._emit('state'); return; }
+      }
+      this._emit('tick');
+      this._loop();
+    });
+  }
+
+  _emit(type) {
+    this.dispatchEvent(new CustomEvent(type, {
+      detail: { t: this.t, playing: this.playing, speed: this.speed, dur: this.dur },
+    }));
+  }
+}
+
+Object.assign(__x, { PlayerClock });
 
 };
 
@@ -1974,8 +2305,17 @@ function tileConfig(track) {
   const lats = T.map(p => p[0]), lons = T.map(p => p[1]);
   let la0 = Math.min(...lats), la1 = Math.max(...lats);
   let lo0 = Math.min(...lons), lo1 = Math.max(...lons);
-  const dla = (la1 - la0) * 0.18 || 1e-4, dlo = (lo1 - lo0) * 0.18 || 1e-4;
+  const dla = (la1 - la0) * 0.08 || 1e-4, dlo = (lo1 - lo0) * 0.08 || 1e-4;
   la0 -= dla; la1 += dla; lo0 -= dlo; lo1 += dlo;
+  // ensancha el encuadre a formato apaisado para que el mapa llene el bloque,
+  // pero sin pasarse: encuadre ceñido al recorrido para que no se vea pequeño.
+  const targetAR = 1.25;
+  const cosLat = Math.cos(((la0 + la1) / 2) * Math.PI / 180);
+  const wSpan = (lo1 - lo0) * cosLat, hSpan = (la1 - la0);
+  if (wSpan / hSpan < targetAR) {
+    const add = (hSpan * targetAR / cosLat - (lo1 - lo0)) / 2;
+    lo0 -= add; lo1 += add;
+  }
   const tilesAt = (z) => {
     const n = 2 ** z;
     const xt = (lon) => (lon + 180) / 360 * n;
@@ -2064,7 +2404,10 @@ __x.default = {
   'form.default_title': 'Flight with DJI Neo 2',
   'form.title_place': 'Flight over {place}',
   'form.generate': 'Generate report →',
-  'form.add_mp4': '🎬 Add .MP4 video (optional, for the frames)',
+  'form.add_mp4': 'Add the flight video',
+  'form.add_mp4.sub': 'Real frames, flight replay and 4K downloads',
+  'form.mp4_added': 'Video added',
+  'form.recommended': 'Recommended',
   'feat.map.t': 'Route over satellite',
   'feat.map.d': 'GPS track colored by height over real Esri imagery.',
   'feat.frames.t': 'Video frames',
@@ -2151,6 +2494,9 @@ __x.default = {
   'route.leg.height': 'Low → high',
   'route.note': 'Satellite imagery: Esri World Imagery · track reconstructed from the flight GPS',
   'map.loading': 'Loading satellite imagery…',
+  'player.play': 'Play the flight',
+  'player.pause': 'Pause',
+  'player.seek': 'Seek in the flight',
   'lightbox.close': 'Close',
   'lightbox.download': 'Download',
   'lightbox.downloading': 'Preparing…',
@@ -2246,7 +2592,10 @@ __x.default = {
   'form.default_title': 'Vuelo con DJI Neo 2',
   'form.title_place': 'Vuelo en {place}',
   'form.generate': 'Generar informe →',
-  'form.add_mp4': '🎬 Añadir vídeo .MP4 (opcional, para los fotogramas)',
+  'form.add_mp4': 'Añade el vídeo del vuelo',
+  'form.add_mp4.sub': 'Fotogramas reales, replay del vuelo y descargas en 4K',
+  'form.mp4_added': 'Vídeo añadido',
+  'form.recommended': 'Recomendado',
   'feat.map.t': 'Recorrido sobre satélite',
   'feat.map.d': 'Trazado GPS coloreado por altura sobre imagen real de Esri.',
   'feat.frames.t': 'Fotogramas del vídeo',
@@ -2333,6 +2682,9 @@ __x.default = {
   'route.leg.height': 'Altura baja → alta',
   'route.note': 'Imagen de satélite: Esri World Imagery · trazado reconstruido con el GPS del vuelo',
   'map.loading': 'Cargando imagen de satélite…',
+  'player.play': 'Reproducir el vuelo',
+  'player.pause': 'Pausa',
+  'player.seek': 'Buscar en el vuelo',
   'lightbox.close': 'Cerrar',
   'lightbox.download': 'Descargar',
   'lightbox.downloading': 'Preparando…',
@@ -2739,6 +3091,7 @@ function buildMap(model, kps, loadingText = '') {
   const wrap = document.createElement('div');
   wrap.className = 'map-wrap loading';
   wrap.style.aspectRatio = `${W} / ${H}`;
+  wrap.style.setProperty('--ar', W / H); // para limitar también por altura sin deformar
   const loadingEl = document.createElement('div');
   loadingEl.className = 'map-loading'; loadingEl.textContent = loadingText;
   wrap.appendChild(loadingEl);
@@ -2798,8 +3151,37 @@ function buildMap(model, kps, loadingText = '') {
     btn.innerHTML = `<span class="kp-tip${edge}">${k.frame ? `<img src="${k.frame}" alt="">` : ''}<span class="kp-b"><span class="kp-l">${k.label}</span><span class="kp-m">${mmss(k.t)} · ${k.metric}</span></span></span>`;
     ov.appendChild(btn);
   });
+  // marcador del dron para la reproducción: el glifo del dron sobre un badge,
+  // que interpola su posición sobre el track según el tiempo.
+  const SC = 0.72;
+  const droneMk = el('g', { opacity: 0 });
+  const disc = el('circle', { r: 18 });
+  disc.style.fill = 'var(--c-blue)'; disc.style.stroke = '#fff'; disc.style.strokeWidth = '2.5';
+  disc.style.filter = 'drop-shadow(0 2px 6px rgba(0,0,0,.55))';
+  droneMk.appendChild(disc);
+  const glyph = el('g', { transform: `scale(${SC}) translate(-24 -24)` });
+  glyph.appendChild(el('path', { d: 'M24 24 11 11M24 24 37 11M24 24 11 37M24 24 37 37', fill: 'none', stroke: '#fff', 'stroke-width': 3.2, 'stroke-linecap': 'round' }));
+  for (const [cx, cy] of [[11, 11], [37, 11], [11, 37], [37, 37]]) glyph.appendChild(el('circle', { cx, cy, r: 7, fill: 'rgba(255,255,255,.18)', stroke: '#fff', 'stroke-width': 2.6 }));
+  glyph.appendChild(el('rect', { x: 19, y: 19, width: 10, height: 10, rx: 3.4, fill: '#fff' }));
+  droneMk.appendChild(glyph);
+  svg.appendChild(droneMk);
+
+  const S = model.series;
+  const setPlayhead = (t) => {
+    let i = 1;
+    while (i < S.length && S[i].t < t) i++;
+    const a = S[i - 1], b = S[Math.min(i, S.length - 1)];
+    if (!a || !a.lat || !b.lat) return;
+    const span = (b.t - a.t) || 1;
+    const f = Math.max(0, Math.min(1, (t - a.t) / span));
+    const lat = a.lat + (b.lat - a.lat) * f, lon = a.lon + (b.lon - a.lon) * f;
+    droneMk.setAttribute('transform', `translate(${PX(lon).toFixed(1)} ${PY(lat).toFixed(1)})`);
+    droneMk.setAttribute('opacity', '1');
+  };
+  const clearPlayhead = () => droneMk.setAttribute('opacity', '0');
+
   wrap.appendChild(ov);
-  return wrap;
+  return { el: wrap, setPlayhead, clearPlayhead };
 }
 
 const mmss = (t) => { t = Math.round(t); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
