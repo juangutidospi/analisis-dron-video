@@ -2,8 +2,8 @@ import { css } from '../../../core/css.js';
 
 export const styles = css`
 :host { display: block; }
-/* Cabe siempre: limitado por ancho (640) y por alto (74vh) sin deformar (mantiene la proporción del vuelo). */
-.map-wrap { position: relative; width: min(640px, 100%, calc(74vh * var(--ar, 1.4))); margin: 0 auto; border-radius: 14px; overflow: hidden; }
+/* Llena el bloque a lo ancho y se limita por alto (74vh) sin deformar. */
+.map-wrap { position: relative; width: min(100%, calc(74vh * var(--ar, 1.5))); margin: 0 auto; border-radius: 14px; overflow: hidden; }
 .map-svg { border-radius: 14px; display: block; width: 100%; height: auto; }
 .map-wrap.loading::before {
   content: ""; position: absolute; inset: 0; z-index: 2; border-radius: 14px;

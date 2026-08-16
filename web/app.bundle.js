@@ -893,8 +893,8 @@ const { css } = __req("js/core/css.js");
 
 const styles = css`
 :host { display: block; }
-/* Cabe siempre: limitado por ancho (640) y por alto (74vh) sin deformar (mantiene la proporción del vuelo). */
-.map-wrap { position: relative; width: min(640px, 100%, calc(74vh * var(--ar, 1.4))); margin: 0 auto; border-radius: 14px; overflow: hidden; }
+/* Llena el bloque a lo ancho y se limita por alto (74vh) sin deformar. */
+.map-wrap { position: relative; width: min(100%, calc(74vh * var(--ar, 1.5))); margin: 0 auto; border-radius: 14px; overflow: hidden; }
 .map-svg { border-radius: 14px; display: block; width: 100%; height: auto; }
 .map-wrap.loading::before {
   content: ""; position: absolute; inset: 0; z-index: 2; border-radius: 14px;
@@ -2266,6 +2266,15 @@ function tileConfig(track) {
   let lo0 = Math.min(...lons), lo1 = Math.max(...lons);
   const dla = (la1 - la0) * 0.18 || 1e-4, dlo = (lo1 - lo0) * 0.18 || 1e-4;
   la0 -= dla; la1 += dla; lo0 -= dlo; lo1 += dlo;
+  // ensancha el encuadre a formato apaisado para que el mapa llene el bloque
+  // (muestra más terreno alrededor en vez de quedar vertical y estrecho)
+  const targetAR = 1.5;
+  const cosLat = Math.cos(((la0 + la1) / 2) * Math.PI / 180);
+  const wSpan = (lo1 - lo0) * cosLat, hSpan = (la1 - la0);
+  if (wSpan / hSpan < targetAR) {
+    const add = (hSpan * targetAR / cosLat - (lo1 - lo0)) / 2;
+    lo0 -= add; lo1 += add;
+  }
   const tilesAt = (z) => {
     const n = 2 ** z;
     const xt = (lon) => (lon + 180) / 360 * n;
