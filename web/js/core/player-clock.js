@@ -13,13 +13,18 @@ export class PlayerClock extends EventTarget {
     this.speed = 1;
     this._raf = 0;
     this._last = 0;
+    this._src = null; // <video> opcional como fuente de tiempo
   }
+
+  /** Usa un vídeo como fuente de tiempo (reproducción nativa, suave). */
+  setSource(video) { this._src = video || null; }
 
   play() {
     if (this.playing || this.dur <= 0) return;
     if (this.t >= this.dur) this.t = 0;
     this.playing = true;
-    this._last = performance.now();
+    if (this._src) { this._src.playbackRate = this.speed; this._src.currentTime = this.t; this._src.play().catch(() => {}); }
+    else this._last = performance.now();
     this._emit('state');
     this._loop();
   }
@@ -27,6 +32,7 @@ export class PlayerClock extends EventTarget {
   pause() {
     if (!this.playing) return;
     this.playing = false;
+    if (this._src) this._src.pause();
     cancelAnimationFrame(this._raf);
     this._emit('state');
   }
@@ -36,6 +42,7 @@ export class PlayerClock extends EventTarget {
   /** Salta a un instante (segundos). */
   seek(t) {
     this.t = Math.max(0, Math.min(this.dur, t));
+    if (this._src) this._src.currentTime = this.t;
     this._emit('tick');
     if (!this.playing) this._emit('state');
   }
@@ -43,6 +50,7 @@ export class PlayerClock extends EventTarget {
   /** @param {number} s velocidad (1, 2, 4…) */
   setSpeed(s) {
     this.speed = s;
+    if (this._src) this._src.playbackRate = s;
     this._emit('state');
   }
 
@@ -52,13 +60,14 @@ export class PlayerClock extends EventTarget {
   _loop() {
     this._raf = requestAnimationFrame((now) => {
       if (!this.playing) return;
-      const dt = ((now - this._last) / 1000) * this.speed;
-      this._last = now;
-      this.t += dt;
-      if (this.t >= this.dur) {
-        this.t = this.dur; this.playing = false;
-        this._emit('tick'); this._emit('state');
-        return;
+      if (this._src) {
+        this.t = this._src.currentTime;
+        if (this._src.ended || this.t >= this.dur) { this.t = this.dur; this.playing = false; this._emit('tick'); this._emit('state'); return; }
+      } else {
+        const dt = ((now - this._last) / 1000) * this.speed;
+        this._last = now;
+        this.t += dt;
+        if (this.t >= this.dur) { this.t = this.dur; this.playing = false; this._emit('tick'); this._emit('state'); return; }
       }
       this._emit('tick');
       this._loop();

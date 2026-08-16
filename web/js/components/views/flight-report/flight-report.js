@@ -76,6 +76,8 @@ export class FlightReport extends DjiElement {
     if (this._lb) { this._lb.remove(); this._lb = null; }
     if (this._clock) { this._clock.destroy(); this._clock = null; }
     if (this._player) { this._player.remove(); this._player = null; }
+    if (this._video) { this._video.removeAttribute('src'); this._video.load(); this._video = null; }
+    if (this._videoUrl) { URL.revokeObjectURL(this._videoUrl); this._videoUrl = null; }
   }
 
   _heroTpl(m, r, dur, relmax, hsmax) {
@@ -311,11 +313,20 @@ export class FlightReport extends DjiElement {
       this._clock = new PlayerClock(this.model.meta.dur);
       this._clock.addEventListener('tick', (e) => this._onTick(e.detail.t));
     }
+    // si hay vídeo: úsalo como fuente de tiempo y muéstralo como miniatura sincronizada
+    if (this.assets?.mp4File && !this._video) {
+      this._videoUrl = URL.createObjectURL(this.assets.mp4File);
+      this._video = document.createElement('video');
+      this._video.src = this._videoUrl;
+      this._video.muted = true; this._video.playsInline = true; this._video.preload = 'auto';
+      this._clock.setSource(this._video);
+    }
     if (!this._player) {
       this._player = document.createElement('flight-player');
       document.body.appendChild(this._player);
     }
     this._player.clock = this._clock;
+    this._player.video = this._video || null;
   }
 
   /** Propaga el instante actual al mapa y a todas las gráficas. */

@@ -15,22 +15,41 @@ export class FlightPlayer extends DjiElement {
   set clock(c) { this._clock = c; if (this.isConnected) this._paint(); }
   get clock() { return this._clock; }
 
+  /** @param {HTMLVideoElement|null} v miniatura de vídeo sincronizada (opcional) */
+  set video(v) { this._video = v; if (this.isConnected) this._mountVideo(); }
+  get video() { return this._video; }
+
   render() {
     this.shadowRoot.innerHTML = `
-      <div class="player">
-        <button class="play" id="play" type="button" aria-label="${t('player.play')}">▶</button>
-        <span class="time" id="cur">0:00</span>
-        <div class="bar" id="bar" role="slider" aria-label="${t('player.seek')}"><div class="fill" id="fill"></div></div>
-        <span class="time" id="tot">0:00</span>
-        <div class="speeds">
-          <button data-sp="1" type="button">1×</button>
-          <button data-sp="2" type="button">2×</button>
-          <button data-sp="4" type="button">4×</button>
+      <div class="stack">
+        <div class="pip" id="pip"></div>
+        <div class="player">
+          <button class="play" id="play" type="button" aria-label="${t('player.play')}">▶</button>
+          <span class="time" id="cur">0:00</span>
+          <div class="bar" id="bar" role="slider" aria-label="${t('player.seek')}"><div class="fill" id="fill"></div></div>
+          <span class="time" id="tot">0:00</span>
+          <div class="speeds">
+            <button data-sp="1" type="button">1×</button>
+            <button data-sp="2" type="button">2×</button>
+            <button data-sp="4" type="button">4×</button>
+          </div>
         </div>
       </div>`;
   }
 
+  _mountVideo() {
+    const pip = this.$('#pip');
+    if (!pip) return;
+    if (this._video) {
+      if (this._video.parentElement !== pip) pip.appendChild(this._video);
+      pip.classList.add('on');
+    } else {
+      pip.classList.remove('on');
+    }
+  }
+
   afterRender() {
+    this._mountVideo();
     const c = this._clock;
     if (!c) return;
     this.$('#tot').textContent = mmss(c.dur);

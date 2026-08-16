@@ -3,8 +3,16 @@ import { css } from '../../../core/css.js';
 export const styles = css`
 :host { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: flex; justify-content: center; padding: 0 14px 16px; pointer-events: none; }
 :host([hidden]) { display: none; }
+.stack { display: flex; flex-direction: column; align-items: center; gap: 10px; width: min(720px, 100%); }
+.pip {
+  pointer-events: auto; width: clamp(168px, 24vw, 260px); aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden;
+  border: 1px solid var(--color-divider); box-shadow: var(--shadow-lg); background: #000; display: none;
+  animation: rise .35s cubic-bezier(.22,1,.36,1) both;
+}
+.pip.on { display: block; }
+.pip video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .player {
-  pointer-events: auto; display: flex; align-items: center; gap: 13px; width: min(720px, 100%);
+  pointer-events: auto; display: flex; align-items: center; gap: 13px; width: 100%;
   background: color-mix(in srgb, var(--color-surface-solid) 92%, transparent); border: 1px solid var(--color-divider);
   border-radius: 100px; padding: 10px 16px; box-shadow: var(--shadow-lg); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   animation: rise .35s cubic-bezier(.22,1,.36,1) both;

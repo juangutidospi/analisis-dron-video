@@ -520,8 +520,16 @@ const { css } = __req("js/core/css.js");
 const styles = css`
 :host { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: flex; justify-content: center; padding: 0 14px 16px; pointer-events: none; }
 :host([hidden]) { display: none; }
+.stack { display: flex; flex-direction: column; align-items: center; gap: 10px; width: min(720px, 100%); }
+.pip {
+  pointer-events: auto; width: clamp(168px, 24vw, 260px); aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden;
+  border: 1px solid var(--color-divider); box-shadow: var(--shadow-lg); background: #000; display: none;
+  animation: rise .35s cubic-bezier(.22,1,.36,1) both;
+}
+.pip.on { display: block; }
+.pip video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .player {
-  pointer-events: auto; display: flex; align-items: center; gap: 13px; width: min(720px, 100%);
+  pointer-events: auto; display: flex; align-items: center; gap: 13px; width: 100%;
   background: color-mix(in srgb, var(--color-surface-solid) 92%, transparent); border: 1px solid var(--color-divider);
   border-radius: 100px; padding: 10px 16px; box-shadow: var(--shadow-lg); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   animation: rise .35s cubic-bezier(.22,1,.36,1) both;
@@ -575,22 +583,41 @@ class FlightPlayer extends DjiElement {
   set clock(c) { this._clock = c; if (this.isConnected) this._paint(); }
   get clock() { return this._clock; }
 
+  /** @param {HTMLVideoElement|null} v miniatura de vídeo sincronizada (opcional) */
+  set video(v) { this._video = v; if (this.isConnected) this._mountVideo(); }
+  get video() { return this._video; }
+
   render() {
     this.shadowRoot.innerHTML = `
-      <div class="player">
-        <button class="play" id="play" type="button" aria-label="${t('player.play')}">▶</button>
-        <span class="time" id="cur">0:00</span>
-        <div class="bar" id="bar" role="slider" aria-label="${t('player.seek')}"><div class="fill" id="fill"></div></div>
-        <span class="time" id="tot">0:00</span>
-        <div class="speeds">
-          <button data-sp="1" type="button">1×</button>
-          <button data-sp="2" type="button">2×</button>
-          <button data-sp="4" type="button">4×</button>
+      <div class="stack">
+        <div class="pip" id="pip"></div>
+        <div class="player">
+          <button class="play" id="play" type="button" aria-label="${t('player.play')}">▶</button>
+          <span class="time" id="cur">0:00</span>
+          <div class="bar" id="bar" role="slider" aria-label="${t('player.seek')}"><div class="fill" id="fill"></div></div>
+          <span class="time" id="tot">0:00</span>
+          <div class="speeds">
+            <button data-sp="1" type="button">1×</button>
+            <button data-sp="2" type="button">2×</button>
+            <button data-sp="4" type="button">4×</button>
+          </div>
         </div>
       </div>`;
   }
 
+  _mountVideo() {
+    const pip = this.$('#pip');
+    if (!pip) return;
+    if (this._video) {
+      if (this._video.parentElement !== pip) pip.appendChild(this._video);
+      pip.classList.add('on');
+    } else {
+      pip.classList.remove('on');
+    }
+  }
+
   afterRender() {
+    this._mountVideo();
     const c = this._clock;
     if (!c) return;
     this.$('#tot').textContent = mmss(c.dur);
@@ -866,7 +893,8 @@ const { css } = __req("js/core/css.js");
 
 const styles = css`
 :host { display: block; }
-.map-wrap { position: relative; max-width: 640px; margin: 0 auto; border-radius: 14px; overflow: hidden; }
+/* Cabe siempre: limitado por ancho (640) y por alto (74vh) sin deformar (mantiene la proporción del vuelo). */
+.map-wrap { position: relative; width: min(640px, 100%, calc(74vh * var(--ar, 1.4))); margin: 0 auto; border-radius: 14px; overflow: hidden; }
 .map-svg { border-radius: 14px; display: block; width: 100%; height: auto; }
 .map-wrap.loading::before {
   content: ""; position: absolute; inset: 0; z-index: 2; border-radius: 14px;
@@ -1221,6 +1249,8 @@ class FlightReport extends DjiElement {
     if (this._lb) { this._lb.remove(); this._lb = null; }
     if (this._clock) { this._clock.destroy(); this._clock = null; }
     if (this._player) { this._player.remove(); this._player = null; }
+    if (this._video) { this._video.removeAttribute('src'); this._video.load(); this._video = null; }
+    if (this._videoUrl) { URL.revokeObjectURL(this._videoUrl); this._videoUrl = null; }
   }
 
   _heroTpl(m, r, dur, relmax, hsmax) {
@@ -1456,11 +1486,20 @@ class FlightReport extends DjiElement {
       this._clock = new PlayerClock(this.model.meta.dur);
       this._clock.addEventListener('tick', (e) => this._onTick(e.detail.t));
     }
+    // si hay vídeo: úsalo como fuente de tiempo y muéstralo como miniatura sincronizada
+    if (this.assets?.mp4File && !this._video) {
+      this._videoUrl = URL.createObjectURL(this.assets.mp4File);
+      this._video = document.createElement('video');
+      this._video.src = this._videoUrl;
+      this._video.muted = true; this._video.playsInline = true; this._video.preload = 'auto';
+      this._clock.setSource(this._video);
+    }
     if (!this._player) {
       this._player = document.createElement('flight-player');
       document.body.appendChild(this._player);
     }
     this._player.clock = this._clock;
+    this._player.video = this._video || null;
   }
 
   /** Propaga el instante actual al mapa y a todas las gráficas. */
@@ -1853,13 +1892,18 @@ class PlayerClock extends EventTarget {
     this.speed = 1;
     this._raf = 0;
     this._last = 0;
+    this._src = null; // <video> opcional como fuente de tiempo
   }
+
+  /** Usa un vídeo como fuente de tiempo (reproducción nativa, suave). */
+  setSource(video) { this._src = video || null; }
 
   play() {
     if (this.playing || this.dur <= 0) return;
     if (this.t >= this.dur) this.t = 0;
     this.playing = true;
-    this._last = performance.now();
+    if (this._src) { this._src.playbackRate = this.speed; this._src.currentTime = this.t; this._src.play().catch(() => {}); }
+    else this._last = performance.now();
     this._emit('state');
     this._loop();
   }
@@ -1867,6 +1911,7 @@ class PlayerClock extends EventTarget {
   pause() {
     if (!this.playing) return;
     this.playing = false;
+    if (this._src) this._src.pause();
     cancelAnimationFrame(this._raf);
     this._emit('state');
   }
@@ -1876,6 +1921,7 @@ class PlayerClock extends EventTarget {
   /** Salta a un instante (segundos). */
   seek(t) {
     this.t = Math.max(0, Math.min(this.dur, t));
+    if (this._src) this._src.currentTime = this.t;
     this._emit('tick');
     if (!this.playing) this._emit('state');
   }
@@ -1883,6 +1929,7 @@ class PlayerClock extends EventTarget {
   /** @param {number} s velocidad (1, 2, 4…) */
   setSpeed(s) {
     this.speed = s;
+    if (this._src) this._src.playbackRate = s;
     this._emit('state');
   }
 
@@ -1892,13 +1939,14 @@ class PlayerClock extends EventTarget {
   _loop() {
     this._raf = requestAnimationFrame((now) => {
       if (!this.playing) return;
-      const dt = ((now - this._last) / 1000) * this.speed;
-      this._last = now;
-      this.t += dt;
-      if (this.t >= this.dur) {
-        this.t = this.dur; this.playing = false;
-        this._emit('tick'); this._emit('state');
-        return;
+      if (this._src) {
+        this.t = this._src.currentTime;
+        if (this._src.ended || this.t >= this.dur) { this.t = this.dur; this.playing = false; this._emit('tick'); this._emit('state'); return; }
+      } else {
+        const dt = ((now - this._last) / 1000) * this.speed;
+        this._last = now;
+        this.t += dt;
+        if (this.t >= this.dur) { this.t = this.dur; this.playing = false; this._emit('tick'); this._emit('state'); return; }
       }
       this._emit('tick');
       this._loop();
@@ -2987,6 +3035,7 @@ function buildMap(model, kps, loadingText = '') {
   const wrap = document.createElement('div');
   wrap.className = 'map-wrap loading';
   wrap.style.aspectRatio = `${W} / ${H}`;
+  wrap.style.setProperty('--ar', W / H); // para limitar también por altura sin deformar
   const loadingEl = document.createElement('div');
   loadingEl.className = 'map-loading'; loadingEl.textContent = loadingText;
   wrap.appendChild(loadingEl);
