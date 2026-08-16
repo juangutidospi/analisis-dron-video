@@ -29,6 +29,7 @@ export function buildMap(model, kps, loadingText = '') {
   const wrap = document.createElement('div');
   wrap.className = 'map-wrap loading';
   wrap.style.aspectRatio = `${W} / ${H}`;
+  wrap.style.setProperty('--ar', W / H); // para limitar también por altura sin deformar
   const loadingEl = document.createElement('div');
   loadingEl.className = 'map-loading'; loadingEl.textContent = loadingText;
   wrap.appendChild(loadingEl);
