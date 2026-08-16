@@ -1629,17 +1629,38 @@ p.sub { font-size: clamp(16px, 2.1vw, 20px); color: color-mix(in srgb, var(--col
   padding: 12px 14px; color: var(--color-text); font-size: 15px; font-family: inherit; backdrop-filter: blur(8px);
 }
 .gen .go {
-  margin-top: 14px; width: 100%; border: none; cursor: pointer; color: #fff; font-weight: 700; font-size: 15px;
+  margin-top: 0; width: 100%; border: none; cursor: pointer; color: #fff; font-weight: 700; font-size: 15px;
   padding: 14px 26px; border-radius: 100px; background: linear-gradient(135deg, var(--color-accent-2), var(--color-accent));
   box-shadow: 0 10px 26px color-mix(in srgb, var(--color-accent) 38%, transparent); transition: transform .12s;
   &:hover { transform: translateY(-2px); }
 }
+/* Botón de vídeo resaltado (encima de Generar), con barrido de brillo animado. */
 .gen .addmp4 {
-  margin-top: 10px; width: 100%; justify-content: center; display: inline-flex; align-items: center; gap: 8px;
-  border: 1px solid var(--color-divider); background: var(--color-surface); color: var(--color-text);
-  border-radius: 100px; padding: 11px 15px; font-size: 13.5px; font-weight: 600; cursor: pointer; backdrop-filter: blur(8px);
-  &:hover { border-color: var(--color-accent); }
+  position: relative; overflow: hidden; margin-top: 14px; margin-bottom: 12px; width: 100%; display: flex; align-items: center; gap: 12px;
+  text-align: left; cursor: pointer; color: var(--color-text); font-family: inherit; border-radius: 16px; padding: 13px 15px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 9%, var(--color-surface));
+  box-shadow: 0 0 26px -10px color-mix(in srgb, var(--color-accent) 60%, transparent);
+  transition: transform .14s, box-shadow .14s, border-color .14s;
+  &:hover { transform: translateY(-1px); box-shadow: 0 0 34px -6px color-mix(in srgb, var(--color-accent) 68%, transparent); }
 }
+.gen .addmp4::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(100deg, transparent 34%, color-mix(in srgb, var(--color-accent) 28%, transparent) 50%, transparent 66%);
+  transform: translateX(-120%); animation: mp4shine 3.6s ease-in-out infinite;
+}
+@keyframes mp4shine { 0%, 55% { transform: translateX(-120%); } 100% { transform: translateX(120%); } }
+@media (prefers-reduced-motion: reduce) { .gen .addmp4::after { animation: none; opacity: 0; } }
+.mp4-ico { position: relative; z-index: 1; flex: none; width: 42px; height: 42px; display: grid; place-items: center; font-size: 22px;
+  border-radius: 12px; background: color-mix(in srgb, var(--color-accent) 18%, transparent); }
+.mp4-txt { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.mp4-t { font-size: 14.5px; font-weight: 750; letter-spacing: -.01em; }
+.mp4-sub { font-size: 12px; color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp4-badge { position: relative; z-index: 1; flex: none; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .07em;
+  color: #fff; background: linear-gradient(135deg, var(--color-accent), var(--color-violet)); border-radius: 100px; padding: 4px 10px; }
+.gen .addmp4.has { border-color: color-mix(in srgb, var(--c-green) 50%, transparent); background: color-mix(in srgb, var(--c-green) 10%, var(--color-surface)); box-shadow: none; }
+.gen .addmp4.has::after { display: none; }
+.gen .addmp4.has .mp4-ico { background: color-mix(in srgb, var(--c-green) 22%, transparent); color: var(--c-green); }
 
 .feats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; max-width: 720px; margin: 44px auto 0; }
 @media (max-width: 620px) { .feats { grid-template-columns: 1fr; } }
@@ -1687,8 +1708,12 @@ class UploadView extends DjiElement {
         <div class="gen ${this.files.srt ? '' : 'hidden'}" id="gen">
           <label>${escapeHtml(t('form.title_label'))}</label>
           <input id="title" value="${escapeHtml(t('form.default_title'))}">
+          <button class="addmp4" id="addmp4" type="button">
+            <span class="mp4-ico">🎬</span>
+            <span class="mp4-txt"><span class="mp4-t">${escapeHtml(t('form.add_mp4'))}</span><span class="mp4-sub">${escapeHtml(t('form.add_mp4.sub'))}</span></span>
+            <span class="mp4-badge">${escapeHtml(t('form.recommended'))}</span>
+          </button>
           <button class="go" id="go" type="button">${escapeHtml(t('form.generate'))}</button>
-          <button class="addmp4" id="addmp4" type="button">${escapeHtml(t('form.add_mp4'))}</button>
         </div>
 
         <div class="feats">
@@ -1709,14 +1734,26 @@ class UploadView extends DjiElement {
     this.on(dz, 'dz:change', (e) => {
       this.files = e.detail;
       this.$('#gen').classList.toggle('hidden', !this.files.srt);
+      this._updateMp4Btn();
       if (this.files.srtText) this._suggestTitle(this.files.srtText);
     });
     this.on(this.$('#addmp4'), 'click', () => dz.pickMp4());
+    this._updateMp4Btn();
     this.on(this.$('#go'), 'click', () => {
       if (!this.files.srtText) return;
       const title = (this.$('#title').value || '').trim() || t('form.default_title');
       this.emit('dji:generate', { srtText: this.files.srtText, mp4: this.files.mp4, title, place: this._place || null });
     });
+  }
+
+  /** Refleja en el botón si ya hay vídeo (estado "añadido"). */
+  _updateMp4Btn() {
+    const btn = this.$('#addmp4'); if (!btn) return;
+    const has = !!(this.files && this.files.mp4);
+    btn.classList.toggle('has', has);
+    const ico = btn.querySelector('.mp4-ico'), tt = btn.querySelector('.mp4-t'), sub = btn.querySelector('.mp4-sub'), badge = btn.querySelector('.mp4-badge');
+    if (has) { ico.textContent = '✓'; tt.textContent = t('form.mp4_added'); sub.textContent = this.files.mp4.name; badge.hidden = true; }
+    else { ico.textContent = '🎬'; tt.textContent = t('form.add_mp4'); sub.textContent = t('form.add_mp4.sub'); badge.hidden = false; }
   }
 
   /** Prerellena el título con el lugar del vuelo (geocodificación inversa). */
@@ -2363,7 +2400,10 @@ __x.default = {
   'form.default_title': 'Flight with DJI Neo 2',
   'form.title_place': 'Flight over {place}',
   'form.generate': 'Generate report →',
-  'form.add_mp4': '🎬 Add .MP4 video (optional, for the frames)',
+  'form.add_mp4': 'Add the flight video',
+  'form.add_mp4.sub': 'Real frames, flight replay and 4K downloads',
+  'form.mp4_added': 'Video added',
+  'form.recommended': 'Recommended',
   'feat.map.t': 'Route over satellite',
   'feat.map.d': 'GPS track colored by height over real Esri imagery.',
   'feat.frames.t': 'Video frames',
@@ -2548,7 +2588,10 @@ __x.default = {
   'form.default_title': 'Vuelo con DJI Neo 2',
   'form.title_place': 'Vuelo en {place}',
   'form.generate': 'Generar informe →',
-  'form.add_mp4': '🎬 Añadir vídeo .MP4 (opcional, para los fotogramas)',
+  'form.add_mp4': 'Añade el vídeo del vuelo',
+  'form.add_mp4.sub': 'Fotogramas reales, replay del vuelo y descargas en 4K',
+  'form.mp4_added': 'Vídeo añadido',
+  'form.recommended': 'Recomendado',
   'feat.map.t': 'Recorrido sobre satélite',
   'feat.map.d': 'Trazado GPS coloreado por altura sobre imagen real de Esri.',
   'feat.frames.t': 'Fotogramas del vídeo',
