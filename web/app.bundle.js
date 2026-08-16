@@ -1093,7 +1093,9 @@ __m["js/components/views/flight-report/flight-report.css.js"] = function (__x, _
 const { css } = __req("js/core/css.js");
 
 const styles = css`
-:host { display: block; animation: rise .6s cubic-bezier(.22,1,.36,1) both; }
+:host { display: block; animation: rise .6s cubic-bezier(.22,1,.36,1) both; padding-bottom: clamp(96px, 14vh, 140px); }
+/* con vídeo, la miniatura (PiP) sube más: reserva algo más de hueco al final */
+:host(.has-video) { padding-bottom: clamp(150px, 24vh, 240px); }
 @keyframes rise { from { opacity: 0; transform: translateY(16px); } }
 .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
 
@@ -1500,6 +1502,8 @@ class FlightReport extends DjiElement {
     }
     this._player.clock = this._clock;
     this._player.video = this._video || null;
+    // reserva hueco al final para que la barra fija del reproductor no tape el contenido
+    this.classList.toggle('has-video', !!this._video);
   }
 
   /** Propaga el instante actual al mapa y a todas las gráficas. */
@@ -2301,11 +2305,11 @@ function tileConfig(track) {
   const lats = T.map(p => p[0]), lons = T.map(p => p[1]);
   let la0 = Math.min(...lats), la1 = Math.max(...lats);
   let lo0 = Math.min(...lons), lo1 = Math.max(...lons);
-  const dla = (la1 - la0) * 0.18 || 1e-4, dlo = (lo1 - lo0) * 0.18 || 1e-4;
+  const dla = (la1 - la0) * 0.08 || 1e-4, dlo = (lo1 - lo0) * 0.08 || 1e-4;
   la0 -= dla; la1 += dla; lo0 -= dlo; lo1 += dlo;
-  // ensancha el encuadre a formato apaisado para que el mapa llene el bloque
-  // (muestra más terreno alrededor en vez de quedar vertical y estrecho)
-  const targetAR = 1.5;
+  // ensancha el encuadre a formato apaisado para que el mapa llene el bloque,
+  // pero sin pasarse: encuadre ceñido al recorrido para que no se vea pequeño.
+  const targetAR = 1.25;
   const cosLat = Math.cos(((la0 + la1) / 2) * Math.PI / 180);
   const wSpan = (lo1 - lo0) * cosLat, hSpan = (la1 - la0);
   if (wSpan / hSpan < targetAR) {

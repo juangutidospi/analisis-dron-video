@@ -327,6 +327,8 @@ export class FlightReport extends DjiElement {
     }
     this._player.clock = this._clock;
     this._player.video = this._video || null;
+    // reserva hueco al final para que la barra fija del reproductor no tape el contenido
+    this.classList.toggle('has-video', !!this._video);
   }
 
   /** Propaga el instante actual al mapa y a todas las gráficas. */
