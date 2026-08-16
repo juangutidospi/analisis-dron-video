@@ -88,11 +88,21 @@ export function buildMap(model, kps, loadingText = '') {
     btn.innerHTML = `<span class="kp-tip${edge}">${k.frame ? `<img src="${k.frame}" alt="">` : ''}<span class="kp-b"><span class="kp-l">${k.label}</span><span class="kp-m">${mmss(k.t)} · ${k.metric}</span></span></span>`;
     ov.appendChild(btn);
   });
-  // marcador del dron para la reproducción (interpola su posición por el tiempo)
-  const droneMk = el('circle', { r: 13, 'stroke-width': 3.5, opacity: 0 });
-  droneMk.style.fill = 'var(--c-blue)'; droneMk.style.stroke = '#fff';
-  droneMk.style.filter = 'drop-shadow(0 2px 5px rgba(0,0,0,.55))';
+  // marcador del dron para la reproducción: el glifo del dron sobre un badge,
+  // que interpola su posición sobre el track según el tiempo.
+  const SC = 0.72;
+  const droneMk = el('g', { opacity: 0 });
+  const disc = el('circle', { r: 18 });
+  disc.style.fill = 'var(--c-blue)'; disc.style.stroke = '#fff'; disc.style.strokeWidth = '2.5';
+  disc.style.filter = 'drop-shadow(0 2px 6px rgba(0,0,0,.55))';
+  droneMk.appendChild(disc);
+  const glyph = el('g', { transform: `scale(${SC}) translate(-24 -24)` });
+  glyph.appendChild(el('path', { d: 'M24 24 11 11M24 24 37 11M24 24 11 37M24 24 37 37', fill: 'none', stroke: '#fff', 'stroke-width': 3.2, 'stroke-linecap': 'round' }));
+  for (const [cx, cy] of [[11, 11], [37, 11], [11, 37], [37, 37]]) glyph.appendChild(el('circle', { cx, cy, r: 7, fill: 'rgba(255,255,255,.18)', stroke: '#fff', 'stroke-width': 2.6 }));
+  glyph.appendChild(el('rect', { x: 19, y: 19, width: 10, height: 10, rx: 3.4, fill: '#fff' }));
+  droneMk.appendChild(glyph);
   svg.appendChild(droneMk);
+
   const S = model.series;
   const setPlayhead = (t) => {
     let i = 1;
@@ -102,8 +112,7 @@ export function buildMap(model, kps, loadingText = '') {
     const span = (b.t - a.t) || 1;
     const f = Math.max(0, Math.min(1, (t - a.t) / span));
     const lat = a.lat + (b.lat - a.lat) * f, lon = a.lon + (b.lon - a.lon) * f;
-    droneMk.setAttribute('cx', PX(lon).toFixed(1));
-    droneMk.setAttribute('cy', PY(lat).toFixed(1));
+    droneMk.setAttribute('transform', `translate(${PX(lon).toFixed(1)} ${PY(lat).toFixed(1)})`);
     droneMk.setAttribute('opacity', '1');
   };
   const clearPlayhead = () => droneMk.setAttribute('opacity', '0');
