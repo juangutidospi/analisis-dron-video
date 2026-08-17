@@ -53,6 +53,29 @@ h2 { font-size: clamp(24px, 3.4vw, 34px); font-weight: 820; margin: 10px 0 6px; 
 h3 { font-size: 15px; color: color-mix(in srgb, var(--color-text) 74%, transparent); margin: 0 0 12px; font-weight: 650; }
 .card { background: var(--color-surface); border: 1px solid var(--color-divider); border-radius: var(--radius-md); padding: 22px; backdrop-filter: blur(12px); }
 
+/* altura sobre el terreno */
+.hidden { display: none; }
+.terrain-loading { color: var(--color-text-muted); font-size: 13px; padding: 30px 0; text-align: center; }
+.terrain-tiles { grid-template-columns: repeat(3, 1fr); margin-top: 16px; }
+@media (max-width: 620px) { .terrain-tiles { grid-template-columns: 1fr; } }
+
+/* contexto solar */
+.solar-grid { align-items: stretch; }
+.sun-card { display: grid; place-items: center; }
+.compass { width: min(100%, 260px); height: auto; overflow: visible; }
+.cmp-ring { fill: color-mix(in srgb, var(--c-yellow) 5%, transparent); stroke: var(--color-divider); stroke-width: 1.5; }
+.cmp-tick { stroke: color-mix(in srgb, var(--color-text) 30%, transparent); stroke-width: 1.5; }
+.cmp-card { fill: var(--color-text-muted); font-size: 13px; font-weight: 700; }
+.cmp-ray { stroke: var(--c-yellow); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 2 6; opacity: .8; }
+.cmp-sun { fill: var(--c-yellow); stroke: var(--color-surface-solid); stroke-width: 2; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--c-yellow) 70%, transparent)); }
+.cmp-center { fill: var(--color-text-muted); }
+.cmp-flight { stroke: var(--color-accent); stroke-width: 2.5; stroke-linecap: round; }
+.cmp-flight-dot { fill: var(--color-accent); }
+.cmp-wind { stroke: var(--c-aqua); stroke-width: 3.5; stroke-linecap: round; opacity: .9; }
+.cmp-wind-head { fill: var(--c-aqua); filter: drop-shadow(0 0 5px color-mix(in srgb, var(--c-aqua) 55%, transparent)); }
+.solar-tiles { grid-template-columns: 1fr; height: 100%; align-content: center; gap: 12px; }
+@media (max-width: 760px) { .solar-tiles { grid-template-columns: 1fr; } }
+
 /* scrollytelling del recorrido: la tarjeta del mapa se fija mientras el scroll hace volar el dron */
 .route-scrolly .scrolly-track { position: relative; height: 240vh; }
 .route-scrolly .scrolly-stick { position: sticky; top: 0; min-height: 100vh; display: flex; align-items: center; }

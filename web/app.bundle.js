@@ -1465,6 +1465,29 @@ h2 { font-size: clamp(24px, 3.4vw, 34px); font-weight: 820; margin: 10px 0 6px; 
 h3 { font-size: 15px; color: color-mix(in srgb, var(--color-text) 74%, transparent); margin: 0 0 12px; font-weight: 650; }
 .card { background: var(--color-surface); border: 1px solid var(--color-divider); border-radius: var(--radius-md); padding: 22px; backdrop-filter: blur(12px); }
 
+/* altura sobre el terreno */
+.hidden { display: none; }
+.terrain-loading { color: var(--color-text-muted); font-size: 13px; padding: 30px 0; text-align: center; }
+.terrain-tiles { grid-template-columns: repeat(3, 1fr); margin-top: 16px; }
+@media (max-width: 620px) { .terrain-tiles { grid-template-columns: 1fr; } }
+
+/* contexto solar */
+.solar-grid { align-items: stretch; }
+.sun-card { display: grid; place-items: center; }
+.compass { width: min(100%, 260px); height: auto; overflow: visible; }
+.cmp-ring { fill: color-mix(in srgb, var(--c-yellow) 5%, transparent); stroke: var(--color-divider); stroke-width: 1.5; }
+.cmp-tick { stroke: color-mix(in srgb, var(--color-text) 30%, transparent); stroke-width: 1.5; }
+.cmp-card { fill: var(--color-text-muted); font-size: 13px; font-weight: 700; }
+.cmp-ray { stroke: var(--c-yellow); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 2 6; opacity: .8; }
+.cmp-sun { fill: var(--c-yellow); stroke: var(--color-surface-solid); stroke-width: 2; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--c-yellow) 70%, transparent)); }
+.cmp-center { fill: var(--color-text-muted); }
+.cmp-flight { stroke: var(--color-accent); stroke-width: 2.5; stroke-linecap: round; }
+.cmp-flight-dot { fill: var(--color-accent); }
+.cmp-wind { stroke: var(--c-aqua); stroke-width: 3.5; stroke-linecap: round; opacity: .9; }
+.cmp-wind-head { fill: var(--c-aqua); filter: drop-shadow(0 0 5px color-mix(in srgb, var(--c-aqua) 55%, transparent)); }
+.solar-tiles { grid-template-columns: 1fr; height: 100%; align-content: center; gap: 12px; }
+@media (max-width: 760px) { .solar-tiles { grid-template-columns: 1fr; } }
+
 /* scrollytelling del recorrido: la tarjeta del mapa se fija mientras el scroll hace volar el dron */
 .route-scrolly .scrolly-track { position: relative; height: 240vh; }
 .route-scrolly .scrolly-stick { position: sticky; top: 0; min-height: 100vh; display: flex; align-items: center; }
@@ -1527,6 +1550,9 @@ const { t, getLang } = __req("js/i18n/index.js");
 const { keypoints, mmss } = __req("js/geo.js");
 const { hav } = __req("js/srt.js");
 const { dayBand } = __req("js/daypart.js");
+const { solarPosition, lightPhase, azToCompass } = __req("js/solar.js");
+const { fetchTerrain } = __req("js/terrain.js");
+const { estimateWind } = __req("js/wind.js");
 __req("js/components/ui/stat-tile/stat-tile.js");
 __req("js/components/ui/moment-card/moment-card.js");
 __req("js/components/ui/callout/callout.js");
@@ -1543,6 +1569,13 @@ const { styles } = __req("js/components/views/flight-report/flight-report.css.js
 const f = (v, d = 0) => (v == null ? '—' : v.toFixed(d));
 const nfmt = (n) => n.toLocaleString(getLang() === 'es' ? 'es-ES' : 'en-US');
 const strip = (s) => s.replace(/\s*\(.*?\)/, '');
+/** Rumbo inicial (grados, 0=N) del punto A al B por la loxodrómica/gran círculo. */
+const bearing = (la1, lo1, la2, lo2) => {
+  const p1 = la1 * Math.PI / 180, p2 = la2 * Math.PI / 180, dl = (lo2 - lo1) * Math.PI / 180;
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+};
 const MES = {
   es: ['', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'],
   en: ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
@@ -1575,8 +1608,11 @@ class FlightReport extends DjiElement {
         ${this._momentosTpl(a)}
         ${this._routeTpl()}
         ${this._sectionChart('alt', 'c-alt', `<div class="legend"><span><span class="sw" style="background:var(--c-blue)"></span>${t('alt.series')}</span></div>`)}
+        ${this._terrainTpl()}
         ${this._dynamicsTpl()}
+        ${this._windTpl()}
         ${this._cameraTpl(cam, r, iso, a)}
+        ${this._solarTpl(m)}
         ${this._gimbalTpl(r)}
         ${this._locationTpl()}
         ${this._notesTpl()}
@@ -1769,6 +1805,182 @@ class FlightReport extends DjiElement {
       </section>`;
   }
 
+  _terrainTpl() {
+    return `
+      <section class="blk" id="sec-terrain">
+        <div class="eyebrow">${escapeHtml(t('terrain.eyebrow'))}</div>
+        <h2>${escapeHtml(t('terrain.title'))}</h2>
+        <p class="sub">${escapeHtml(t('terrain.sub'))}</p>
+        <div class="card">
+          <div class="terrain-loading">${escapeHtml(t('terrain.loading'))}</div>
+          <div class="terrain-error hidden"><app-callout variant="warn" title="${escapeHtml(t('terrain.error.t'))}">${escapeHtml(t('terrain.error.d'))}</app-callout></div>
+          <div class="terrain-body hidden">
+            <div class="legend"><span><span class="sw" style="background:var(--c-aqua)"></span>${escapeHtml(t('terrain.legend'))}</span></div>
+            <time-chart id="c-terrain"></time-chart>
+          </div>
+        </div>
+        <div class="tiles terrain-tiles hidden" id="terrain-tiles"></div>
+      </section>`;
+  }
+
+  /** Descarga la elevación del terreno una vez y rellena la sección (o avisa si falla). */
+  _setupTerrain() {
+    if (this._terrainData !== undefined) { this._fillTerrain(); return; }
+    if (this._terrainFetching) return;
+    this._terrainFetching = true;
+    const S = this.model.series;
+    const step = Math.max(1, Math.ceil(S.length / 90));
+    const pts = S.filter((s, i) => i % step === 0 && s.lat != null);
+    fetchTerrain(pts.map((s) => [s.lat, s.lon])).then((elev) => {
+      this._terrainFetching = false;
+      if (!elev) { this._terrainData = null; }
+      else {
+        pts.forEach((s, i) => { s.ground = elev[i]; s.agl = (s.ab != null && elev[i] != null) ? s.ab - elev[i] : null; });
+        this._terrainData = { pts };
+      }
+      this._fillTerrain();
+    });
+  }
+
+  /** Pinta la gráfica de altura sobre el suelo y las cifras (o el aviso de error). */
+  _fillTerrain() {
+    if (this._terrainData === undefined) return; // aún cargando
+    this.$('#sec-terrain .terrain-loading')?.classList.add('hidden');
+    if (!this._terrainData) { this.$('#sec-terrain .terrain-error')?.classList.remove('hidden'); return; }
+    const pts = this._terrainData.pts, dur = this.model.meta.dur;
+    this.$('#c-terrain').data = { series: pts, dur, cfgs: [
+      { k: 'agl', color: '--c-aqua', area: true, min: 0, fmt: (v) => `${Math.round(v)}`, label: t('terrain.legend'), unit: 'm', dec: 0 },
+    ] };
+    this.$('#sec-terrain .terrain-body')?.classList.remove('hidden');
+    const agls = pts.map((s) => s.agl).filter((v) => v != null);
+    const grounds = pts.map((s) => s.ground).filter((v) => v != null);
+    if (!agls.length) return;
+    const tile = (v, label, hint) => `<stat-tile value="${Math.round(v)}" unit="m" label="${escapeHtml(label)}" hint="${escapeHtml(hint)}"></stat-tile>`;
+    const tilesEl = this.$('#terrain-tiles');
+    tilesEl.innerHTML = tile(Math.max(...agls), t('terrain.aglmax'), t('terrain.aglmax.k'))
+      + tile(Math.min(...agls), t('terrain.clearance'), t('terrain.clearance.k'))
+      + tile(Math.max(...grounds) - Math.min(...grounds), t('terrain.relief'), t('terrain.relief.k'));
+    tilesEl.classList.remove('hidden');
+  }
+
+  _windTpl() {
+    const w = estimateWind(this.model.series);
+    const head = `
+        <div class="eyebrow">${escapeHtml(t('wind.eyebrow'))}</div>
+        <h2>${escapeHtml(t('wind.title'))}</h2>
+        <p class="sub">${escapeHtml(t('wind.sub'))}</p>`;
+    if (!w) {
+      return `<section class="blk">${head}
+        <app-callout variant="warn" title="${escapeHtml(t('wind.na.t'))}">${escapeHtml(t('wind.na.d'))}</app-callout>
+      </section>`;
+    }
+    const kmh = Math.round(w.speed * 3.6), asKmh = Math.round(w.airspeed * 3.6);
+    const compass = azToCompass(w.fromDeg);
+    const tile = (v, unit, label, hint) => `<stat-tile value="${escapeHtml(String(v))}" unit="${unit}" label="${escapeHtml(label)}" hint="${escapeHtml(hint)}"></stat-tile>`;
+    return `
+      <section class="blk">${head}
+        <div class="grid2 solar-grid">
+          <div class="card sun-card">${this._windCompass(w.fromDeg)}</div>
+          <div class="card">
+            <div class="tiles solar-tiles">
+              ${tile(kmh, 'km/h', t('wind.speed'), t('wind.speed.k'))}
+              ${tile(compass, '', t('wind.dir'), t('wind.dir.k', { deg: Math.round(w.fromDeg) }))}
+              ${tile(asKmh, 'km/h', t('wind.airspeed'), t('wind.airspeed.k'))}
+            </div>
+          </div>
+        </div>
+        <app-callout title="${escapeHtml(t('wind.note.t'))}">${escapeHtml(t('wind.quality.' + w.quality))} ${escapeHtml(t('wind.note.d'))}</app-callout>
+      </section>`;
+  }
+
+  /** Brújula de viento: una flecha que cruza la escena en el sentido del viento. */
+  _windCompass(fromDeg) {
+    const cx = 110, cy = 110, R = 84;
+    const pt = (a, r) => [cx + r * Math.sin(a * Math.PI / 180), cy - r * Math.cos(a * Math.PI / 180)];
+    const toward = (fromDeg + 180) % 360;
+    const [x1, y1] = pt(fromDeg, R - 12);
+    const [x2, y2] = pt(toward, R - 12);
+    const dir = toward * Math.PI / 180, fx = Math.sin(dir), fy = -Math.cos(dir), px = Math.cos(dir), py = Math.sin(dir);
+    const ah = 12, w2 = 7;
+    const head = `${x2.toFixed(1)},${y2.toFixed(1)} ${(x2 - ah * fx + w2 * px).toFixed(1)},${(y2 - ah * fy + w2 * py).toFixed(1)} ${(x2 - ah * fx - w2 * px).toFixed(1)},${(y2 - ah * fy - w2 * py).toFixed(1)}`;
+    const card = [['N', 0], ['E', 90], ['S', 180], ['O', 270]].map(([lbl, a]) => {
+      const [x, y] = pt(a, R + 16);
+      return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" class="cmp-card" dominant-baseline="middle" text-anchor="middle">${lbl}</text>`;
+    }).join('');
+    const ticks = Array.from({ length: 12 }, (_, i) => {
+      const [a1, b1] = pt(i * 30, R), [a2, b2] = pt(i * 30, R - 8);
+      return `<line x1="${a1.toFixed(1)}" y1="${b1.toFixed(1)}" x2="${a2.toFixed(1)}" y2="${b2.toFixed(1)}" class="cmp-tick"/>`;
+    }).join('');
+    return `<svg viewBox="0 0 220 220" class="compass" role="img" aria-label="${escapeHtml(t('wind.eyebrow'))}">
+      <circle cx="${cx}" cy="${cy}" r="${R}" class="cmp-ring"/>
+      ${ticks}${card}
+      <line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" class="cmp-wind"/>
+      <polygon points="${head}" class="cmp-wind-head"/>
+    </svg>`;
+  }
+
+  _solarTpl(m) {
+    const [clat, clon] = this.model.center;
+    const start = new Date(m.start.replace(' ', 'T'));
+    const end = new Date(start.getTime() + m.dur * 1000);
+    const s0 = solarPosition(start, clat, clon);
+    const s1 = solarPosition(end, clat, clon);
+    const phase = lightPhase((s0.elevation + s1.elevation) / 2);
+    const az = s0.azimuth;
+    const far = this.kps.find((k) => k.key === 'far');
+    const flightAz = far ? bearing(this.model.takeoff[0], this.model.takeoff[1], far.lat, far.lon) : null;
+    const tile = (v, unit, label, hint) => `<stat-tile value="${escapeHtml(v)}" unit="${unit}" label="${escapeHtml(label)}" hint="${escapeHtml(hint)}"></stat-tile>`;
+    return `
+      <section class="blk">
+        <div class="eyebrow">${escapeHtml(t('solar.eyebrow'))}</div>
+        <h2>${escapeHtml(t('solar.title'))}</h2>
+        <p class="sub">${escapeHtml(t('solar.sub'))}</p>
+        <div class="grid2 solar-grid">
+          <div class="card sun-card">${this._sunCompass(az, flightAz)}</div>
+          <div class="card">
+            <div class="tiles solar-tiles">
+              ${tile(`${Math.round(s0.elevation)}`, '°', t('solar.elev'), t('solar.elev.k', { end: Math.round(s1.elevation) }))}
+              ${tile(azToCompass(az), '', t('solar.dir'), t('solar.dir.k', { az: Math.round(az) }))}
+              ${tile(t('solar.phase.' + phase), '', t('solar.phase'), t('solar.phase.k'))}
+            </div>
+          </div>
+        </div>
+      </section>`;
+  }
+
+  /** Brújula solar: dónde estaba el sol (azimut) y el rumbo del vuelo. */
+  _sunCompass(azSun, azFlight) {
+    const cx = 110, cy = 110, R = 84;
+    const pt = (a, r) => [cx + r * Math.sin(a * Math.PI / 180), cy - r * Math.cos(a * Math.PI / 180)];
+    const [sx, sy] = pt(azSun, R);
+    const card = [['N', 0], ['E', 90], ['S', 180], ['O', 270]].map(([lbl, a]) => {
+      const [x, y] = pt(a, R + 16);
+      return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" class="cmp-card" dominant-baseline="middle" text-anchor="middle">${lbl}</text>`;
+    }).join('');
+    const ticks = Array.from({ length: 12 }, (_, i) => {
+      const [x1, y1] = pt(i * 30, R), [x2, y2] = pt(i * 30, R - 8);
+      return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" class="cmp-tick"/>`;
+    }).join('');
+    let flight = '';
+    if (azFlight != null) {
+      const [fx, fy] = pt(azFlight, R - 26);
+      flight = `<line x1="${cx}" y1="${cy}" x2="${fx.toFixed(1)}" y2="${fy.toFixed(1)}" class="cmp-flight"/>`
+        + `<circle cx="${fx.toFixed(1)}" cy="${fy.toFixed(1)}" r="4" class="cmp-flight-dot"/>`;
+    }
+    return `<svg viewBox="0 0 220 220" class="compass" role="img" aria-label="${escapeHtml(t('solar.eyebrow'))}">
+      <defs><radialGradient id="sunglow" cx="0.5" cy="0.5" r="0.5">
+        <stop offset="0" stop-color="var(--c-yellow)" stop-opacity="0.55"/><stop offset="1" stop-color="var(--c-yellow)" stop-opacity="0"/>
+      </radialGradient></defs>
+      <circle cx="${cx}" cy="${cy}" r="${R}" class="cmp-ring"/>
+      ${ticks}${card}
+      <line x1="${sx.toFixed(1)}" y1="${sy.toFixed(1)}" x2="${cx}" y2="${cy}" class="cmp-ray"/>
+      ${flight}
+      <circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="26" fill="url(#sunglow)"/>
+      <circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="11" class="cmp-sun"/>
+      <circle cx="${cx}" cy="${cy}" r="3.5" class="cmp-center"/>
+    </svg>`;
+  }
+
   _gimbalTpl(r) {
     return `
       <section class="blk">
@@ -1836,6 +2048,7 @@ class FlightReport extends DjiElement {
 
     this.$('#map').flight = { model: this.model, kps: this.kps };
     this.$('#exp').flight = { model: this.model, assets: this.assets };
+    this._setupTerrain();
 
     // tira de luz: su propia galería de bloque (3 imágenes)
     const lightFracs = [0.15, 0.5, 0.92];
@@ -3210,6 +3423,54 @@ __x.default = {
   'cam.light.mid': 'middle',
   'cam.light.end': 'end',
 
+  // report · estimated wind
+  'wind.eyebrow': 'Estimated wind',
+  'wind.title': 'The wind during the flight',
+  'wind.sub': 'Estimated with the wind-triangle method: how ground speed changed with the drone\'s heading.',
+  'wind.speed': 'Wind speed',
+  'wind.speed.k': 'estimated',
+  'wind.dir': 'Coming from',
+  'wind.dir.k': 'azimuth {deg}°',
+  'wind.airspeed': 'Airspeed',
+  'wind.airspeed.k': 'of the drone, estimated',
+  'wind.quality.good': 'Reliable estimate: the flight had varied headings.',
+  'wind.quality.rough': 'Rough estimate: the flight had few distinct headings.',
+  'wind.note.t': '💨 It\'s an estimate',
+  'wind.note.d': 'Derived from GPS only (no wind sensor): it assumes constant airspeed and works best on flights with turns.',
+  'wind.na.t': '💨 Wind not estimable',
+  'wind.na.d': 'This flight does not have enough distinct headings to estimate the wind reliably.',
+
+  // report · height above terrain
+  'terrain.eyebrow': 'Height above terrain',
+  'terrain.title': 'Real height above ground',
+  'terrain.sub': 'Drone height above the terrain below it: flight altitude minus ground elevation (Copernicus elevation model). Differs from height above takeoff when the terrain is not flat.',
+  'terrain.loading': '⏳ Fetching terrain elevation…',
+  'terrain.error.t': '⚠️ No terrain data',
+  'terrain.error.d': 'Could not fetch terrain elevation (offline or service unavailable). The rest of the report is unaffected.',
+  'terrain.legend': 'Height above ground',
+  'terrain.aglmax': 'Max height above ground',
+  'terrain.aglmax.k': 'of the terrain below',
+  'terrain.clearance': 'Min height above ground',
+  'terrain.clearance.k': 'closest to the ground',
+  'terrain.relief': 'Terrain relief',
+  'terrain.relief.k': 'under the route',
+
+  // report · solar context
+  'solar.eyebrow': 'Solar context',
+  'solar.title': 'The sunlight',
+  'solar.sub': 'Sun position during the flight, computed from the time, date and takeoff coordinates.',
+  'solar.elev': 'Sun elevation',
+  'solar.elev.k': 'above the horizon · {end}° at the end',
+  'solar.dir': 'Light direction',
+  'solar.dir.k': 'azimuth {az}°',
+  'solar.phase': 'Light phase',
+  'solar.phase.k': 'by the sun height',
+  'solar.phase.day': 'Daylight',
+  'solar.phase.golden': 'Golden hour',
+  'solar.phase.blue': 'Blue hour',
+  'solar.phase.twilight': 'Twilight',
+  'solar.phase.night': 'Night',
+
   // report · gimbal
   'gim.eyebrow': 'Gimbal',
   'gim.title': 'Camera orientation (gimbal)',
@@ -3409,6 +3670,54 @@ __x.default = {
   'cam.light.start': 'inicio',
   'cam.light.mid': 'mitad',
   'cam.light.end': 'final',
+
+  // informe · viento estimado
+  'wind.eyebrow': 'Viento estimado',
+  'wind.title': 'El viento durante el vuelo',
+  'wind.sub': 'Estimado con el método del triángulo del viento: cómo cambiaba la velocidad sobre el suelo según el rumbo del dron.',
+  'wind.speed': 'Velocidad del viento',
+  'wind.speed.k': 'estimada',
+  'wind.dir': 'Viene del',
+  'wind.dir.k': 'azimut {deg}°',
+  'wind.airspeed': 'Vel. respecto al aire',
+  'wind.airspeed.k': 'del dron, estimada',
+  'wind.quality.good': 'Estimación fiable: el vuelo tuvo rumbos variados.',
+  'wind.quality.rough': 'Estimación aproximada: el vuelo tuvo pocos rumbos distintos.',
+  'wind.note.t': '💨 Es una estimación',
+  'wind.note.d': 'Se deduce solo del GPS (no hay sensor de viento): supone velocidad respecto al aire constante y sale mejor en vuelos con giros.',
+  'wind.na.t': '💨 Viento no estimable',
+  'wind.na.d': 'Este vuelo no tiene suficientes rumbos distintos para estimar el viento de forma fiable.',
+
+  // informe · altura sobre el terreno
+  'terrain.eyebrow': 'Altura sobre el terreno',
+  'terrain.title': 'Altura real sobre el suelo',
+  'terrain.sub': 'Altura del dron sobre el terreno que sobrevuela: altitud del vuelo menos la elevación del suelo (modelo de elevación Copernicus). Difiere de la altura sobre el despegue cuando el terreno no es plano.',
+  'terrain.loading': '⏳ Obteniendo la elevación del terreno…',
+  'terrain.error.t': '⚠️ Sin datos de terreno',
+  'terrain.error.d': 'No se pudo obtener la elevación del terreno (sin conexión o servicio no disponible). El resto del informe no se ve afectado.',
+  'terrain.legend': 'Altura sobre el suelo',
+  'terrain.aglmax': 'Altura máx. sobre el suelo',
+  'terrain.aglmax.k': 'del terreno que sobrevuela',
+  'terrain.clearance': 'Altura mín. sobre el suelo',
+  'terrain.clearance.k': 'lo más cerca del suelo',
+  'terrain.relief': 'Desnivel del terreno',
+  'terrain.relief.k': 'bajo el recorrido',
+
+  // informe · contexto solar
+  'solar.eyebrow': 'Contexto solar',
+  'solar.title': 'La luz del sol',
+  'solar.sub': 'Posición del sol durante el vuelo, calculada a partir de la hora, la fecha y las coordenadas del despegue.',
+  'solar.elev': 'Elevación del sol',
+  'solar.elev.k': 'sobre el horizonte · {end}° al final',
+  'solar.dir': 'Dirección de la luz',
+  'solar.dir.k': 'azimut {az}°',
+  'solar.phase': 'Fase de luz',
+  'solar.phase.k': 'según la altura del sol',
+  'solar.phase.day': 'Día',
+  'solar.phase.golden': 'Hora dorada',
+  'solar.phase.blue': 'Hora azul',
+  'solar.phase.twilight': 'Crepúsculo',
+  'solar.phase.night': 'Noche',
 
   // informe · gimbal
   'gim.eyebrow': 'Gimbal',
@@ -3909,6 +4218,59 @@ Object.assign(__x, { buildMap });
 
 };
 
+__m["js/solar.js"] = function (__x, __req) {
+// Posición del sol (elevación y azimut) y fase de luz para un instante y lugar.
+// Algoritmo NOAA, sin dependencias. Complementa a daypart.js con el azimut.
+
+const RAD = Math.PI / 180;
+
+/**
+ * Posición del sol para una fecha (instante UTC) y coordenadas.
+ * @param {Date} date @param {number} lat @param {number} lon
+ * @returns {{elevation:number, azimuth:number}} grados; azimut 0=N, 90=E, 180=S, 270=O.
+ */
+function solarPosition(date, lat, lon) {
+  const yearStart = Date.UTC(date.getUTCFullYear(), 0, 0);
+  const dayOfYear = Math.floor((date - yearStart) / 86400000);
+  const hourUTC = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+  const g = (2 * Math.PI / 365) * (dayOfYear - 1 + (hourUTC - 12) / 24);
+  const eqtime = 229.18 * (0.000075 + 0.001868 * Math.cos(g) - 0.032077 * Math.sin(g)
+    - 0.014615 * Math.cos(2 * g) - 0.040849 * Math.sin(2 * g));
+  const decl = 0.006918 - 0.399912 * Math.cos(g) + 0.070257 * Math.sin(g) - 0.006758 * Math.cos(2 * g)
+    + 0.000907 * Math.sin(2 * g) - 0.002697 * Math.cos(3 * g) + 0.00148 * Math.sin(3 * g);
+  const tst = hourUTC * 60 + eqtime + 4 * lon; // tiempo solar verdadero (min)
+  const ha = (tst / 4 - 180) * RAD;            // ángulo horario (rad)
+  const latR = lat * RAD;
+  const cosZ = Math.sin(latR) * Math.sin(decl) + Math.cos(latR) * Math.cos(decl) * Math.cos(ha);
+  const elevation = 90 - Math.acos(Math.max(-1, Math.min(1, cosZ))) / RAD;
+  // azimut desde el sur (+ hacia el oeste); se pasa a desde el norte (0=N, sentido horario)
+  const azSouth = Math.atan2(Math.sin(ha), Math.cos(ha) * Math.sin(latR) - Math.tan(decl) * Math.cos(latR));
+  const azimuth = (azSouth / RAD + 180 + 360) % 360;
+  return { elevation, azimuth };
+}
+
+/**
+ * Fase de luz según la elevación solar.
+ * @param {number} elevation grados
+ * @returns {'day'|'golden'|'blue'|'twilight'|'night'}
+ */
+function lightPhase(elevation) {
+  if (elevation < -6) return 'night';
+  if (elevation < -0.833) return 'blue';   // hora azul (crepúsculo civil)
+  if (elevation <= 6) return 'golden';     // hora dorada (sol bajo)
+  return 'day';
+}
+
+/** Punto cardinal (16 rumbos) para un azimut en grados. */
+function azToCompass(az) {
+  const pts = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSO', 'SO', 'OSO', 'O', 'ONO', 'NO', 'NNO'];
+  return pts[Math.round(((az % 360) / 22.5)) % 16];
+}
+
+Object.assign(__x, { solarPosition, lightPhase, azToCompass });
+
+};
+
 __m["js/srt.js"] = function (__x, __req) {
 // Parser de telemetría DJI: convierte el texto de un .SRT en un modelo de vuelo.
 // Puerto fiel de src/extract.py — mismos cálculos, mismos filtros de glitch (25 m/s).
@@ -4064,6 +4426,123 @@ function parseSRT(txt) {
 }
 
 Object.assign(__x, { hav, parseSRT });
+
+};
+
+__m["js/terrain.js"] = function (__x, __req) {
+// Elevación del terreno bajo el vuelo, para calcular la altura real sobre el suelo (AGL).
+// Usa la API de elevación de Open-Meteo (DEM Copernicus ~90 m, con CORS, sin clave).
+// No sube el SRT ni el vídeo; solo consulta coordenadas, como las teselas del mapa.
+
+const ENDPOINT = 'https://api.open-meteo.com/v1/elevation';
+
+/**
+ * Elevación (m sobre el nivel del mar) para una lista de puntos [lat, lon].
+ * Trocea en peticiones de ≤100 puntos. Devuelve un array alineado o null si falla.
+ * @param {Array<[number, number]>} points
+ * @returns {Promise<number[]|null>}
+ */
+async function fetchTerrain(points) {
+  if (!Array.isArray(points) || !points.length) return null;
+  const out = [];
+  try {
+    for (let i = 0; i < points.length; i += 100) {
+      const chunk = points.slice(i, i + 100);
+      const lat = chunk.map((p) => p[0].toFixed(5)).join(',');
+      const lon = chunk.map((p) => p[1].toFixed(5)).join(',');
+      const res = await fetch(`${ENDPOINT}?latitude=${lat}&longitude=${lon}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (!Array.isArray(data.elevation) || data.elevation.length !== chunk.length) return null;
+      out.push(...data.elevation);
+    }
+  } catch {
+    return null;
+  }
+  return out.length === points.length ? out : null;
+}
+
+Object.assign(__x, { fetchTerrain });
+
+};
+
+__m["js/wind.js"] = function (__x, __req) {
+// Viento estimado por el método del triángulo del viento.
+// Si el dron vuela a velocidad respecto al aire ~constante en varios rumbos,
+// sus vectores de velocidad de tierra (este, norte) trazan un círculo cuyo
+// CENTRO es el viento y cuyo RADIO es la velocidad respecto al aire (airspeed).
+// Es una estimación: requiere variedad de rumbos y sale mejor en vuelos con giros.
+
+/** Ajuste de círculo por mínimos cuadrados algebraicos (método de Kåsa). */
+function kasaFit(pts) {
+  let Sx = 0, Sy = 0, Sxx = 0, Syy = 0, Sxy = 0, Sxz = 0, Syz = 0, Sz = 0;
+  const n = pts.length;
+  for (const [x, y] of pts) {
+    const z = x * x + y * y;
+    Sx += x; Sy += y; Sxx += x * x; Syy += y * y; Sxy += x * y; Sxz += x * z; Syz += y * z; Sz += z;
+  }
+  // Resuelve [Sxx Sxy Sx; Sxy Syy Sy; Sx Sy n]·[A;B;C] = [Sxz;Syz;Sz]  (círculo x²+y² = A·x + B·y + C)
+  const M = [[Sxx, Sxy, Sx], [Sxy, Syy, Sy], [Sx, Sy, n]];
+  const rhs = [Sxz, Syz, Sz];
+  const det3 = (m) =>
+    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+    - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+    + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+  const D = det3(M);
+  if (Math.abs(D) < 1e-9) return null;
+  const col = (m, i, v) => m.map((row, r) => row.map((val, c) => (c === i ? v[r] : val)));
+  const A = det3(col(M, 0, rhs)) / D;
+  const B = det3(col(M, 1, rhs)) / D;
+  const C = det3(col(M, 2, rhs)) / D;
+  const a = A / 2, b = B / 2;
+  const r2 = C + a * a + b * b;
+  if (r2 <= 0) return null;
+  const r = Math.sqrt(r2);
+  // residuo relativo del ajuste (0 = perfecto)
+  let res = 0;
+  for (const [x, y] of pts) res += (Math.hypot(x - a, y - b) - r) ** 2;
+  return { a, b, r, rms: Math.sqrt(res / n) };
+}
+
+/**
+ * Estima el viento a partir de la serie del vuelo.
+ * @param {Array<{t:number,lat:number,lon:number}>} series
+ * @returns {null | {speed:number, fromDeg:number, airspeed:number, quality:'good'|'rough', n:number}}
+ *   speed = m/s del viento; fromDeg = dirección DE DÓNDE viene (0=N); airspeed = m/s respecto al aire.
+ */
+function estimateWind(series) {
+  // velocidad de tierra (este, norte) sobre ventanas de ~2 s para suavizar el ruido GPS
+  const samples = [];
+  let prev = null;
+  for (const s of series) {
+    if (s.lat == null || s.lon == null) continue;
+    if (!prev) { prev = s; continue; }
+    const dt = s.t - prev.t;
+    if (dt < 1.5) continue;
+    const latR = (prev.lat + s.lat) / 2 * Math.PI / 180;
+    const vE = (s.lon - prev.lon) * 111320 * Math.cos(latR) / dt;
+    const vN = (s.lat - prev.lat) * 110540 / dt;
+    prev = s;
+    const sp = Math.hypot(vE, vN);
+    if (sp < 2 || sp > 25) continue; // solo crucero razonable
+    samples.push([vE, vN]);
+  }
+  if (samples.length < 12) return null;
+  // variedad de rumbos: repartimos en 8 sectores; hacen falta ≥5 ocupados
+  const sectors = new Set();
+  for (const [x, y] of samples) sectors.add(Math.floor(((Math.atan2(x, y) * 180 / Math.PI + 360) % 360) / 45));
+  if (sectors.size < 5) return null;
+  const fit = kasaFit(samples);
+  if (!fit) return null;
+  const speed = Math.hypot(fit.a, fit.b);
+  if (fit.r < 1 || speed > fit.r * 1.5) return null; // airspeed irreal o viento mayor que airspeed → poco fiable
+  const towardDeg = (Math.atan2(fit.a, fit.b) * 180 / Math.PI + 360) % 360; // hacia donde empuja el viento
+  const fromDeg = (towardDeg + 180) % 360;                                  // de dónde viene (convención meteo)
+  const quality = (sectors.size >= 6 && fit.rms < fit.r * 0.35) ? 'good' : 'rough';
+  return { speed, fromDeg, airspeed: fit.r, quality, n: samples.length };
+}
+
+Object.assign(__x, { estimateWind });
 
 };
 
