@@ -55,6 +55,14 @@ export class DropZone extends DjiElement {
   /** Abre el selector de MP4 (lo dispara la vista con su botón). */
   pickMp4() { this.$('#mp4').click(); }
 
+  /** Quita el vídeo cargado (p. ej. si no corresponde al SRT). */
+  clearMp4() {
+    this.state.mp4 = null;
+    const inp = this.$('#mp4'); if (inp) inp.value = '';
+    this._paint();
+    this.emit('dz:change', { ...this.state });
+  }
+
   async _take(fileList) {
     for (const file of fileList) {
       const n = file.name.toLowerCase();

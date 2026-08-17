@@ -55,6 +55,27 @@ p.sub { font-size: clamp(16px, 2.1vw, 20px); color: color-mix(in srgb, var(--col
 .gen .addmp4.has::after { display: none; }
 .gen .addmp4.has .mp4-ico { background: color-mix(in srgb, var(--c-green) 22%, transparent); color: var(--c-green); }
 
+/* aviso de coincidencia SRT ↔ vídeo */
+.pairmsg {
+  display: flex; align-items: center; gap: 12px; margin: 14px 2px; font-size: 13px; line-height: 1.45; font-weight: 600;
+  border-radius: 14px; padding: 12px 14px; border: 1px solid var(--color-divider); background: var(--color-surface); color: var(--color-text-muted);
+}
+.pairmsg[hidden] { display: none; }
+.pm-text { flex: 1; min-width: 0; }
+.pm-remove {
+  flex: none; cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 700; color: inherit;
+  border: 1px solid currentColor; background: transparent; border-radius: 100px; padding: 6px 13px; white-space: nowrap;
+  opacity: .85; transition: opacity .12s, background .12s;
+}
+.pm-remove:hover { opacity: 1; background: color-mix(in srgb, currentColor 14%, transparent); }
+.pairmsg.ok { color: color-mix(in srgb, var(--c-green) 78%, var(--color-text)); border-color: color-mix(in srgb, var(--c-green) 38%, transparent); background: color-mix(in srgb, var(--c-green) 9%, var(--color-surface)); }
+.pairmsg.error { color: color-mix(in srgb, var(--c-red) 82%, var(--color-text)); border-color: color-mix(in srgb, var(--c-red) 45%, transparent); background: color-mix(in srgb, var(--c-red) 10%, var(--color-surface)); }
+.pairmsg.warn { color: color-mix(in srgb, var(--c-orange) 82%, var(--color-text)); border-color: color-mix(in srgb, var(--c-orange) 42%, transparent); background: color-mix(in srgb, var(--c-orange) 10%, var(--color-surface)); }
+.pairmsg.checking { color: var(--color-text-muted); }
+
+.gen .go:disabled { cursor: not-allowed; opacity: .5; filter: grayscale(.35); box-shadow: none; }
+.gen .go:disabled:hover { transform: none; }
+
 .feats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; max-width: 720px; margin: 44px auto 0; }
 @media (max-width: 620px) { .feats { grid-template-columns: 1fr; } }
 .feat { text-align: left; background: var(--color-surface); border: 1px solid var(--color-divider); border-radius: 16px; padding: 18px; backdrop-filter: blur(10px); }
