@@ -6,3 +6,4 @@ src/__pycache__/
 build/
 dist/
 *.spec
+web/_*.SRT
