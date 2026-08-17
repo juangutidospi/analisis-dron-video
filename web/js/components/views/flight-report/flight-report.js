@@ -12,7 +12,9 @@ import '../../ui/sat-map/sat-map.js';
 import '../../ui/export-bar/export-bar.js';
 import '../../ui/image-lightbox/image-lightbox.js';
 import '../../ui/flight-player/flight-player.js';
+import '../../ui/reading-nav/reading-nav.js';
 import { PlayerClock } from '../../../core/player-clock.js';
+import { reveal } from '../../../core/reveal.js';
 import { styles } from './flight-report.css.js';
 
 const f = (v, d = 0) => (v == null ? '—' : v.toFixed(d));
@@ -65,9 +67,18 @@ export class FlightReport extends DjiElement {
     if (!this._lb) { this._lb = document.createElement('image-lightbox'); document.body.appendChild(this._lb); }
     if (!this._lbWired) {
       this._lbWired = true;
-      this.shadowRoot.addEventListener('moment:open', (e) => this._lb && this._lb.open(e.detail.img, {
-        ...e.detail, title: this.assets?.title, mp4File: this.assets?.mp4File, secs: e.detail.secs != null ? +e.detail.secs : null,
-      }));
+      // galería del bloque "Momentos clave": todas las tarjetas con fotograma
+      this.shadowRoot.addEventListener('moment:open', (e) => {
+        if (!this._lb) return;
+        const cards = this.$$('.mos moment-card').filter((c) => c.getAttribute('img'));
+        const items = cards.map((c) => ({
+          src: c.getAttribute('img'), label: c.getAttribute('label'),
+          time: c.getAttribute('time'), metric: c.getAttribute('metric'),
+          secs: c.getAttribute('secs') != null ? +c.getAttribute('secs') : null,
+        }));
+        const idx = Math.max(0, items.findIndex((it) => it.src === e.detail.img));
+        this._lb.open(items, idx, { title: this.assets?.title, mp4File: this.assets?.mp4File });
+      });
     }
   }
 
@@ -78,6 +89,10 @@ export class FlightReport extends DjiElement {
     if (this._player) { this._player.remove(); this._player = null; }
     if (this._video) { this._video.removeAttribute('src'); this._video.load(); this._video = null; }
     if (this._videoUrl) { URL.revokeObjectURL(this._videoUrl); this._videoUrl = null; }
+    this._revealOff?.(); this._revealOff = null;
+    if (this._nav) { this._nav.remove(); this._nav = null; }
+    if (this._scrollyRaf) { cancelAnimationFrame(this._scrollyRaf); this._scrollyRaf = 0; }
+    this._playerIO?.disconnect(); this._playerIO = null;
   }
 
   _heroTpl(m, r, dur, relmax, hsmax) {
@@ -154,11 +169,12 @@ export class FlightReport extends DjiElement {
   }
 
   _routeTpl() {
-    return `
-      <section class="blk">
+    const scrolly = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const head = `
         <div class="eyebrow">${escapeHtml(t('route.eyebrow'))}</div>
         <h2>${escapeHtml(t('route.title'))}</h2>
-        <p class="sub">${escapeHtml(t('route.sub'))}</p>
+        <p class="sub">${escapeHtml(t('route.sub'))}</p>`;
+    const card = `
         <div class="card">
           <div class="legend">
             <span><span class="dot" style="background:var(--c-green)"></span>${escapeHtml(t('route.leg.takeoff'))}</span>
@@ -166,9 +182,15 @@ export class FlightReport extends DjiElement {
             <span><span class="sw" style="background:linear-gradient(90deg,var(--c-blue),var(--c-orange))"></span>${escapeHtml(t('route.leg.height'))}</span>
           </div>
           <sat-map id="map"></sat-map>
+          ${scrolly ? `<p class="scrolly-hint">${escapeHtml(t('route.scrolly'))}</p>` : ''}
           <p class="chart-note" style="text-align:center">${escapeHtml(t('route.note'))}</p>
-        </div>
+        </div>`;
+    // scrollytelling: la tarjeta del mapa se fija (sticky) mientras el scroll hace volar el dron
+    if (scrolly) return `
+      <section class="blk route-scrolly">${head}
+        <div class="scrolly-track"><div class="scrolly-stick">${card}</div></div>
       </section>`;
+    return `<section class="blk">${head}${card}</section>`;
   }
 
   _sectionChart(prefix, id, legend) {
@@ -292,18 +314,80 @@ export class FlightReport extends DjiElement {
     this.$('#map').flight = { model: this.model, kps: this.kps };
     this.$('#exp').flight = { model: this.model, assets: this.assets };
 
-    // tira de luz: también abre el visor (los momentos se cablean en connectedCallback)
+    // tira de luz: su propia galería de bloque (3 imágenes)
     const lightFracs = [0.15, 0.5, 0.92];
-    this.$$('.lstrip figure').forEach((fig, i) => {
+    const figs = this.$$('.lstrip figure');
+    const litems = figs.map((fig, i) => ({
+      src: fig.querySelector('img')?.src,
+      label: fig.querySelector('figcaption')?.textContent?.trim(),
+      secs: this.model.meta.dur * lightFracs[i],
+    })).filter((it) => it.src);
+    figs.forEach((fig, i) => {
       const img = fig.querySelector('img'); if (!img) return;
       img.style.cursor = 'zoom-in';
-      this.on(img, 'click', () => this._lb && this._lb.open(img.src, {
-        label: fig.querySelector('figcaption')?.textContent?.trim(), title: this.assets?.title,
-        mp4File: this.assets?.mp4File, secs: this.model.meta.dur * lightFracs[i],
-      }));
+      this.on(img, 'click', () => this._lb && this._lb.open(litems, i, { title: this.assets?.title, mp4File: this.assets?.mp4File }));
     });
 
     this._setupPlayer();
+    this._setupPlayerVisibility();
+    this._setupScrolly();
+    this._setupReveal();
+    this._setupNav();
+  }
+
+  /** El player (barra + miniatura) solo aparece al llegar a la sección del mapa. */
+  _setupPlayerVisibility() {
+    this._playerIO?.disconnect(); this._playerIO = null;
+    const anchor = this.$('#map');
+    if (!anchor || !this._player) return;
+    this._player.classList.add('away'); // arranca oculto
+    if (!('IntersectionObserver' in window)) { this._player.classList.remove('away'); return; }
+    this._playerIO = new IntersectionObserver((es) => {
+      const vis = es.some((e) => e.isIntersecting);
+      // se mantiene visible mientras se reproduce, aunque el mapa quede fuera de pantalla
+      this._player.classList.toggle('away', !vis && !this._clock?.playing);
+    }, { rootMargin: '0px 0px -12% 0px', threshold: 0 });
+    this._playerIO.observe(anchor);
+  }
+
+  /**
+   * Scrollytelling del recorrido: mientras el track sticky cruza la pantalla, mapea
+   * el progreso del scroll al tiempo de vuelo y hace clock.seek (que ya propaga al
+   * mapa, gráficas y player). Solo actúa si no se está reproduciendo con el botón ▶.
+   */
+  _setupScrolly() {
+    if (this._scrollyBound) return;
+    this._scrollyBound = true;
+    const onScroll = () => {
+      if (this._scrollyRaf) return;
+      this._scrollyRaf = requestAnimationFrame(() => {
+        this._scrollyRaf = 0;
+        const track = this.$('.scrolly-track');
+        if (!track || !this._clock || this._clock.playing) return;
+        const rect = track.getBoundingClientRect();
+        const span = track.offsetHeight - innerHeight;
+        if (span <= 0 || rect.top > innerHeight || rect.bottom < 0) return; // fuera de pantalla
+        const p = Math.max(0, Math.min(1, -rect.top / span));
+        this._clock.seek(p * this._clock.dur);
+      });
+    };
+    this.on(window, 'scroll', onScroll, { passive: true });
+  }
+
+  /** Scroll-reveal de las secciones al entrar en pantalla (respeta reduced-motion). */
+  _setupReveal() {
+    this._revealOff?.();
+    this._revealOff = reveal(this.$$('section.blk'));
+  }
+
+  /** Barra de progreso de lectura + mini-nav de secciones (montada en el body). */
+  _setupNav() {
+    if (!this._nav) {
+      this._nav = document.createElement('reading-nav');
+      document.body.appendChild(this._nav);
+    }
+    const items = this.$$('section.blk').map((el) => ({ el, label: el.querySelector('.eyebrow')?.textContent?.trim() || '' }));
+    this._nav.target = { scroller: this, items };
   }
 
   /** Reproducción del vuelo: reloj + barra flotante + sincronía de mapa y gráficas. */

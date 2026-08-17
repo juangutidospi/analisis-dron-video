@@ -5,22 +5,42 @@ import { downloadBlob } from '../../../exports.js';
 import { grabFullFrame } from '../../../frames.js';
 import { styles } from './image-lightbox.css.js';
 
-/** Visor de imagen a pantalla completa. Se abre con open(src, {time, metric, label}). */
+/**
+ * Visor de imagen a pantalla completa, en modo galería por bloques.
+ * Se abre con open(items, index, meta):
+ *   items = [{ src, label?, time?, metric?, secs? }]  (las imágenes del bloque)
+ *   index = posición inicial
+ *   meta  = { title?, mp4File? }  (comunes: para nombre de archivo y re-extracción 4K)
+ * Las flechas ‹ › (o ←/→) recorren solo las imágenes de ese bloque.
+ */
 export class ImageLightbox extends DjiElement {
   static styles = [styles];
 
   constructor() {
     super();
-    this._esc = (e) => { if (e.key === 'Escape') this.close(); };
+    this._key = (e) => {
+      if (e.key === 'Escape') this.close();
+      else if (e.key === 'ArrowRight') this._go(1);
+      else if (e.key === 'ArrowLeft') this._go(-1);
+    };
   }
 
   render() {
     this.setAttribute('role', 'dialog');
     this.setAttribute('aria-modal', 'true');
     this.shadowRoot.innerHTML = `
-      <button class="close" id="x" aria-label="${escapeHtml(t('lightbox.close'))}">✕</button>
+      <button class="close" id="x" aria-label="${escapeHtml(t('lightbox.close'))}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+      <button class="nav prev" id="prev" aria-label="${escapeHtml(t('lightbox.prev'))}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+      </button>
+      <button class="nav next" id="next" aria-label="${escapeHtml(t('lightbox.next'))}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+      </button>
       <figure>
         <img id="img" src="" alt="">
+        <span class="count" id="count"></span>
         <figcaption id="cap"></figcaption>
         <div class="dlrow">
           <span class="dllabel">⤓ ${escapeHtml(t('lightbox.download'))}</span>
@@ -33,6 +53,8 @@ export class ImageLightbox extends DjiElement {
   afterRender() {
     this.on(this, 'click', (e) => { if (e.target === this) this.close(); });
     this.on(this.$('#x'), 'click', () => this.close());
+    this.on(this.$('#prev'), 'click', () => this._go(-1));
+    this.on(this.$('#next'), 'click', () => this._go(1));
     this.$$('.dl').forEach((b) => this.on(b, 'click', () => this._download(b.dataset.fmt)));
   }
 
@@ -67,31 +89,57 @@ export class ImageLightbox extends DjiElement {
     }
   }
 
-  /** @param {string} src @param {{time?:string, metric?:string, label?:string, title?:string}} [cap] */
-  open(src, cap = {}) {
-    if (!src) return;
-    this._src = src;
-    this._full = (cap.mp4File && cap.secs != null) ? { file: cap.mp4File, secs: +cap.secs } : null;
-    const base = [cap.title, cap.label, cap.time].filter(Boolean).join(' - ') || 'fotograma';
+  /**
+   * @param {Array<{src:string,label?:string,time?:string,metric?:string,secs?:number}>|string} items
+   * @param {number} [index]
+   * @param {{title?:string, mp4File?:File}} [meta]
+   */
+  open(items, index = 0, meta = {}) {
+    if (typeof items === 'string') items = [{ src: items, ...meta }]; // compat: una sola imagen
+    this._items = (items || []).filter((it) => it && it.src);
+    if (!this._items.length) return;
+    this._meta = meta;
+    this._i = Math.max(0, Math.min(index, this._items.length - 1));
+    this.setAttribute('open', '');
+    this._show();
+    document.addEventListener('keydown', this._key);
+  }
+
+  /** Recorre la galería (circular). */
+  _go(d) {
+    if (!this._items || this._items.length < 2) return;
+    const n = this._items.length;
+    this._i = (this._i + d + n) % n;
+    this._show();
+  }
+
+  /** Pinta la imagen actual y actualiza pie, contador y flechas. */
+  _show() {
+    const it = this._items[this._i];
+    this._src = it.src;
+    this._full = (this._meta.mp4File && it.secs != null) ? { file: this._meta.mp4File, secs: +it.secs } : null;
+    const base = [this._meta.title, it.label, it.time].filter(Boolean).join(' - ') || 'fotograma';
     this._nameBase = base.replace(/:/g, '-').replace(/[/\\?%*|"<>]/g, '').trim();
     const img = this.$('#img');
-    img.src = src; img.alt = cap.label || '';
-    this.$('#cap').innerHTML = `${cap.time ? `<span class="cap-time">${escapeHtml(cap.time)}</span>` : ''}`
-      + `${cap.metric ? `<span class="cap-metric">${escapeHtml(cap.metric)}</span>` : ''}`
-      + `${cap.label ? `<span>${escapeHtml(cap.label)}</span>` : ''}`;
-    this.setAttribute('open', '');
-    document.addEventListener('keydown', this._esc);
+    img.src = it.src; img.alt = it.label || '';
+    this.$('#cap').innerHTML = `${it.time ? `<span class="cap-time">${escapeHtml(it.time)}</span>` : ''}`
+      + `${it.metric ? `<span class="cap-metric">${escapeHtml(it.metric)}</span>` : ''}`
+      + `${it.label ? `<span>${escapeHtml(it.label)}</span>` : ''}`;
+    const many = this._items.length > 1;
+    this.$('#prev').hidden = !many;
+    this.$('#next').hidden = !many;
+    this.$('#count').textContent = many ? `${this._i + 1} / ${this._items.length}` : '';
   }
 
   close() {
     this.removeAttribute('open');
     this.$('#img').src = '';
-    document.removeEventListener('keydown', this._esc);
+    document.removeEventListener('keydown', this._key);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    document.removeEventListener('keydown', this._esc);
+    document.removeEventListener('keydown', this._key);
   }
 }
 

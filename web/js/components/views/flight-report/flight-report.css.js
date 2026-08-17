@@ -7,6 +7,27 @@ export const styles = css`
 @keyframes rise { from { opacity: 0; transform: translateY(16px); } }
 .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
 
+/* scroll-reveal: las secciones entran al aparecer en pantalla (la clase la pone reveal.js) */
+section.blk.reveal { opacity: 0; transform: translateY(42px) scale(.985); transition: opacity .7s cubic-bezier(.22,1,.36,1), transform .7s cubic-bezier(.22,1,.36,1); will-change: opacity, transform; }
+section.blk.reveal.in { opacity: 1; transform: none; }
+/* cascada: dentro de una sección revelada, las tarjetas entran escalonadas */
+section.blk.reveal .tiles > stat-tile,
+section.blk.reveal .mos > moment-card { opacity: 0; transform: translateY(26px); transition: opacity .55s cubic-bezier(.22,1,.36,1), transform .55s cubic-bezier(.22,1,.36,1); }
+section.blk.reveal.in .tiles > stat-tile,
+section.blk.reveal.in .mos > moment-card { opacity: 1; transform: none; }
+section.blk.reveal .tiles > *:nth-child(2), section.blk.reveal .mos > *:nth-child(2) { transition-delay: .05s; }
+section.blk.reveal .tiles > *:nth-child(3), section.blk.reveal .mos > *:nth-child(3) { transition-delay: .10s; }
+section.blk.reveal .tiles > *:nth-child(4), section.blk.reveal .mos > *:nth-child(4) { transition-delay: .15s; }
+section.blk.reveal .tiles > *:nth-child(5), section.blk.reveal .mos > *:nth-child(5) { transition-delay: .20s; }
+section.blk.reveal .tiles > *:nth-child(6), section.blk.reveal .mos > *:nth-child(6) { transition-delay: .25s; }
+section.blk.reveal .tiles > *:nth-child(7), section.blk.reveal .mos > *:nth-child(7) { transition-delay: .30s; }
+section.blk.reveal .tiles > *:nth-child(8), section.blk.reveal .mos > *:nth-child(8) { transition-delay: .35s; }
+@media (prefers-reduced-motion: reduce) {
+  section.blk.reveal,
+  section.blk.reveal .tiles > stat-tile,
+  section.blk.reveal .mos > moment-card { opacity: 1; transform: none; transition: none; }
+}
+
 /* portada */
 .r-hero { position: relative; min-height: clamp(440px, 66vh, 640px); display: flex; flex-direction: column; justify-content: flex-end;
   padding: 0 0 44px; overflow: hidden; border-bottom: 1px solid var(--color-divider); }
@@ -31,6 +52,13 @@ h2 { font-size: clamp(24px, 3.4vw, 34px); font-weight: 820; margin: 10px 0 6px; 
 .sub { color: color-mix(in srgb, var(--color-text) 74%, transparent); max-width: 70ch; margin: 0 0 26px; font-size: 16px; }
 h3 { font-size: 15px; color: color-mix(in srgb, var(--color-text) 74%, transparent); margin: 0 0 12px; font-weight: 650; }
 .card { background: var(--color-surface); border: 1px solid var(--color-divider); border-radius: var(--radius-md); padding: 22px; backdrop-filter: blur(12px); }
+
+/* scrollytelling del recorrido: la tarjeta del mapa se fija mientras el scroll hace volar el dron */
+.route-scrolly .scrolly-track { position: relative; height: 240vh; }
+.route-scrolly .scrolly-stick { position: sticky; top: 0; min-height: 100vh; display: flex; align-items: center; }
+.route-scrolly .scrolly-stick .card { width: 100%; margin: 0; }
+.scrolly-hint { text-align: center; font-size: 12.5px; font-weight: 600; color: var(--color-accent); margin: 12px 0 2px; }
+@media (max-width: 760px) { .route-scrolly .scrolly-track { height: 200vh; } }
 .card + .card { margin-top: 18px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
