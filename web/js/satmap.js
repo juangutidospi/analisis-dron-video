@@ -53,11 +53,19 @@ export function buildMap(model, kps, loadingText = '') {
   setTimeout(() => wrap.classList.remove('loading'), 6000); // salvavidas
   svg.appendChild(el('rect', { x: 1, y: 1, width: W - 2, height: H - 2, fill: 'none', stroke: 'rgba(255,255,255,.15)', 'stroke-width': 2 }));
 
-  // track: halo + segmentos por color
+  // track: halo + segmentos por color, agrupados bajo una máscara para el "draw-in"
+  // (un path blanco de todo el recorrido revela el track a lo largo del trazado).
   const full = 'M' + T.map(p => `${PX(p[1]).toFixed(1)},${PY(p[0]).toFixed(1)}`).join('L');
-  svg.appendChild(el('path', { d: full, stroke: 'rgba(0,0,0,.55)', 'stroke-width': 11, fill: 'none', 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+  const maskId = 'trk-' + Math.random().toString(36).slice(2, 9);
+  const maskPath = el('path', { d: full, stroke: '#fff', 'stroke-width': 16, fill: 'none', 'stroke-linejoin': 'round', 'stroke-linecap': 'round' });
+  const maskEl = el('mask', { id: maskId, maskUnits: 'userSpaceOnUse' });
+  maskEl.appendChild(maskPath);
+  const defs = el('defs'); defs.appendChild(maskEl); svg.appendChild(defs);
+  const trackG = el('g', { mask: `url(#${maskId})` });
+  trackG.appendChild(el('path', { d: full, stroke: 'rgba(0,0,0,.55)', 'stroke-width': 11, fill: 'none', 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
   for (let i = 1; i < T.length; i++)
-    svg.appendChild(el('path', { d: `M${PX(T[i - 1][1]).toFixed(1)},${PY(T[i - 1][0]).toFixed(1)}L${PX(T[i][1]).toFixed(1)},${PY(T[i][0]).toFixed(1)}`, stroke: colorForAlt(T[i][2], relmax), 'stroke-width': 7, fill: 'none', 'stroke-linecap': 'round' }));
+    trackG.appendChild(el('path', { d: `M${PX(T[i - 1][1]).toFixed(1)},${PY(T[i - 1][0]).toFixed(1)}L${PX(T[i][1]).toFixed(1)},${PY(T[i][0]).toFixed(1)}`, stroke: colorForAlt(T[i][2], relmax), 'stroke-width': 7, fill: 'none', 'stroke-linecap': 'round' }));
+  svg.appendChild(trackG);
 
   // despegue
   const tk = model.takeoff;
@@ -118,8 +126,27 @@ export function buildMap(model, kps, loadingText = '') {
   };
   const clearPlayhead = () => droneMk.setAttribute('opacity', '0');
 
+  // draw-in del recorrido: oculta el track (armTrack) y lo dibuja a lo largo del
+  // trazado (playTrack). Si nunca se llaman, el track se ve completo (máscara al 100%).
+  let trackLen = 0;
+  const armTrack = () => {
+    trackLen = maskPath.getTotalLength();
+    maskPath.style.strokeDasharray = `${trackLen}`;
+    maskPath.style.strokeDashoffset = `${trackLen}`;
+  };
+  const playTrack = () => {
+    if (!trackLen) armTrack();
+    const dur = 1400, t0 = performance.now(), ease = (x) => 1 - Math.pow(1 - x, 3);
+    const step = (now) => {
+      const p = Math.min(1, (now - t0) / dur);
+      maskPath.style.strokeDashoffset = `${trackLen * (1 - ease(p))}`;
+      if (p < 1) requestAnimationFrame(step); else maskPath.style.strokeDashoffset = '0';
+    };
+    requestAnimationFrame(step);
+  };
+
   wrap.appendChild(ov);
-  return { el: wrap, setPlayhead, clearPlayhead };
+  return { el: wrap, setPlayhead, clearPlayhead, armTrack, playTrack };
 }
 
 const mmss = (t) => { t = Math.round(t); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };

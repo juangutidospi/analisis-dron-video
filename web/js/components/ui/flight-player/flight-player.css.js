@@ -1,8 +1,13 @@
 import { css } from '../../../core/css.js';
 
 export const styles = css`
-:host { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: flex; justify-content: center; padding: 0 14px 16px; pointer-events: none; }
+:host { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: flex; justify-content: center; padding: 0 14px 16px; pointer-events: none;
+  transition: opacity .35s cubic-bezier(.22,1,.36,1), transform .35s cubic-bezier(.22,1,.36,1); }
 :host([hidden]) { display: none; }
+/* oculto hasta llegar al mapa (lo controla flight-report según la sección visible) */
+:host(.away) { opacity: 0; transform: translateY(24px); }
+:host(.away) .player, :host(.away) .pip { pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { :host { transition: opacity .2s; } :host(.away) { transform: none; } }
 .stack { display: flex; flex-direction: column; align-items: center; gap: 10px; width: min(720px, 100%); }
 .pip {
   pointer-events: auto; width: clamp(168px, 24vw, 260px); aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden;

@@ -21,6 +21,32 @@ export class SatMap extends DjiElement {
     if (!f) return;
     this._map = buildMap(f.model, f.kps, t('map.loading'));
     this.$('#slot').replaceChildren(this._map.el);
+    this._setupTrackReveal();
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this._trackIO?.disconnect(); this._trackIO = null;
+    clearTimeout(this._trackSafety);
+  }
+
+  /** Dibuja el recorrido (draw-in) cuando el mapa entra en pantalla. */
+  _setupTrackReveal() {
+    this._trackIO?.disconnect(); this._trackIO = null;
+    clearTimeout(this._trackSafety);
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce || !('IntersectionObserver' in window) || !this._map.armTrack) return; // track visible tal cual
+    this._map.armTrack(); // ocultar hasta que entre en pantalla
+    let played = false;
+    const play = () => {
+      if (played) return; played = true;
+      this._trackIO?.disconnect(); this._trackIO = null;
+      clearTimeout(this._trackSafety);
+      this._map.playTrack();
+    };
+    this._trackIO = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) play(); }, { threshold: 0.35 });
+    this._trackIO.observe(this);
+    this._trackSafety = setTimeout(play, 4500); // salvavidas si el observer no dispara
   }
 
   /** Mueve el dron al instante t (reproducción). */
