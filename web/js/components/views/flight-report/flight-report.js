@@ -4,6 +4,9 @@ import { t, getLang } from '../../../i18n/index.js';
 import { keypoints, mmss } from '../../../geo.js';
 import { hav } from '../../../srt.js';
 import { dayBand } from '../../../daypart.js';
+import { solarPosition, lightPhase, azToCompass } from '../../../solar.js';
+import { fetchTerrain } from '../../../terrain.js';
+import { estimateWind } from '../../../wind.js';
 import '../../ui/stat-tile/stat-tile.js';
 import '../../ui/moment-card/moment-card.js';
 import '../../ui/callout/callout.js';
@@ -20,6 +23,13 @@ import { styles } from './flight-report.css.js';
 const f = (v, d = 0) => (v == null ? '—' : v.toFixed(d));
 const nfmt = (n) => n.toLocaleString(getLang() === 'es' ? 'es-ES' : 'en-US');
 const strip = (s) => s.replace(/\s*\(.*?\)/, '');
+/** Rumbo inicial (grados, 0=N) del punto A al B por la loxodrómica/gran círculo. */
+const bearing = (la1, lo1, la2, lo2) => {
+  const p1 = la1 * Math.PI / 180, p2 = la2 * Math.PI / 180, dl = (lo2 - lo1) * Math.PI / 180;
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+};
 const MES = {
   es: ['', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'],
   en: ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
@@ -52,8 +62,11 @@ export class FlightReport extends DjiElement {
         ${this._momentosTpl(a)}
         ${this._routeTpl()}
         ${this._sectionChart('alt', 'c-alt', `<div class="legend"><span><span class="sw" style="background:var(--c-blue)"></span>${t('alt.series')}</span></div>`)}
+        ${this._terrainTpl()}
         ${this._dynamicsTpl()}
+        ${this._windTpl()}
         ${this._cameraTpl(cam, r, iso, a)}
+        ${this._solarTpl(m)}
         ${this._gimbalTpl(r)}
         ${this._locationTpl()}
         ${this._notesTpl()}
@@ -246,6 +259,182 @@ export class FlightReport extends DjiElement {
       </section>`;
   }
 
+  _terrainTpl() {
+    return `
+      <section class="blk" id="sec-terrain">
+        <div class="eyebrow">${escapeHtml(t('terrain.eyebrow'))}</div>
+        <h2>${escapeHtml(t('terrain.title'))}</h2>
+        <p class="sub">${escapeHtml(t('terrain.sub'))}</p>
+        <div class="card">
+          <div class="terrain-loading">${escapeHtml(t('terrain.loading'))}</div>
+          <div class="terrain-error hidden"><app-callout variant="warn" title="${escapeHtml(t('terrain.error.t'))}">${escapeHtml(t('terrain.error.d'))}</app-callout></div>
+          <div class="terrain-body hidden">
+            <div class="legend"><span><span class="sw" style="background:var(--c-aqua)"></span>${escapeHtml(t('terrain.legend'))}</span></div>
+            <time-chart id="c-terrain"></time-chart>
+          </div>
+        </div>
+        <div class="tiles terrain-tiles hidden" id="terrain-tiles"></div>
+      </section>`;
+  }
+
+  /** Descarga la elevación del terreno una vez y rellena la sección (o avisa si falla). */
+  _setupTerrain() {
+    if (this._terrainData !== undefined) { this._fillTerrain(); return; }
+    if (this._terrainFetching) return;
+    this._terrainFetching = true;
+    const S = this.model.series;
+    const step = Math.max(1, Math.ceil(S.length / 90));
+    const pts = S.filter((s, i) => i % step === 0 && s.lat != null);
+    fetchTerrain(pts.map((s) => [s.lat, s.lon])).then((elev) => {
+      this._terrainFetching = false;
+      if (!elev) { this._terrainData = null; }
+      else {
+        pts.forEach((s, i) => { s.ground = elev[i]; s.agl = (s.ab != null && elev[i] != null) ? s.ab - elev[i] : null; });
+        this._terrainData = { pts };
+      }
+      this._fillTerrain();
+    });
+  }
+
+  /** Pinta la gráfica de altura sobre el suelo y las cifras (o el aviso de error). */
+  _fillTerrain() {
+    if (this._terrainData === undefined) return; // aún cargando
+    this.$('#sec-terrain .terrain-loading')?.classList.add('hidden');
+    if (!this._terrainData) { this.$('#sec-terrain .terrain-error')?.classList.remove('hidden'); return; }
+    const pts = this._terrainData.pts, dur = this.model.meta.dur;
+    this.$('#c-terrain').data = { series: pts, dur, cfgs: [
+      { k: 'agl', color: '--c-aqua', area: true, min: 0, fmt: (v) => `${Math.round(v)}`, label: t('terrain.legend'), unit: 'm', dec: 0 },
+    ] };
+    this.$('#sec-terrain .terrain-body')?.classList.remove('hidden');
+    const agls = pts.map((s) => s.agl).filter((v) => v != null);
+    const grounds = pts.map((s) => s.ground).filter((v) => v != null);
+    if (!agls.length) return;
+    const tile = (v, label, hint) => `<stat-tile value="${Math.round(v)}" unit="m" label="${escapeHtml(label)}" hint="${escapeHtml(hint)}"></stat-tile>`;
+    const tilesEl = this.$('#terrain-tiles');
+    tilesEl.innerHTML = tile(Math.max(...agls), t('terrain.aglmax'), t('terrain.aglmax.k'))
+      + tile(Math.min(...agls), t('terrain.clearance'), t('terrain.clearance.k'))
+      + tile(Math.max(...grounds) - Math.min(...grounds), t('terrain.relief'), t('terrain.relief.k'));
+    tilesEl.classList.remove('hidden');
+  }
+
+  _windTpl() {
+    const w = estimateWind(this.model.series);
+    const head = `
+        <div class="eyebrow">${escapeHtml(t('wind.eyebrow'))}</div>
+        <h2>${escapeHtml(t('wind.title'))}</h2>
+        <p class="sub">${escapeHtml(t('wind.sub'))}</p>`;
+    if (!w) {
+      return `<section class="blk">${head}
+        <app-callout variant="warn" title="${escapeHtml(t('wind.na.t'))}">${escapeHtml(t('wind.na.d'))}</app-callout>
+      </section>`;
+    }
+    const kmh = Math.round(w.speed * 3.6), asKmh = Math.round(w.airspeed * 3.6);
+    const compass = azToCompass(w.fromDeg);
+    const tile = (v, unit, label, hint) => `<stat-tile value="${escapeHtml(String(v))}" unit="${unit}" label="${escapeHtml(label)}" hint="${escapeHtml(hint)}"></stat-tile>`;
+    return `
+      <section class="blk">${head}
+        <div class="grid2 solar-grid">
+          <div class="card sun-card">${this._windCompass(w.fromDeg)}</div>
+          <div class="card">
+            <div class="tiles solar-tiles">
+              ${tile(kmh, 'km/h', t('wind.speed'), t('wind.speed.k'))}
+              ${tile(compass, '', t('wind.dir'), t('wind.dir.k', { deg: Math.round(w.fromDeg) }))}
+              ${tile(asKmh, 'km/h', t('wind.airspeed'), t('wind.airspeed.k'))}
+            </div>
+          </div>
+        </div>
+        <app-callout title="${escapeHtml(t('wind.note.t'))}">${escapeHtml(t('wind.quality.' + w.quality))} ${escapeHtml(t('wind.note.d'))}</app-callout>
+      </section>`;
+  }
+
+  /** Brújula de viento: una flecha que cruza la escena en el sentido del viento. */
+  _windCompass(fromDeg) {
+    const cx = 110, cy = 110, R = 84;
+    const pt = (a, r) => [cx + r * Math.sin(a * Math.PI / 180), cy - r * Math.cos(a * Math.PI / 180)];
+    const toward = (fromDeg + 180) % 360;
+    const [x1, y1] = pt(fromDeg, R - 12);
+    const [x2, y2] = pt(toward, R - 12);
+    const dir = toward * Math.PI / 180, fx = Math.sin(dir), fy = -Math.cos(dir), px = Math.cos(dir), py = Math.sin(dir);
+    const ah = 12, w2 = 7;
+    const head = `${x2.toFixed(1)},${y2.toFixed(1)} ${(x2 - ah * fx + w2 * px).toFixed(1)},${(y2 - ah * fy + w2 * py).toFixed(1)} ${(x2 - ah * fx - w2 * px).toFixed(1)},${(y2 - ah * fy - w2 * py).toFixed(1)}`;
+    const card = [['N', 0], ['E', 90], ['S', 180], ['O', 270]].map(([lbl, a]) => {
+      const [x, y] = pt(a, R + 16);
+      return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" class="cmp-card" dominant-baseline="middle" text-anchor="middle">${lbl}</text>`;
+    }).join('');
+    const ticks = Array.from({ length: 12 }, (_, i) => {
+      const [a1, b1] = pt(i * 30, R), [a2, b2] = pt(i * 30, R - 8);
+      return `<line x1="${a1.toFixed(1)}" y1="${b1.toFixed(1)}" x2="${a2.toFixed(1)}" y2="${b2.toFixed(1)}" class="cmp-tick"/>`;
+    }).join('');
+    return `<svg viewBox="0 0 220 220" class="compass" role="img" aria-label="${escapeHtml(t('wind.eyebrow'))}">
+      <circle cx="${cx}" cy="${cy}" r="${R}" class="cmp-ring"/>
+      ${ticks}${card}
+      <line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" class="cmp-wind"/>
+      <polygon points="${head}" class="cmp-wind-head"/>
+    </svg>`;
+  }
+
+  _solarTpl(m) {
+    const [clat, clon] = this.model.center;
+    const start = new Date(m.start.replace(' ', 'T'));
+    const end = new Date(start.getTime() + m.dur * 1000);
+    const s0 = solarPosition(start, clat, clon);
+    const s1 = solarPosition(end, clat, clon);
+    const phase = lightPhase((s0.elevation + s1.elevation) / 2);
+    const az = s0.azimuth;
+    const far = this.kps.find((k) => k.key === 'far');
+    const flightAz = far ? bearing(this.model.takeoff[0], this.model.takeoff[1], far.lat, far.lon) : null;
+    const tile = (v, unit, label, hint) => `<stat-tile value="${escapeHtml(v)}" unit="${unit}" label="${escapeHtml(label)}" hint="${escapeHtml(hint)}"></stat-tile>`;
+    return `
+      <section class="blk">
+        <div class="eyebrow">${escapeHtml(t('solar.eyebrow'))}</div>
+        <h2>${escapeHtml(t('solar.title'))}</h2>
+        <p class="sub">${escapeHtml(t('solar.sub'))}</p>
+        <div class="grid2 solar-grid">
+          <div class="card sun-card">${this._sunCompass(az, flightAz)}</div>
+          <div class="card">
+            <div class="tiles solar-tiles">
+              ${tile(`${Math.round(s0.elevation)}`, '°', t('solar.elev'), t('solar.elev.k', { end: Math.round(s1.elevation) }))}
+              ${tile(azToCompass(az), '', t('solar.dir'), t('solar.dir.k', { az: Math.round(az) }))}
+              ${tile(t('solar.phase.' + phase), '', t('solar.phase'), t('solar.phase.k'))}
+            </div>
+          </div>
+        </div>
+      </section>`;
+  }
+
+  /** Brújula solar: dónde estaba el sol (azimut) y el rumbo del vuelo. */
+  _sunCompass(azSun, azFlight) {
+    const cx = 110, cy = 110, R = 84;
+    const pt = (a, r) => [cx + r * Math.sin(a * Math.PI / 180), cy - r * Math.cos(a * Math.PI / 180)];
+    const [sx, sy] = pt(azSun, R);
+    const card = [['N', 0], ['E', 90], ['S', 180], ['O', 270]].map(([lbl, a]) => {
+      const [x, y] = pt(a, R + 16);
+      return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" class="cmp-card" dominant-baseline="middle" text-anchor="middle">${lbl}</text>`;
+    }).join('');
+    const ticks = Array.from({ length: 12 }, (_, i) => {
+      const [x1, y1] = pt(i * 30, R), [x2, y2] = pt(i * 30, R - 8);
+      return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" class="cmp-tick"/>`;
+    }).join('');
+    let flight = '';
+    if (azFlight != null) {
+      const [fx, fy] = pt(azFlight, R - 26);
+      flight = `<line x1="${cx}" y1="${cy}" x2="${fx.toFixed(1)}" y2="${fy.toFixed(1)}" class="cmp-flight"/>`
+        + `<circle cx="${fx.toFixed(1)}" cy="${fy.toFixed(1)}" r="4" class="cmp-flight-dot"/>`;
+    }
+    return `<svg viewBox="0 0 220 220" class="compass" role="img" aria-label="${escapeHtml(t('solar.eyebrow'))}">
+      <defs><radialGradient id="sunglow" cx="0.5" cy="0.5" r="0.5">
+        <stop offset="0" stop-color="var(--c-yellow)" stop-opacity="0.55"/><stop offset="1" stop-color="var(--c-yellow)" stop-opacity="0"/>
+      </radialGradient></defs>
+      <circle cx="${cx}" cy="${cy}" r="${R}" class="cmp-ring"/>
+      ${ticks}${card}
+      <line x1="${sx.toFixed(1)}" y1="${sy.toFixed(1)}" x2="${cx}" y2="${cy}" class="cmp-ray"/>
+      ${flight}
+      <circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="26" fill="url(#sunglow)"/>
+      <circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="11" class="cmp-sun"/>
+      <circle cx="${cx}" cy="${cy}" r="3.5" class="cmp-center"/>
+    </svg>`;
+  }
+
   _gimbalTpl(r) {
     return `
       <section class="blk">
@@ -313,6 +502,7 @@ export class FlightReport extends DjiElement {
 
     this.$('#map').flight = { model: this.model, kps: this.kps };
     this.$('#exp').flight = { model: this.model, assets: this.assets };
+    this._setupTerrain();
 
     // tira de luz: su propia galería de bloque (3 imágenes)
     const lightFracs = [0.15, 0.5, 0.92];
