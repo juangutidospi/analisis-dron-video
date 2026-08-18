@@ -7,6 +7,7 @@
 import { createMp4 } from './mp4-muxer.js';
 import { trailerFade } from './highlights.js';
 import { drawTitleCard } from './title-card.js';
+import { fxFilter, paintFxLayers } from './video-fx.js';
 
 /** Dimensiones de salida (pares): 16:9 escalado a maxHeight, o 9:16 vertical para redes. */
 function outDims(video, maxHeight, vertical) {
@@ -16,10 +17,14 @@ function outDims(video, maxHeight, vertical) {
   return { W: Math.round(vw * scale / 2) * 2, H: Math.round(vh * scale / 2) * 2 };
 }
 
-/** Pinta el vídeo llenando el lienzo: completo en 16:9, con recorte central (cover) en vertical. */
-function paintVideo(ctx, video, W, H, vertical) {
+/** Pinta el vídeo (16:9 o recorte central en vertical) con el efecto: filtro CSS + segunda capa. */
+function paintVideo(ctx, video, W, H, vertical, fx) {
+  const f = fxFilter(fx);
+  if (f) ctx.filter = f;
   if (vertical) { const dw = H * (video.videoWidth / video.videoHeight); ctx.drawImage(video, (W - dw) / 2, 0, dw, H); }
   else ctx.drawImage(video, 0, 0, W, H);
+  if (f) ctx.filter = 'none';
+  paintFxLayers(ctx, W, H, fx);
 }
 
 /** Elige el mejor método disponible. */
@@ -32,7 +37,7 @@ export async function exportHudVideo(opts) {
 }
 
 /** WebCodecs → MP4 estándar (H.264 + AAC). Compatible con iPhone/QuickTime. */
-async function exportViaWebCodecs({ video, draw, cfg, musicBuffer, musicVolume = 1, musicStart = 0, vertical = false, maxHeight = 1080, onProgress, signal }) {
+async function exportViaWebCodecs({ video, draw, cfg, musicBuffer, musicVolume = 1, musicStart = 0, vertical = false, fx = '', maxHeight = 1080, onProgress, signal }) {
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) throw new Error('El vídeo aún no está listo.');
   const { W, H } = outDims(video, maxHeight, vertical);
@@ -64,7 +69,7 @@ async function exportViaWebCodecs({ video, draw, cfg, musicBuffer, musicVolume =
   await new Promise((resolve) => {
     const onFrame = () => {
       if (!running || encErr) { resolve(); return; }
-      paintVideo(ctx, video, W, H, vertical);
+      paintVideo(ctx, video, W, H, vertical, fx);
       draw(ctx, video.currentTime, W, H, cfg);
       const frame = new VideoFrame(canvas, { timestamp: Math.round(video.currentTime * 1e6) });
       encoder.encode(frame, { keyFrame: idx % 60 === 0 });
@@ -233,7 +238,7 @@ export function applyTransition(ctx, src, W, H, effect, t, entering) {
  * la duración total del trailer.
  * @returns {Promise<Blob>}
  */
-export async function exportTrailer({ video, draw, cfg, segments, transitions, xf = 0.4, intro, introDur = 3.8, musicBuffer, musicVolume = 1, musicStart = 0, vertical = false, maxHeight = 1080, onProgress, signal }) {
+export async function exportTrailer({ video, draw, cfg, segments, transitions, xf = 0.4, intro, introDur = 3.8, musicBuffer, musicVolume = 1, musicStart = 0, vertical = false, fx = '', maxHeight = 1080, onProgress, signal }) {
   if (!('VideoEncoder' in window) || !('VideoFrame' in window)) throw new Error('Tu navegador no soporta la generación del trailer.');
   if (!segments?.length) throw new Error('No hay momentos para el trailer.');
   const vw = video.videoWidth, vh = video.videoHeight;
@@ -294,9 +299,9 @@ export async function exportTrailer({ video, draw, cfg, segments, transitions, x
         if (ct >= seg.end - 0.001) { resolve(); return; }
         const t = trailerFade(ct, seg.start, seg.end, XF);
         if (t <= 0) {
-          paintVideo(ctx, video, W, H, vertical); draw(ctx, ct, W, H, cfg);
+          paintVideo(ctx, video, W, H, vertical, fx); draw(ctx, ct, W, H, cfg);
         } else {
-          paintVideo(tctx, video, W, H, vertical); draw(tctx, ct, W, H, cfg);
+          paintVideo(tctx, video, W, H, vertical, fx); draw(tctx, ct, W, H, cfg);
           const entering = (ct - seg.start) <= (seg.end - ct);
           applyTransition(ctx, tmp, W, H, entering ? entryFx : exitFx, t, entering);
         }
@@ -341,7 +346,7 @@ function seek(video, t) {
  * @param {AbortSignal} [o.signal]
  * @returns {Promise<Blob>}
  */
-async function exportViaMediaRecorder({ video, draw, cfg, musicBuffer, musicVolume = 1, musicStart = 0, vertical = false, maxHeight = 1080, fps = 30, onProgress, signal }) {
+async function exportViaMediaRecorder({ video, draw, cfg, musicBuffer, musicVolume = 1, musicStart = 0, vertical = false, fx = '', maxHeight = 1080, fps = 30, onProgress, signal }) {
   if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) {
     throw new Error('Tu navegador no soporta la grabación de canvas.');
   }
@@ -409,7 +414,7 @@ async function exportViaMediaRecorder({ video, draw, cfg, musicBuffer, musicVolu
   if (signal) signal.addEventListener('abort', () => { cancelled = true; finish(); }, { once: true });
 
   const drawFrame = () => {
-    paintVideo(ctx, video, W, H, vertical);
+    paintVideo(ctx, video, W, H, vertical, fx);
     draw(ctx, video.currentTime, W, H, cfg);
     onProgress?.(dur ? Math.min(1, video.currentTime / dur) : 0);
   };
