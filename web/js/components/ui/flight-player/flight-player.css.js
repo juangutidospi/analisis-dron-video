@@ -10,13 +10,38 @@ export const styles = css`
 @media (prefers-reduced-motion: reduce) { :host { transition: opacity .2s; } :host(.away) { transform: none; } }
 .stack { display: flex; flex-direction: column; align-items: center; gap: 10px; width: min(720px, 100%); }
 .pip {
-  pointer-events: auto; width: clamp(168px, 24vw, 260px); aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden;
+  position: relative; pointer-events: auto; width: clamp(168px, 24vw, 260px); aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden;
   border: 1px solid var(--color-divider); box-shadow: var(--shadow-lg); background: #000; display: none;
   animation: rise .35s cubic-bezier(.22,1,.36,1) both;
 }
 .pip.on { display: block; }
 .pip video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.hud { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.expand {
+  position: absolute; top: 8px; right: 8px; z-index: 2; width: 30px; height: 30px; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.28); background: rgba(0,0,0,.42); color: #fff; font-size: 15px; line-height: 1;
+  cursor: pointer; display: grid; place-items: center; backdrop-filter: blur(6px); pointer-events: auto;
+  opacity: 0; transition: opacity .15s, background .15s, transform .15s;
+}
+.pip:hover .expand, .pip.big .expand { opacity: 1; }
+.expand:hover { background: rgba(0,0,0,.6); transform: scale(1.08); }
+/* fondo desenfocado detrás del vídeo grande (focaliza la vista) */
+.stage {
+  position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: 0; visibility: hidden;
+  background: rgba(6, 7, 10, .5); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  transition: opacity .28s ease, visibility .28s;
+}
+:host(.big) .stage { opacity: 1; visibility: visible; pointer-events: auto; }
+.pip.big {
+  position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%);
+  width: min(92vw, calc(72vh * 16 / 9)); max-width: 1120px; z-index: 5;
+  animation: bigin .26s cubic-bezier(.22,1,.36,1) both;
+}
+.pip.big .expand { width: 38px; height: 38px; font-size: 18px; top: 12px; right: 12px; }
+@keyframes bigin { from { opacity: .4; transform: translateX(-50%) scale(.9); } }
+@media (prefers-reduced-motion: reduce) { .pip.big { animation: none; } }
 .player {
+  position: relative; z-index: 6;
   pointer-events: auto; display: flex; align-items: center; gap: 13px; width: 100%;
   background: color-mix(in srgb, var(--color-surface-solid) 92%, transparent); border: 1px solid var(--color-divider);
   border-radius: 100px; padding: 10px 16px; box-shadow: var(--shadow-lg); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);

@@ -18,6 +18,7 @@ import '../../ui/flight-player/flight-player.js';
 import '../../ui/reading-nav/reading-nav.js';
 import { PlayerClock } from '../../../core/player-clock.js';
 import { reveal } from '../../../core/reveal.js';
+import { createHud } from '../../../hud.js';
 import { styles } from './flight-report.css.js';
 
 const f = (v, d = 0) => (v == null ? '—' : v.toFixed(d));
@@ -534,8 +535,9 @@ export class FlightReport extends DjiElement {
     if (!('IntersectionObserver' in window)) { this._player.classList.remove('away'); return; }
     this._playerIO = new IntersectionObserver((es) => {
       const vis = es.some((e) => e.isIntersecting);
-      // se mantiene visible mientras se reproduce, aunque el mapa quede fuera de pantalla
-      this._player.classList.toggle('away', !vis && !this._clock?.playing);
+      // al salir el mapa de pantalla: no dejamos el vídeo flotando ni el scroll bloqueado
+      if (!vis) { if (this._clock?.playing) this._clock.pause(); this._player.collapse?.(); }
+      this._player.classList.toggle('away', !vis);
     }, { rootMargin: '0px 0px -12% 0px', threshold: 0 });
     this._playerIO.observe(anchor);
   }
@@ -601,6 +603,13 @@ export class FlightReport extends DjiElement {
     }
     this._player.clock = this._clock;
     this._player.video = this._video || null;
+    // HUD de telemetría sobre el vídeo (con el color de acento del tema)
+    if (this._video) {
+      const accent = getComputedStyle(this).getPropertyValue('--color-accent').trim() || '#5b9dff';
+      this._player.hud = createHud(this.model, { accent }).draw;
+    } else {
+      this._player.hud = null;
+    }
     // reserva hueco al final para que la barra fija del reproductor no tape el contenido
     this.classList.toggle('has-video', !!this._video);
   }
