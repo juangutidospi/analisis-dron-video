@@ -625,6 +625,32 @@ const styles = css`
   padding: 5px 15px; cursor: pointer; font-family: inherit;
 }
 .cfg-units button.on { color: #fff; background: var(--color-accent); }
+.cfg-export {
+  align-self: stretch; margin-top: 2px; border: none; cursor: pointer; font-family: inherit; font-size: 13.5px; font-weight: 700; color: #fff;
+  border-radius: 100px; padding: 10px 16px; background: linear-gradient(135deg, var(--color-accent-2, var(--color-accent)), var(--color-accent));
+  box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--color-accent) 70%, transparent); transition: transform .12s;
+}
+.cfg-export:hover { transform: translateY(-1px); }
+
+/* overlay de progreso de exportación */
+.export-ov {
+  position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; pointer-events: auto;
+  background: rgba(6,7,10,.55); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+}
+.export-card {
+  width: min(420px, 90vw); background: var(--color-surface-solid); border: 1px solid var(--color-divider); border-radius: 18px;
+  padding: 24px; box-shadow: var(--shadow-lg); text-align: center; animation: rise .28s cubic-bezier(.22,1,.36,1) both;
+}
+.export-title { font-size: 16px; font-weight: 750; color: var(--color-text); }
+.export-track { height: 8px; border-radius: 100px; background: color-mix(in srgb, var(--color-text) 12%, transparent); margin: 16px 0 8px; overflow: hidden; }
+.export-fill { height: 100%; width: 0; border-radius: 100px; background: linear-gradient(90deg, var(--color-accent-2, var(--color-accent)), var(--color-accent)); transition: width .2s; }
+.export-pct { font-size: 22px; font-weight: 800; color: var(--color-text); font-variant-numeric: tabular-nums; }
+.export-note { font-size: 12.5px; color: var(--color-text-muted); margin: 8px 0 18px; }
+.export-cancel {
+  border: 1px solid var(--color-divider); background: transparent; color: var(--color-text); cursor: pointer; font-family: inherit;
+  font-size: 13px; font-weight: 650; border-radius: 100px; padding: 8px 20px;
+}
+.export-cancel:hover { background: color-mix(in srgb, var(--color-text) 8%, transparent); }
 
 @media (max-width: 480px) {
   .player { gap: 10px; padding: 9px 12px; }
@@ -642,6 +668,8 @@ const { DjiElement } = __req("js/core/DjiElement.js");
 const { mmss } = __req("js/geo.js");
 const { t } = __req("js/i18n/index.js");
 const { DEFAULT_CFG, GAUGE_KEYS } = __req("js/hud.js");
+const { exportHudVideo } = __req("js/hud-export.js");
+const { downloadBlob } = __req("js/exports.js");
 const { styles } = __req("js/components/ui/flight-player/flight-player.css.js");
 
 /**
@@ -687,6 +715,7 @@ class FlightPlayer extends DjiElement {
               <button class="${cfg.units === 'imperial' ? 'on' : ''}" data-u="imperial" type="button">${t('hud.imperial')}</button>
             </div>
           </div>
+          <button class="cfg-export" id="exportbtn" type="button">⤓ ${t('hud.export')}</button>
         </div>
         <div class="player">
           <button class="play" id="play" type="button" aria-label="${t('player.play')}">▶</button>
@@ -776,6 +805,54 @@ class FlightPlayer extends DjiElement {
     this.$$('.cfg-units button').forEach((b) => this.on(b, 'click', () => {
       cfg.units = b.dataset.u; this.$$('.cfg-units button').forEach((x) => x.classList.toggle('on', x === b)); this._drawHud();
     }));
+    const exp = this.$('#exportbtn');
+    if (exp) this.on(exp, 'click', () => this._exportVideo());
+  }
+
+  /** Exporta el vídeo con el HUD quemado (graba en tiempo real → descarga .webm). */
+  async _exportVideo() {
+    if (this._exporting) return;
+    if (!this._video || !this._hud) return;
+    this._exporting = true;
+    this._clock?.pause();
+    const ov = this._exportOverlay();
+    const ctrl = new AbortController();
+    ov.cancelBtn.onclick = () => ctrl.abort();
+    try {
+      const blob = await exportHudVideo({ video: this._video, draw: this._hud, cfg: this._cfg(), onProgress: ov.set, signal: ctrl.signal });
+      const ext = (blob.type || '').includes('mp4') ? 'mp4' : 'webm';
+      downloadBlob('vuelo-hud.' + ext, blob);
+      ov.done();
+      await new Promise((r) => setTimeout(r, 1400));
+    } catch (e) {
+      if (e.name !== 'AbortError') { console.error(e); ov.fail(e.message); await new Promise((r) => setTimeout(r, 2600)); }
+    } finally {
+      this._exporting = false;
+      ov.close();
+    }
+  }
+
+  /** Crea el overlay de progreso de exportación en el shadow. */
+  _exportOverlay() {
+    const el = document.createElement('div');
+    el.className = 'export-ov';
+    el.innerHTML = `
+      <div class="export-card">
+        <div class="export-title" id="ex-title">${t('hud.exporting')}</div>
+        <div class="export-track"><div class="export-fill" id="ex-fill"></div></div>
+        <div class="export-pct" id="ex-pct">0%</div>
+        <div class="export-note">${t('hud.export.note')}</div>
+        <button class="export-cancel" id="ex-cancel" type="button">${t('hud.export.cancel')}</button>
+      </div>`;
+    this.shadowRoot.appendChild(el);
+    const fill = el.querySelector('#ex-fill'), pct = el.querySelector('#ex-pct'), title = el.querySelector('#ex-title');
+    return {
+      set: (p) => { const v = Math.round(p * 100); fill.style.width = v + '%'; pct.textContent = v + '%'; },
+      done: () => { title.textContent = t('hud.export.done'); fill.style.width = '100%'; pct.textContent = '100%'; },
+      fail: (m) => { title.textContent = '⚠️ ' + (m || ''); },
+      cancelBtn: el.querySelector('#ex-cancel'),
+      close: () => el.remove(),
+    };
   }
 
   _applyBig() {
@@ -2218,6 +2295,7 @@ class FlightReport extends DjiElement {
     this._player.classList.add('away'); // arranca oculto
     if (!('IntersectionObserver' in window)) { this._player.classList.remove('away'); return; }
     this._playerIO = new IntersectionObserver((es) => {
+      if (this._player._exporting) return; // no ocultar mientras se exporta el vídeo
       const vis = es.some((e) => e.isIntersecting);
       // al salir el mapa de pantalla: no dejamos el vídeo flotando ni el scroll bloqueado
       if (!vis) { if (this._clock?.playing) this._clock.pause(); this._player.collapse?.(); }
@@ -2290,7 +2368,7 @@ class FlightReport extends DjiElement {
     // HUD de telemetría sobre el vídeo (con el color de acento del tema)
     if (this._video) {
       const accent = getComputedStyle(this).getPropertyValue('--color-accent').trim() || '#5b9dff';
-      this._player.hud = createHud(this.model, { accent }).draw;
+      this._player.hud = createHud(this.model, { accent, title: this.assets?.title }).draw;
     } else {
       this._player.hud = null;
     }
@@ -3406,6 +3484,163 @@ Object.assign(__x, { reverseGeocode, firstCoords });
 
 };
 
+__m["js/hud-export.js"] = function (__x, __req) {
+// Exporta el vídeo con el HUD "quemado" encima, 100% en el navegador.
+// Compone cada fotograma (vídeo + HUD) en un canvas. Preferimos WebCodecs +
+// muxer MP4 estándar (compatible con iOS, sin audio); si no hay WebCodecs, se
+// usa MediaRecorder (webm/mp4 fragmentado, con audio). Siempre en tiempo real.
+
+const { createMp4 } = __req("js/mp4-muxer.js");
+
+/** Elige el mejor método disponible. */
+async function exportHudVideo(opts) {
+  if ('VideoEncoder' in window && 'VideoFrame' in window) {
+    try { return await exportViaWebCodecs(opts); }
+    catch (e) { if (e.name === 'AbortError') throw e; console.warn('WebCodecs falló, se usa MediaRecorder.', e); }
+  }
+  return exportViaMediaRecorder(opts);
+}
+
+/** WebCodecs → MP4 estándar (H.264, sin audio). Compatible con iPhone/QuickTime. */
+async function exportViaWebCodecs({ video, draw, cfg, maxHeight = 1080, onProgress, signal }) {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) throw new Error('El vídeo aún no está listo.');
+  const scale = Math.min(1, maxHeight / vh);
+  const W = Math.round(vw * scale / 2) * 2, H = Math.round(vh * scale / 2) * 2;
+  const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d', { alpha: false });
+  const muxer = createMp4({ width: W, height: H });
+
+  let needDesc = true, encErr = null;
+  const encoder = new VideoEncoder({
+    output: (chunk, meta) => {
+      if (needDesc && meta?.decoderConfig?.description) { muxer.setDescription(meta.decoderConfig.description); needDesc = false; }
+      const buf = new Uint8Array(chunk.byteLength); chunk.copyTo(buf);
+      muxer.addSample(buf, chunk.type === 'key', chunk.timestamp);
+    },
+    error: (e) => { encErr = e; },
+  });
+  encoder.configure({ codec: H > 1080 ? 'avc1.640033' : 'avc1.640028', width: W, height: H, bitrate: 12_000_000, framerate: 30, latencyMode: 'realtime', avc: { format: 'avc' } });
+
+  await seek(video, 0);
+  let running = true, cancelled = false, idx = 0;
+  const dur = video.duration || 0;
+  const finish = () => { running = false; try { video.pause(); } catch {} };
+  if (signal) signal.addEventListener('abort', () => { cancelled = true; finish(); }, { once: true });
+
+  const useRVFC = 'requestVideoFrameCallback' in video;
+  await video.play();
+  await new Promise((resolve) => {
+    const onFrame = () => {
+      if (!running || encErr) { resolve(); return; }
+      ctx.drawImage(video, 0, 0, W, H);
+      draw(ctx, video.currentTime, W, H, cfg);
+      const frame = new VideoFrame(canvas, { timestamp: Math.round(video.currentTime * 1e6) });
+      encoder.encode(frame, { keyFrame: idx % 60 === 0 });
+      frame.close(); idx++;
+      onProgress?.(dur ? Math.min(1, video.currentTime / dur) : 0);
+      useRVFC ? video.requestVideoFrameCallback(onFrame) : requestAnimationFrame(onFrame);
+    };
+    video.onended = () => { finish(); resolve(); };
+    useRVFC ? video.requestVideoFrameCallback(onFrame) : requestAnimationFrame(onFrame);
+  });
+  await encoder.flush(); encoder.close();
+  if (cancelled) throw new DOMException('Exportación cancelada', 'AbortError');
+  if (encErr) throw encErr;
+  return muxer.finalize();
+}
+
+/** Espera a que el vídeo termine de buscar a t. */
+function seek(video, t) {
+  return new Promise((res) => {
+    const on = () => { video.removeEventListener('seeked', on); res(); };
+    video.addEventListener('seeked', on);
+    video.currentTime = t;
+  });
+}
+
+/**
+ * @param {object} o
+ * @param {HTMLVideoElement} o.video  vídeo fuente (a resolución nativa)
+ * @param {(ctx:CanvasRenderingContext2D,t:number,w:number,h:number,cfg:object)=>void} o.draw  HUD
+ * @param {object} o.cfg  config del HUD (gauges/unidades)
+ * @param {number} [o.maxHeight=1080]  alto máximo del export
+ * @param {number} [o.fps=30]
+ * @param {(p:number)=>void} [o.onProgress]  0..1
+ * @param {AbortSignal} [o.signal]
+ * @returns {Promise<Blob>}
+ */
+async function exportViaMediaRecorder({ video, draw, cfg, maxHeight = 1080, fps = 30, onProgress, signal }) {
+  if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) {
+    throw new Error('Tu navegador no soporta la grabación de canvas.');
+  }
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) throw new Error('El vídeo aún no está listo.');
+  const scale = Math.min(1, maxHeight / vh);
+  const W = Math.round(vw * scale / 2) * 2, H = Math.round(vh * scale / 2) * 2; // dimensiones pares
+  const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d', { alpha: false });
+  const stream = canvas.captureStream(fps);
+
+  // audio del vídeo, capturado en silencio vía Web Audio (no suena por los altavoces)
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) {
+      if (!video._hudAudioCtx) { video._hudAudioCtx = new AC(); video._hudAudioSrc = video._hudAudioCtx.createMediaElementSource(video); }
+      await video._hudAudioCtx.resume?.();
+      const dest = video._hudAudioCtx.createMediaStreamDestination();
+      video._hudAudioSrc.connect(dest);
+      const at = dest.stream.getAudioTracks()[0];
+      if (at) { stream.addTrack(at); video.muted = false; }
+    }
+  } catch { /* seguimos sin audio */ }
+
+  // MP4 (H.264 + AAC) si el navegador lo soporta; si no, webm. La extensión sale de blob.type.
+  const mime = [
+    'video/mp4;codecs=avc1.640028,mp4a.40.2',
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/mp4;codecs=avc1',
+    'video/mp4',
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm',
+  ].find((m) => MediaRecorder.isTypeSupported(m)) || 'video/webm';
+  const chunks = [];
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 10_000_000 });
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  const stopped = new Promise((res) => { rec.onstop = res; });
+
+  const dur = video.duration || 0;
+  await seek(video, 0);
+
+  let running = true, cancelled = false;
+  const finish = () => { if (!running) return; running = false; try { rec.stop(); } catch {} try { video.pause(); } catch {} };
+  if (signal) signal.addEventListener('abort', () => { cancelled = true; finish(); }, { once: true });
+
+  const drawFrame = () => {
+    ctx.drawImage(video, 0, 0, W, H);
+    draw(ctx, video.currentTime, W, H, cfg);
+    onProgress?.(dur ? Math.min(1, video.currentTime / dur) : 0);
+  };
+  const useRVFC = 'requestVideoFrameCallback' in video;
+  const loop = () => { if (!running) return; drawFrame(); useRVFC ? video.requestVideoFrameCallback(loop) : requestAnimationFrame(loop); };
+
+  rec.start(1000);
+  video.onended = finish;
+  await video.play();
+  loop();
+
+  await stopped;
+  video.muted = true;
+  try { video._hudAudioSrc?.disconnect(); } catch {}
+  if (cancelled) throw new DOMException('Exportación cancelada', 'AbortError');
+  return new Blob(chunks, { type: mime });
+}
+
+Object.assign(__x, { exportHudVideo });
+
+};
+
 __m["js/hud.js"] = function (__x, __req) {
 // Motor de HUD: dibuja gauges de telemetría sobre un canvas, sincronizados por
 // tiempo con la serie del vuelo. Independiente del render: dado t, pinta el frame.
@@ -3424,9 +3659,9 @@ const bearing = (la1, lo1, la2, lo2) => {
 const CARD = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
 
 /** Config por defecto del HUD (qué gauges y unidades). */
-const DEFAULT_CFG = { units: 'metric', gauges: { speed: 1, alt: 1, dist: 1, vspeed: 0, heading: 1, clock: 1 } };
+const DEFAULT_CFG = { units: 'metric', gauges: { speed: 1, alt: 1, dist: 1, vspeed: 0, heading: 1, clock: 1, minimap: 1, progress: 1, watermark: 0 } };
 /** Orden de los gauges para el panel de ajustes. */
-const GAUGE_KEYS = ['speed', 'alt', 'dist', 'vspeed', 'heading', 'clock'];
+const GAUGE_KEYS = ['speed', 'alt', 'dist', 'vspeed', 'heading', 'clock', 'minimap', 'progress', 'watermark'];
 
 const CONV = {
   metric: { spd: (v) => v * 3.6, spdU: 'km/h', len: (v) => v, lenU: 'm', vs: (v) => v, vsU: 'm/s' },
@@ -3441,6 +3676,14 @@ const CONV = {
 function createHud(model, opts = {}) {
   const S = model.series, tk = model.takeoff;
   const accent = opts.accent || '#5b9dff';
+  const title = opts.title || '';
+  // track para el mini-mapa (bounding box en proyección equirectangular sencilla)
+  const T = (model.track || []).filter((p) => p && p[0] != null);
+  const lats = T.map((p) => p[0]), lons = T.map((p) => p[1]);
+  const mm = T.length ? {
+    la0: Math.min(...lats), la1: Math.max(...lats), lo0: Math.min(...lons), lo1: Math.max(...lons),
+    cosLat: Math.cos((Math.min(...lats) + Math.max(...lats)) / 2 * Math.PI / 180) || 1,
+  } : null;
 
   const sample = (t) => {
     let i = 1;
@@ -3509,6 +3752,30 @@ function createHud(model, opts = {}) {
     ctx.restore();
   };
 
+  // mini-mapa: trazado + despegue + posición actual, ajustado al rectángulo dado
+  const minimap = (ctx, x, y, bw, bh, curLat, curLon) => {
+    if (!mm) return;
+    ctx.save();
+    roundRect(ctx, x, y, bw, bh, bw * 0.06);
+    ctx.fillStyle = 'rgba(10,12,18,.42)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = bw * 0.012; ctx.stroke();
+    ctx.clip();
+    const pad = 0.16;
+    const spanLo = (mm.lo1 - mm.lo0) * mm.cosLat || 1e-6, spanLa = (mm.la1 - mm.la0) || 1e-6;
+    const sc = Math.min(bw * (1 - pad) / spanLo, bh * (1 - pad) / spanLa);
+    const cx = x + bw / 2, cy = y + bh / 2, mLo = (mm.lo0 + mm.lo1) / 2, mLa = (mm.la0 + mm.la1) / 2;
+    const PX = (lo) => cx + (lo - mLo) * mm.cosLat * sc, PY = (la) => cy - (la - mLa) * sc;
+    ctx.beginPath();
+    T.forEach((p, i) => { const px = PX(p[1]), py = PY(p[0]); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+    ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = Math.max(1, bw * 0.016); ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
+    ctx.fillStyle = '#37cf6b'; ctx.beginPath(); ctx.arc(PX(tk[1]), PY(tk[0]), bw * 0.03, 0, 7); ctx.fill();
+    if (curLat != null) {
+      ctx.fillStyle = accent; ctx.beginPath(); ctx.arc(PX(curLon), PY(curLat), bw * 0.045, 0, 7); ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = bw * 0.016; ctx.stroke();
+    }
+    ctx.restore();
+  };
+
   const draw = (ctx, t, w, h, cfg) => {
     cfg = cfg || DEFAULT_CFG;
     const gz = cfg.gauges || DEFAULT_CFG.gauges;
@@ -3558,6 +3825,31 @@ function createHud(model, opts = {}) {
       ctx.fillStyle = 'rgba(10,12,18,.32)'; roundRect(ctx, U * 1.3, U * 1.15, tw + U * 1.7, U * 2.2, U * 1.1); ctx.fill();
       ctx.fillStyle = 'rgba(255,255,255,.96)'; ctx.textAlign = 'left';
       ctx.fillText(tm, U * 2.15, U * 2.3); ls(ctx, 0);
+    }
+
+    // mini-mapa (arriba izquierda, bajo el reloj)
+    if (gz.minimap) {
+      ctx.shadowColor = 'transparent';
+      const mw = Math.min(w, h) * 0.3, mh = mw * 0.64;
+      minimap(ctx, U * 1.3, gz.clock ? U * 4.4 : U * 1.3, mw, mh, s.lat, s.lon);
+    }
+
+    // barra de progreso (borde inferior)
+    if (gz.progress) {
+      ctx.shadowColor = 'transparent';
+      const p = Math.max(0, Math.min(1, t / (S[S.length - 1].t || 1)));
+      const bh = Math.max(2, U * 0.3);
+      ctx.fillStyle = 'rgba(255,255,255,.22)'; ctx.fillRect(0, h - bh, w, bh);
+      ctx.fillStyle = accent; ctx.fillRect(0, h - bh, w * p, bh);
+    }
+
+    // marca de agua (arriba centro)
+    if (gz.watermark && title) {
+      ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = U * 0.6; ctx.shadowOffsetY = U * 0.06;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.font = `600 ${U * 1.05}px ${FONT}`; ls(ctx, U * 0.05);
+      ctx.fillStyle = 'rgba(255,255,255,.72)';
+      ctx.fillText(title, w / 2, U * 1.5); ls(ctx, 0);
     }
 
     ctx.restore();
@@ -3710,6 +4002,14 @@ __x.default = {
   'hud.g.vspeed': 'Vertical',
   'hud.g.heading': 'Heading',
   'hud.g.clock': 'Clock',
+  'hud.g.minimap': 'Mini-map',
+  'hud.g.progress': 'Progress',
+  'hud.g.watermark': 'Watermark',
+  'hud.export': 'Export video with HUD',
+  'hud.exporting': 'Exporting the video with the HUD…',
+  'hud.export.note': 'Records in real time; do not close or switch tabs.',
+  'hud.export.cancel': 'Cancel',
+  'hud.export.done': '✅ Video ready',
   'player.expand': 'Enlarge video',
   'player.collapse': 'Shrink video',
   'lightbox.close': 'Close',
@@ -3971,6 +4271,14 @@ __x.default = {
   'hud.g.vspeed': 'V. vertical',
   'hud.g.heading': 'Rumbo',
   'hud.g.clock': 'Reloj',
+  'hud.g.minimap': 'Mini-mapa',
+  'hud.g.progress': 'Progreso',
+  'hud.g.watermark': 'Marca de agua',
+  'hud.export': 'Exportar vídeo con HUD',
+  'hud.exporting': 'Exportando el vídeo con el HUD…',
+  'hud.export.note': 'Se graba en tiempo real; no cierres ni cambies de pestaña.',
+  'hud.export.cancel': 'Cancelar',
+  'hud.export.done': '✅ Vídeo listo',
   'player.expand': 'Ampliar vídeo',
   'player.collapse': 'Reducir vídeo',
   'lightbox.close': 'Cerrar',
@@ -4394,6 +4702,95 @@ ${minutesXml} </Folder>
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
 Object.assign(__x, { buildKMZ });
+
+};
+
+__m["js/mp4-muxer.js"] = function (__x, __req) {
+// Muxer MP4 mínimo para vídeo H.264 (muestras en formato AVCC), salida progresiva
+// estándar (moov al final): compatible con iOS/QuickTime, a diferencia del MP4
+// fragmentado que produce MediaRecorder. Sin audio (vídeo puro).
+
+const TS = 90000; // timescale de medios
+
+const u8 = (...n) => new Uint8Array(n);
+const u16 = (n) => new Uint8Array([(n >> 8) & 255, n & 255]);
+const u32 = (n) => { n >>>= 0; return new Uint8Array([(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255]); };
+const str = (s) => new Uint8Array([...s].map((c) => c.charCodeAt(0)));
+const cat = (arrs) => { let len = 0; for (const a of arrs) len += a.length; const o = new Uint8Array(len); let p = 0; for (const a of arrs) { o.set(a, p); p += a.length; } return o; };
+const box = (type, ...payload) => { const body = cat(payload); return cat([u32(body.length + 8), str(type), body]); };
+const fbox = (type, version, flags, ...payload) => box(type, u8(version), u8((flags >> 16) & 255, (flags >> 8) & 255, flags & 255), ...payload);
+const MATRIX = cat([u32(0x00010000), u32(0), u32(0), u32(0), u32(0x00010000), u32(0), u32(0), u32(0), u32(0x40000000)]);
+
+/**
+ * @param {{width:number,height:number}} o
+ * @returns {{setDescription:(d:BufferSource)=>void, addSample:(bytes:Uint8Array,isKey:boolean,tsMicros:number)=>void, finalize:()=>Blob}}
+ */
+function createMp4({ width, height }) {
+  let description = null;
+  const samples = [];      // { size, key, ts (en TS), offset }
+  const data = [];
+  let dataLen = 0;
+
+  return {
+    setDescription(d) { description = new Uint8Array(d instanceof ArrayBuffer ? d : d.buffer || d); },
+    addSample(bytes, isKey, tsMicros) {
+      const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      samples.push({ size: b.length, key: !!isKey, ts: Math.round(tsMicros * TS / 1e6), offset: dataLen });
+      data.push(b); dataLen += b.length;
+    },
+    finalize() {
+      if (!description || !samples.length) throw new Error('MP4 sin datos.');
+      // duraciones a partir de los timestamps
+      for (let i = 0; i < samples.length; i++) {
+        samples[i].dur = i < samples.length - 1
+          ? Math.max(1, samples[i + 1].ts - samples[i].ts)
+          : (samples.length > 1 ? samples[i - 1].ts - (samples[i - 2]?.ts ?? samples[i - 1].ts) || 3000 : 3000);
+      }
+      if (samples.length > 1) samples[samples.length - 1].dur = samples[samples.length - 2].dur;
+      const totalDur = samples.reduce((s, x) => s + x.dur, 0);
+      const durMovie = Math.round(totalDur / TS * 1000);
+
+      const ftyp = box('ftyp', str('isom'), u32(0x200), str('isom'), str('iso2'), str('avc1'), str('mp41'));
+      const mdatHeader = cat([u32(dataLen + 8), str('mdat')]);
+      const mdatDataOffset = ftyp.length + mdatHeader.length; // offset absoluto del primer byte de muestra
+
+      const avc1 = box('avc1',
+        u8(0, 0, 0, 0, 0, 0), u16(1),                       // reserved + data_reference_index
+        u16(0), u16(0), u8(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), // pre_defined + reserved + pre_defined[3]
+        u16(width), u16(height),
+        u32(0x00480000), u32(0x00480000), u32(0), u16(1),
+        new Uint8Array(32),                                  // compressorname
+        u16(0x0018), u16(0xFFFF),
+        box('avcC', description));
+      const stsd = fbox('stsd', 0, 0, u32(1), avc1);
+      const sttsE = [];
+      for (const s of samples) { const l = sttsE[sttsE.length - 1]; if (l && l.dur === s.dur) l.count++; else sttsE.push({ count: 1, dur: s.dur }); }
+      const stts = fbox('stts', 0, 0, u32(sttsE.length), cat(sttsE.map((e) => cat([u32(e.count), u32(e.dur)]))));
+      const stsc = fbox('stsc', 0, 0, u32(1), cat([u32(1), u32(samples.length), u32(1)]));
+      const stsz = fbox('stsz', 0, 0, u32(0), u32(samples.length), cat(samples.map((s) => u32(s.size))));
+      const stco = fbox('stco', 0, 0, u32(1), u32(mdatDataOffset));
+      const keys = samples.map((s, i) => (s.key ? i + 1 : 0)).filter(Boolean);
+      const stss = fbox('stss', 0, 0, u32(keys.length), cat(keys.map((k) => u32(k))));
+      const stbl = box('stbl', stsd, stts, stsc, stsz, stco, stss);
+      const vmhd = fbox('vmhd', 0, 1, u16(0), u16(0), u16(0), u16(0));
+      const dinf = box('dinf', fbox('dref', 0, 0, u32(1), fbox('url ', 0, 1)));
+      const minf = box('minf', vmhd, dinf, stbl);
+      const hdlr = fbox('hdlr', 0, 0, u32(0), str('vide'), u8(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), cat([str('VideoHandler'), u8(0)]));
+      const mdhd = fbox('mdhd', 0, 0, u32(0), u32(0), u32(TS), u32(totalDur), u16(0x55c4), u16(0));
+      const mdia = box('mdia', mdhd, hdlr, minf);
+      const tkhd = fbox('tkhd', 0, 7, u32(0), u32(0), u32(1), u32(0), u32(durMovie),
+        u8(0, 0, 0, 0, 0, 0, 0, 0), u16(0), u16(0), u16(0), u16(0), MATRIX, u32(width << 16), u32(height << 16));
+      const trak = box('trak', tkhd, mdia);
+      const mvhd = fbox('mvhd', 0, 0, u32(0), u32(0), u32(1000), u32(durMovie), u32(0x00010000), u16(0x0100), u16(0),
+        u32(0), u32(0), MATRIX, u32(0), u32(0), u32(0), u32(0), u32(0), u32(0), u32(2));
+      const moov = box('moov', mvhd, trak);
+
+      return new Blob([ftyp, mdatHeader, ...data, moov], { type: 'video/mp4' });
+    },
+  };
+}
+
+Object.assign(__x, { createMp4 });
 
 };
 
