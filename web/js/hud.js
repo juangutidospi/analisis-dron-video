@@ -15,9 +15,9 @@ const bearing = (la1, lo1, la2, lo2) => {
 const CARD = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
 
 /** Config por defecto del HUD (qué gauges y unidades). */
-export const DEFAULT_CFG = { units: 'metric', theme: 'modern', gauges: { speed: 1, alt: 1, dist: 1, vspeed: 0, heading: 1, clock: 1, minimap: 1, progress: 1, watermark: 0 } };
+export const DEFAULT_CFG = { units: 'metric', theme: 'modern', gauges: { speed: 1, alt: 1, dist: 1, vspeed: 0, heading: 1, clock: 1, minimap: 1, progress: 1, watermark: 0, location: 0 } };
 /** Orden de los gauges para el panel de ajustes. */
-export const GAUGE_KEYS = ['speed', 'alt', 'dist', 'vspeed', 'heading', 'clock', 'minimap', 'progress', 'watermark'];
+export const GAUGE_KEYS = ['speed', 'alt', 'dist', 'vspeed', 'heading', 'clock', 'minimap', 'progress', 'watermark', 'location'];
 
 const CONV = {
   metric: { spd: (v) => v * 3.6, spdU: 'km/h', len: (v) => v, lenU: 'm', vs: (v) => v, vsU: 'm/s' },
@@ -36,6 +36,7 @@ export function createHud(model, opts = {}) {
   const maxRel = S.reduce((m, p) => Math.max(m, p.rel || 0), 1);
   const accent = opts.accent || '#5b9dff';
   const title = opts.title || '';
+  const place = opts.place || '';
   // track para el mini-mapa (bounding box en proyección equirectangular sencilla)
   const T = (model.track || []).filter((p) => p && p[0] != null);
   const lats = T.map((p) => p[0]), lons = T.map((p) => p[1]);
@@ -352,6 +353,10 @@ export function createHud(model, opts = {}) {
     ctx.save();
     ctx.textBaseline = 'alphabetic';
 
+    // intro animada: los elementos aparecen (fade + subida) en el primer instante
+    const intro = 1 - (1 - Math.min(1, Math.max(0, t / 0.7))) ** 3; // easeOutCubic 0→1 en 0,7 s
+    if (intro < 1) { ctx.globalAlpha = intro; ctx.translate(0, (1 - intro) * U * 1.4); }
+
     // scrims sutiles (arriba y abajo) para legibilidad, sin sombra
     let g = ctx.createLinearGradient(0, h * 0.68, 0, h);
     g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.4)');
@@ -419,6 +424,25 @@ export function createHud(model, opts = {}) {
       ctx.font = `600 ${U * 1.05}px ${FONT}`; ls(ctx, U * 0.05);
       ctx.fillStyle = 'rgba(255,255,255,.72)';
       ctx.fillText(title, w / 2, U * 1.5); ls(ctx, 0);
+    }
+
+    // rótulo de ubicación (píldora con pin, arriba centro)
+    if (gz.location && place) {
+      ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = U * 0.6; ctx.shadowOffsetY = U * 0.06;
+      ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+      ctx.font = `600 ${U * 1.05}px ${FONT}`; ls(ctx, U * 0.02);
+      const tw = ctx.measureText(place).width, padX = U * 0.85, dot = U * 0.9, gap = U * 0.4;
+      const pw = padX * 2 + dot + gap + tw, ph = U * 2.2;
+      const y0 = (gz.watermark && title) ? U * 3.5 : U * 1.4, x0 = w / 2 - pw / 2, cyp = y0 + ph / 2;
+      ctx.fillStyle = 'rgba(10,12,18,.4)'; roundRect(ctx, x0, y0, pw, ph, ph / 2); ctx.fill();
+      ctx.shadowColor = 'transparent';
+      // pin (gota)
+      const px = x0 + padX + dot / 2, py = cyp - dot * 0.12;
+      ctx.fillStyle = accent; ctx.beginPath();
+      ctx.arc(px, py - dot * 0.12, dot * 0.4, Math.PI, 0); ctx.lineTo(px, py + dot * 0.5); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(px, py - dot * 0.12, dot * 0.15, 0, 7); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.96)';
+      ctx.fillText(place, x0 + padX + dot + gap, cyp); ls(ctx, 0);
     }
 
     ctx.restore();
