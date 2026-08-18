@@ -592,6 +592,40 @@ const styles = css`
 }
 .speeds button.on { color: #fff; background: var(--color-accent); border-color: transparent; }
 
+/* botón de ajustes del HUD */
+.cfg-btn {
+  flex: none; width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--color-divider);
+  background: transparent; color: var(--color-text-muted); font-size: 15px; cursor: pointer; display: grid; place-items: center;
+  transition: color .12s, background .12s, transform .12s;
+}
+.cfg-btn:hover { color: var(--color-text); transform: rotate(35deg); }
+.cfg-btn.on { color: #fff; background: var(--color-accent); border-color: transparent; }
+
+/* panel de ajustes del HUD (sobre la barra) */
+.cfgpanel {
+  position: relative; z-index: 7; /* por encima del backdrop del modo grande */
+  pointer-events: auto; width: min(560px, 100%); align-self: center; display: flex; flex-direction: column; gap: 11px;
+  background: color-mix(in srgb, var(--color-surface-solid) 92%, transparent); border: 1px solid var(--color-divider);
+  border-radius: 16px; padding: 13px 16px; box-shadow: var(--shadow-lg); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  animation: rise .28s cubic-bezier(.22,1,.36,1) both;
+}
+.cfgpanel[hidden] { display: none; }
+.cfg-sec { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cfg-t { font-size: 11px; font-weight: 800; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: .08em; min-width: 66px; }
+.cfg-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.cfg-chip {
+  font-size: 12.5px; font-weight: 600; color: var(--color-text); font-family: inherit; cursor: pointer;
+  border: 1px solid var(--color-divider); background: transparent; border-radius: 100px; padding: 5px 12px; transition: background .12s, border-color .12s, opacity .12s;
+}
+.cfg-chip:not(.on) { opacity: .6; }
+.cfg-chip.on { color: #fff; background: var(--color-accent); border-color: transparent; opacity: 1; }
+.cfg-units { display: flex; gap: 3px; background: color-mix(in srgb, var(--color-text) 8%, transparent); border-radius: 100px; padding: 3px; }
+.cfg-units button {
+  font-size: 12.5px; font-weight: 700; color: var(--color-text-muted); border: none; background: transparent; border-radius: 100px;
+  padding: 5px 15px; cursor: pointer; font-family: inherit;
+}
+.cfg-units button.on { color: #fff; background: var(--color-accent); }
+
 @media (max-width: 480px) {
   .player { gap: 10px; padding: 9px 12px; }
   .speeds button { padding: 5px 6px; min-width: 28px; font-size: 11px; }
@@ -607,6 +641,7 @@ __m["js/components/ui/flight-player/flight-player.js"] = function (__x, __req) {
 const { DjiElement } = __req("js/core/DjiElement.js");
 const { mmss } = __req("js/geo.js");
 const { t } = __req("js/i18n/index.js");
+const { DEFAULT_CFG, GAUGE_KEYS } = __req("js/hud.js");
 const { styles } = __req("js/components/ui/flight-player/flight-player.css.js");
 
 /**
@@ -630,12 +665,28 @@ class FlightPlayer extends DjiElement {
   get hud() { return this._hud; }
 
   render() {
+    const cfg = this._cfg();
     this.shadowRoot.innerHTML = `
       <div class="stage" id="stage"></div>
       <div class="stack">
         <div class="pip" id="pip">
           <canvas class="hud" id="hud"></canvas>
           <button class="expand" id="expand" type="button" aria-label="${t('player.expand')}">⤢</button>
+        </div>
+        <div class="cfgpanel" id="cfgpanel" hidden>
+          <div class="cfg-sec">
+            <span class="cfg-t">${t('hud.gauges')}</span>
+            <div class="cfg-chips">
+              ${GAUGE_KEYS.map((k) => `<button class="cfg-chip ${cfg.gauges[k] ? 'on' : ''}" data-g="${k}" type="button">${t('hud.g.' + k)}</button>`).join('')}
+            </div>
+          </div>
+          <div class="cfg-sec">
+            <span class="cfg-t">${t('hud.units')}</span>
+            <div class="cfg-units">
+              <button class="${cfg.units === 'metric' ? 'on' : ''}" data-u="metric" type="button">${t('hud.metric')}</button>
+              <button class="${cfg.units === 'imperial' ? 'on' : ''}" data-u="imperial" type="button">${t('hud.imperial')}</button>
+            </div>
+          </div>
         </div>
         <div class="player">
           <button class="play" id="play" type="button" aria-label="${t('player.play')}">▶</button>
@@ -647,8 +698,15 @@ class FlightPlayer extends DjiElement {
             <button data-sp="2" type="button">2×</button>
             <button data-sp="4" type="button">4×</button>
           </div>
+          <button class="cfg-btn" id="cfgbtn" type="button" aria-label="${t('hud.settings')}">⚙</button>
         </div>
       </div>`;
+  }
+
+  /** Config del HUD (qué gauges y unidades), persistente en memoria. */
+  _cfg() {
+    if (!this._hudCfg) this._hudCfg = { units: DEFAULT_CFG.units, gauges: { ...DEFAULT_CFG.gauges } };
+    return this._hudCfg;
   }
 
   _mountVideo() {
@@ -667,6 +725,7 @@ class FlightPlayer extends DjiElement {
     this.on(this.$('#expand'), 'click', () => this._toggleBig());
     this.on(this.$('#stage'), 'click', () => { if (this._big) this._toggleBig(); }); // clic fuera reduce
     if (this._big) this._applyBig();
+    this._wireConfig();
     const c = this._clock;
     if (!c) return;
     this.$('#tot').textContent = mmss(c.dur);
@@ -706,6 +765,19 @@ class FlightPlayer extends DjiElement {
   /** Sale del modo grande (p. ej. al salir de la sección del mapa). */
   collapse() { if (this._big) { this._big = false; this._applyBig(); } }
 
+  /** Cablea el panel de ajustes del HUD (gauges + unidades). */
+  _wireConfig() {
+    const cfg = this._cfg();
+    const btn = this.$('#cfgbtn'), panel = this.$('#cfgpanel');
+    if (btn) this.on(btn, 'click', () => { panel.hidden = !panel.hidden; btn.classList.toggle('on', !panel.hidden); });
+    this.$$('.cfg-chip').forEach((b) => this.on(b, 'click', () => {
+      const k = b.dataset.g; cfg.gauges[k] = cfg.gauges[k] ? 0 : 1; b.classList.toggle('on', !!cfg.gauges[k]); this._drawHud();
+    }));
+    this.$$('.cfg-units button').forEach((b) => this.on(b, 'click', () => {
+      cfg.units = b.dataset.u; this.$$('.cfg-units button').forEach((x) => x.classList.toggle('on', x === b)); this._drawHud();
+    }));
+  }
+
   _applyBig() {
     const pip = this.$('#pip'), btn = this.$('#expand');
     if (!pip) return;
@@ -726,7 +798,7 @@ class FlightPlayer extends DjiElement {
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    this._hud(ctx, this._clock.t, w, h);
+    this._hud(ctx, this._clock.t, w, h, this._cfg());
   }
 }
 
@@ -3351,6 +3423,16 @@ const bearing = (la1, lo1, la2, lo2) => {
 
 const CARD = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
 
+/** Config por defecto del HUD (qué gauges y unidades). */
+const DEFAULT_CFG = { units: 'metric', gauges: { speed: 1, alt: 1, dist: 1, vspeed: 0, heading: 1, clock: 1 } };
+/** Orden de los gauges para el panel de ajustes. */
+const GAUGE_KEYS = ['speed', 'alt', 'dist', 'vspeed', 'heading', 'clock'];
+
+const CONV = {
+  metric: { spd: (v) => v * 3.6, spdU: 'km/h', len: (v) => v, lenU: 'm', vs: (v) => v, vsU: 'm/s' },
+  imperial: { spd: (v) => v * 2.23694, spdU: 'mph', len: (v) => v * 3.28084, lenU: 'ft', vs: (v) => v * 3.28084, vsU: 'ft/s' },
+};
+
 /**
  * @param {object} model modelo del vuelo (series, meta, takeoff)
  * @param {{accent?:string}} [opts]
@@ -3427,7 +3509,10 @@ function createHud(model, opts = {}) {
     ctx.restore();
   };
 
-  const draw = (ctx, t, w, h) => {
+  const draw = (ctx, t, w, h, cfg) => {
+    cfg = cfg || DEFAULT_CFG;
+    const gz = cfg.gauges || DEFAULT_CFG.gauges;
+    const un = CONV[cfg.units] || CONV.metric;
     const s = sample(t);
     const U = Math.max(6, Math.min(w, h) * 0.03); // unidad proporcional
     ctx.save();
@@ -3444,32 +3529,36 @@ function createHud(model, opts = {}) {
     // sombra suave: los elementos "flotan" sobre el metraje
     ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = U * 0.7; ctx.shadowOffsetY = U * 0.06;
 
-    // métricas abajo
-    const metrics = [
-      [`${Math.round((s.hs || 0) * 3.6)}`, 'km/h', 'VEL'],
-      [`${Math.round(s.rel || 0)}`, 'm', 'ALT'],
-      [`${Math.round(s.far || 0)}`, 'm', 'DIST'],
-    ];
+    // métricas abajo (según los gauges activos y las unidades)
+    const metrics = [];
+    if (gz.speed) metrics.push([`${Math.round(un.spd(s.hs || 0))}`, un.spdU, 'VEL']);
+    if (gz.alt) metrics.push([`${Math.round(un.len(s.rel || 0))}`, un.lenU, 'ALT']);
+    if (gz.dist) metrics.push([`${Math.round(un.len(s.far || 0))}`, un.lenU, 'DIST']);
+    if (gz.vspeed) metrics.push([`${un.vs(s.vs || 0).toFixed(1)}`, un.vsU, 'VERT']);
     const baseY = h - U * 1.8;
     metrics.forEach((m, i) => metric(ctx, w * ((i + 0.5) / metrics.length), baseY, U, m[0], m[1], m[2]));
 
     // brújula arriba derecha (más fina y compacta)
-    const R = Math.min(w, h) * 0.108;
-    compass(ctx, w - R - U * 1.5, R + U * 1.4, R, s.heading);
-    if (s.heading != null) {
-      ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.font = `600 ${U * 1.1}px ${FONT}`; ls(ctx, U * 0.06);
-      ctx.fillText(`${CARD[Math.round(s.heading / 45) % 8]} ${Math.round(s.heading)}°`, w - R - U * 1.5, R * 2 + U * 1.6); ls(ctx, 0);
+    if (gz.heading) {
+      const R = Math.min(w, h) * 0.108;
+      compass(ctx, w - R - U * 1.5, R + U * 1.4, R, s.heading);
+      if (s.heading != null) {
+        ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.font = `600 ${U * 1.1}px ${FONT}`; ls(ctx, U * 0.06);
+        ctx.fillText(`${CARD[Math.round(s.heading / 45) % 8]} ${Math.round(s.heading)}°`, w - R - U * 1.5, R * 2 + U * 1.6); ls(ctx, 0);
+      }
     }
 
     // reloj arriba izquierda (píldora fina)
-    ctx.textBaseline = 'middle';
-    const tm = `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
-    ctx.font = `550 ${U * 1.35}px ${FONT}`; ls(ctx, U * 0.02);
-    const tw = ctx.measureText(tm).width;
-    ctx.fillStyle = 'rgba(10,12,18,.32)'; roundRect(ctx, U * 1.3, U * 1.15, tw + U * 1.7, U * 2.2, U * 1.1); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,.96)'; ctx.textAlign = 'left';
-    ctx.fillText(tm, U * 2.15, U * 2.3); ls(ctx, 0);
+    if (gz.clock) {
+      ctx.textBaseline = 'middle';
+      const tm = `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+      ctx.font = `550 ${U * 1.35}px ${FONT}`; ls(ctx, U * 0.02);
+      const tw = ctx.measureText(tm).width;
+      ctx.fillStyle = 'rgba(10,12,18,.32)'; roundRect(ctx, U * 1.3, U * 1.15, tw + U * 1.7, U * 2.2, U * 1.1); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.96)'; ctx.textAlign = 'left';
+      ctx.fillText(tm, U * 2.15, U * 2.3); ls(ctx, 0);
+    }
 
     ctx.restore();
   };
@@ -3477,7 +3566,7 @@ function createHud(model, opts = {}) {
   return { draw };
 }
 
-Object.assign(__x, { createHud });
+Object.assign(__x, { DEFAULT_CFG, GAUGE_KEYS, createHud });
 
 };
 
@@ -3610,6 +3699,17 @@ __x.default = {
   'player.play': 'Play the flight',
   'player.pause': 'Pause',
   'player.seek': 'Seek in the flight',
+  'hud.settings': 'HUD settings',
+  'hud.gauges': 'Data',
+  'hud.units': 'Units',
+  'hud.metric': 'Metric',
+  'hud.imperial': 'Imperial',
+  'hud.g.speed': 'Speed',
+  'hud.g.alt': 'Altitude',
+  'hud.g.dist': 'Distance',
+  'hud.g.vspeed': 'Vertical',
+  'hud.g.heading': 'Heading',
+  'hud.g.clock': 'Clock',
   'player.expand': 'Enlarge video',
   'player.collapse': 'Shrink video',
   'lightbox.close': 'Close',
@@ -3860,6 +3960,17 @@ __x.default = {
   'player.play': 'Reproducir el vuelo',
   'player.pause': 'Pausa',
   'player.seek': 'Buscar en el vuelo',
+  'hud.settings': 'Ajustes del HUD',
+  'hud.gauges': 'Datos',
+  'hud.units': 'Unidades',
+  'hud.metric': 'Métrico',
+  'hud.imperial': 'Imperial',
+  'hud.g.speed': 'Velocidad',
+  'hud.g.alt': 'Altura',
+  'hud.g.dist': 'Distancia',
+  'hud.g.vspeed': 'V. vertical',
+  'hud.g.heading': 'Rumbo',
+  'hud.g.clock': 'Reloj',
   'player.expand': 'Ampliar vídeo',
   'player.collapse': 'Reducir vídeo',
   'lightbox.close': 'Cerrar',
