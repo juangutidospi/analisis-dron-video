@@ -19,6 +19,7 @@ import '../../ui/reading-nav/reading-nav.js';
 import { PlayerClock } from '../../../core/player-clock.js';
 import { reveal } from '../../../core/reveal.js';
 import { createHud } from '../../../hud.js';
+import { detectHighlights } from '../../../highlights.js';
 import { styles } from './flight-report.css.js';
 
 const f = (v, d = 0) => (v == null ? '—' : v.toFixed(d));
@@ -604,13 +605,27 @@ export class FlightReport extends DjiElement {
     }
     this._player.clock = this._clock;
     this._player.video = this._video || null;
+    const hl = detectHighlights(this.model);
+    this._player.highlights = hl; // momentos destacados en la barra
+    const accent = getComputedStyle(this).getPropertyValue('--color-accent').trim() || '#5b9dff';
     // HUD de telemetría sobre el vídeo (con el color de acento del tema)
-    if (this._video) {
-      const accent = getComputedStyle(this).getPropertyValue('--color-accent').trim() || '#5b9dff';
-      this._player.hud = createHud(this.model, { accent, title: this.assets?.title }).draw;
-    } else {
-      this._player.hud = null;
-    }
+    this._player.hud = this._video
+      ? createHud(this.model, { accent, title: this.assets?.title, place: this.assets?.place }).draw
+      : null;
+    // datos de la portada del trailer
+    const hv = (type) => hl.find((h) => h.type === type)?.value || 0;
+    this._player.intro = {
+      kicker: t('intro.kicker'),
+      title: this.assets?.title || 'DJI',
+      place: this.assets?.place || '',
+      accent,
+      track: this.model.track || [],
+      stats: [
+        { label: t('intro.dist'), value: Math.round(hv('dist')) + ' m' },
+        { label: t('intro.alt'), value: Math.round(hv('alt')) + ' m' },
+        { label: t('intro.spd'), value: Math.round(hv('speed') * 3.6) + ' km/h' },
+      ],
+    };
     // reserva hueco al final para que la barra fija del reproductor no tape el contenido
     this.classList.toggle('has-video', !!this._video);
   }

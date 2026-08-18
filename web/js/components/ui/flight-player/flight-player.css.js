@@ -60,6 +60,22 @@ export const styles = css`
 .bar { flex: 1; height: 7px; border-radius: 100px; background: color-mix(in srgb, var(--color-text) 13%, transparent); position: relative; cursor: pointer; touch-action: none; }
 .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 100px; background: linear-gradient(90deg, var(--color-accent), var(--color-violet)); }
 .fill::after { content: ""; position: absolute; right: -7px; top: 50%; width: 14px; height: 14px; border-radius: 50%; background: #fff; transform: translateY(-50%); box-shadow: 0 1px 5px rgba(0,0,0,.45); }
+/* marcadores de momentos destacados sobre la barra */
+.hl-mark {
+  position: absolute; top: 50%; transform: translate(-50%, -50%); z-index: 3;
+  width: 16px; height: 18px; padding: 0; border: none; background: none; cursor: ew-resize; display: grid; place-items: center;
+  touch-action: none;
+}
+.hl-mark::after {
+  content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--color-accent);
+  border: 2px solid var(--color-surface-solid); box-shadow: 0 1px 3px rgba(0,0,0,.45); transition: transform .12s;
+}
+.hl-mark:hover::after { transform: scale(1.4); }
+.hl-alt::after { background: var(--color-violet, #a06bff); }
+.hl-dist::after { background: #37cf6b; }
+.hl-climb::after { background: #37cf6b; }
+.hl-descent::after { background: #ff5d5d; }
+.hl-turn::after { background: #ffb43d; }
 .speeds { display: flex; gap: 4px; flex: none; }
 .speeds button {
   border: 1px solid var(--color-divider); background: transparent; color: var(--color-text-muted); border-radius: 8px;
@@ -142,7 +158,7 @@ export const styles = css`
 }
 .cfg-wave-foot { display: flex; align-items: center; gap: 8px; }
 .cfg-wave-foot .cfg-ctrl-v { min-width: 0; }
-.cfg-foot { display: flex; align-items: center; gap: 10px; padding: 10px; }
+.cfg-foot { display: flex; align-items: center; gap: 10px; padding: 10px; flex-wrap: wrap; }
 .cfg-units { display: flex; gap: 2px; background: color-mix(in srgb, var(--color-text) 8%, transparent); border-radius: 10px; padding: 3px; flex: none; }
 .cfg-units button {
   font-size: 12.5px; font-weight: 600; color: var(--color-text-muted); border: none; background: transparent; border-radius: 7px;
@@ -157,6 +173,17 @@ export const styles = css`
 }
 .cfg-export:hover { transform: translateY(-1px); box-shadow: 0 12px 26px -8px color-mix(in srgb, var(--color-accent) 78%, transparent); }
 .cfg-export-ic { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.cfg-trailer {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; font-family: inherit; cursor: pointer;
+  font-size: 13px; font-weight: 650; color: var(--color-text); border: 1px solid var(--color-divider);
+  background: transparent; border-radius: 11px; padding: 9px 13px; transition: border-color .14s, background .14s;
+}
+.cfg-trailer:hover { border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+.cfg-select {
+  flex: none; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--color-text); cursor: pointer;
+  border: 1px solid var(--color-divider); background: transparent; border-radius: 9px; padding: 8px 10px;
+}
+.cfg-select:hover { border-color: color-mix(in srgb, var(--color-text) 24%, transparent); }
 
 /* overlay de progreso de exportación */
 .export-ov {

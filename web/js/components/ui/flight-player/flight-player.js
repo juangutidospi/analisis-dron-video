@@ -2,7 +2,8 @@ import { DjiElement } from '../../../core/DjiElement.js';
 import { mmss } from '../../../geo.js';
 import { t } from '../../../i18n/index.js';
 import { DEFAULT_CFG, GAUGE_KEYS } from '../../../hud.js';
-import { exportHudVideo } from '../../../hud-export.js';
+import { exportHudVideo, exportTrailer } from '../../../hud-export.js';
+import { buildTrailerSegments } from '../../../highlights.js';
 import { generateAmbient, STYLES } from '../../../music-gen.js';
 import { downloadBlob } from '../../../exports.js';
 import { styles } from './flight-player.css.js';
@@ -27,6 +28,14 @@ export class FlightPlayer extends DjiElement {
   set hud(fn) { this._hud = fn; if (this.isConnected) this._drawHud(); }
   get hud() { return this._hud; }
 
+  /** @param {Array<{t:number,type:string,value:number,unit:string}>} h momentos destacados */
+  set highlights(h) { this._highlights = h || []; if (this.isConnected) this._renderHighlights(); }
+  get highlights() { return this._highlights; }
+
+  /** @param {object} d datos de la portada del trailer (kicker, título, lugar, track, stats) */
+  set intro(d) { this._intro = d; }
+  get intro() { return this._intro; }
+
   render() {
     const cfg = this._cfg();
     this.shadowRoot.innerHTML = `
@@ -43,7 +52,7 @@ export class FlightPlayer extends DjiElement {
           </div>
           <div class="cfg-sec">
             <span class="cfg-t">${t('hud.elements')}</span>
-            <div class="cfg-chips">${['heading', 'clock', 'minimap', 'progress', 'watermark'].map((k) => this._chipTpl(k, cfg)).join('')}</div>
+            <div class="cfg-chips">${['heading', 'clock', 'minimap', 'progress', 'watermark', 'location'].map((k) => this._chipTpl(k, cfg)).join('')}</div>
           </div>
           <div class="cfg-sec">
             <span class="cfg-t">${t('hud.theme')}</span>
@@ -84,6 +93,14 @@ export class FlightPlayer extends DjiElement {
               <button class="${cfg.units === 'metric' ? 'on' : ''}" data-u="metric" type="button">${t('hud.metric')}</button>
               <button class="${cfg.units === 'imperial' ? 'on' : ''}" data-u="imperial" type="button">${t('hud.imperial')}</button>
             </div>
+            <div class="cfg-units" title="${t('hud.format.hint')}">
+              <button class="${!this._vertical ? 'on' : ''}" data-fmt="h" type="button">16:9</button>
+              <button class="${this._vertical ? 'on' : ''}" data-fmt="v" type="button">9:16</button>
+            </div>
+            <select class="cfg-select" id="trailerfx" title="${t('hud.fx.hint')}" aria-label="${t('hud.fx.hint')}">
+              ${['random', 'smooth', 'dynamic', 'none'].map((k) => `<option value="${k}" ${(this._trailerFx ?? 'random') === k ? 'selected' : ''}>${t('hud.fx.' + k)}</option>`).join('')}
+            </select>
+            <button class="cfg-trailer" id="trailerbtn" type="button" title="${t('hud.trailer.hint')}">🎬 ${t('hud.trailer')}</button>
             <button class="cfg-export" id="exportbtn" type="button">
               <svg viewBox="0 0 24 24" aria-hidden="true" class="cfg-export-ic"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>${t('hud.export')}
             </button>
@@ -152,7 +169,50 @@ export class FlightPlayer extends DjiElement {
       c.addEventListener('state', () => this._syncMusic()); // play/pausa/seek/velocidad → música
     }
     this._sync();
+    this._renderHighlights();
   }
+
+  /** Pinta los marcadores de momentos (arrastrables): definen los puntos del trailer. */
+  _renderHighlights() {
+    const bar = this.$('#bar'); const c = this._clock;
+    if (!bar) return;
+    this.$$('.hl-mark').forEach((m) => m.remove());
+    if (!c || !c.dur || !this._highlights?.length) return;
+    const tFromX = (x) => { const r = bar.getBoundingClientRect(); return Math.max(0, Math.min(1, (x - r.left) / r.width)) * c.dur; };
+    for (const h of this._highlights) {
+      const m = document.createElement('button');
+      m.className = 'hl-mark hl-' + h.type; m.type = 'button';
+      m.style.left = Math.max(0, Math.min(100, h.t / c.dur * 100)) + '%';
+      m.title = this._hlLabel(h); m.setAttribute('aria-label', m.title);
+      let dragging = false, moved = false;
+      this.on(m, 'pointerdown', (e) => { e.stopPropagation(); m.setPointerCapture(e.pointerId); dragging = true; moved = false; c.pause(); });
+      this.on(m, 'pointermove', (e) => {
+        if (!dragging) return;
+        moved = true;
+        h.t = tFromX(e.clientX);
+        m.style.left = (h.t / c.dur * 100) + '%';
+        m.title = this._hlLabel(h); m.setAttribute('aria-label', m.title);
+        c.seek(h.t); // salta al frame de este punto mientras se arrastra
+      });
+      this.on(m, 'pointerup', (e) => { dragging = false; if (!moved) c.seek(h.t); }); // clic simple → saltar
+      bar.appendChild(m);
+    }
+  }
+
+  /** Formatea el valor de un momento según las unidades activas. */
+  _hlFmt(h) {
+    const imp = this._cfg().units === 'imperial';
+    switch (h.type) {
+      case 'speed': return imp ? Math.round(h.value * 2.23694) + ' mph' : Math.round(h.value * 3.6) + ' km/h';
+      case 'alt': case 'dist': return imp ? Math.round(h.value * 3.28084) + ' ft' : Math.round(h.value) + ' m';
+      case 'climb': case 'descent': return imp ? (h.value * 3.28084).toFixed(1) + ' ft/s' : h.value.toFixed(1) + ' m/s';
+      case 'turn': return Math.round(h.value) + ' °/s';
+      default: return String(h.value);
+    }
+  }
+
+  /** Etiqueta de un momento: título traducido + valor + instante (se actualiza al arrastrar). */
+  _hlLabel(h) { return t('hl.' + h.type) + ' · ' + this._hlFmt(h) + ' · ' + mmss(h.t); }
 
   _sync() {
     const c = this._clock;
@@ -189,6 +249,44 @@ export class FlightPlayer extends DjiElement {
     this._wireMusic();
     const exp = this.$('#exportbtn');
     if (exp) this.on(exp, 'click', () => this._exportVideo());
+    const tb = this.$('#trailerbtn');
+    if (tb) this.on(tb, 'click', () => this._exportTrailer());
+    const fx = this.$('#trailerfx');
+    if (fx) this.on(fx, 'change', () => { this._trailerFx = fx.value; });
+    this.$$('button[data-fmt]').forEach((b) => this.on(b, 'click', () => {
+      this._vertical = b.dataset.fmt === 'v';
+      this.$$('button[data-fmt]').forEach((x) => x.classList.toggle('on', x === b));
+    }));
+  }
+
+  /** Presets de transiciones del trailer (undefined = todas al azar). */
+  _trailerTransitions() {
+    const p = { smooth: ['black', 'blur'], dynamic: ['zoom', 'blur'], none: [] };
+    return (this._trailerFx && this._trailerFx !== 'random') ? p[this._trailerFx] : undefined;
+  }
+
+  /** Genera el auto-trailer (tramos de los momentos destacados) con HUD y música. */
+  async _exportTrailer() {
+    if (this._exporting) return;
+    if (!this._video || !this._hud) return;
+    const segs = buildTrailerSegments(this._highlights, this._clock?.dur || 0, { target: 26 }); // ~30 s con la portada
+    if (!segs.length) return;
+    this._exporting = true;
+    this._clock?.pause();
+    const ov = this._exportOverlay();
+    const ctrl = new AbortController();
+    ov.cancelBtn.onclick = () => ctrl.abort();
+    try {
+      const blob = await exportTrailer({ video: this._video, draw: this._hud, cfg: this._cfg(), segments: segs, transitions: this._trailerTransitions(), intro: this._intro, musicBuffer: this._musicBuf, musicVolume: this._musicVolEff(), musicStart: this._musicStart || 0, vertical: this._vertical, onProgress: ov.set, signal: ctrl.signal });
+      downloadBlob('trailer-vuelo.mp4', blob);
+      ov.done();
+      await new Promise((r) => setTimeout(r, 1400));
+    } catch (e) {
+      if (e.name !== 'AbortError') { console.error(e); ov.fail(e.message); await new Promise((r) => setTimeout(r, 2600)); }
+    } finally {
+      this._exporting = false;
+      ov.close();
+    }
   }
 
   /** Cablea la carga/borrado del archivo de música para la exportación. */
@@ -361,7 +459,7 @@ export class FlightPlayer extends DjiElement {
     const ctrl = new AbortController();
     ov.cancelBtn.onclick = () => ctrl.abort();
     try {
-      const blob = await exportHudVideo({ video: this._video, draw: this._hud, cfg: this._cfg(), musicBuffer: this._musicBuf, musicVolume: this._musicVolEff(), musicStart: this._musicStart || 0, onProgress: ov.set, signal: ctrl.signal });
+      const blob = await exportHudVideo({ video: this._video, draw: this._hud, cfg: this._cfg(), musicBuffer: this._musicBuf, musicVolume: this._musicVolEff(), musicStart: this._musicStart || 0, vertical: this._vertical, onProgress: ov.set, signal: ctrl.signal });
       const ext = (blob.type || '').includes('mp4') ? 'mp4' : 'webm';
       downloadBlob('vuelo-hud.' + ext, blob);
       ov.done();
