@@ -126,6 +126,8 @@ export default {
   'player.play': 'Reproducir el vuelo',
   'player.pause': 'Pausa',
   'player.seek': 'Buscar en el vuelo',
+  'player.expand': 'Ampliar vídeo',
+  'player.collapse': 'Reducir vídeo',
   'lightbox.close': 'Cerrar',
   'lightbox.prev': 'Anterior',
   'lightbox.next': 'Siguiente',

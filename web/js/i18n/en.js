@@ -126,6 +126,8 @@ export default {
   'player.play': 'Play the flight',
   'player.pause': 'Pause',
   'player.seek': 'Seek in the flight',
+  'player.expand': 'Enlarge video',
+  'player.collapse': 'Shrink video',
   'lightbox.close': 'Close',
   'lightbox.prev': 'Previous',
   'lightbox.next': 'Next',
