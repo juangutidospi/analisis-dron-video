@@ -15,9 +15,9 @@ const bearing = (la1, lo1, la2, lo2) => {
 const CARD = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
 
 /** Config por defecto del HUD (qué gauges y unidades). */
-export const DEFAULT_CFG = { units: 'metric', gauges: { speed: 1, alt: 1, dist: 1, vspeed: 0, heading: 1, clock: 1 } };
+export const DEFAULT_CFG = { units: 'metric', gauges: { speed: 1, alt: 1, dist: 1, vspeed: 0, heading: 1, clock: 1, minimap: 1, progress: 1, watermark: 0 } };
 /** Orden de los gauges para el panel de ajustes. */
-export const GAUGE_KEYS = ['speed', 'alt', 'dist', 'vspeed', 'heading', 'clock'];
+export const GAUGE_KEYS = ['speed', 'alt', 'dist', 'vspeed', 'heading', 'clock', 'minimap', 'progress', 'watermark'];
 
 const CONV = {
   metric: { spd: (v) => v * 3.6, spdU: 'km/h', len: (v) => v, lenU: 'm', vs: (v) => v, vsU: 'm/s' },
@@ -32,6 +32,14 @@ const CONV = {
 export function createHud(model, opts = {}) {
   const S = model.series, tk = model.takeoff;
   const accent = opts.accent || '#5b9dff';
+  const title = opts.title || '';
+  // track para el mini-mapa (bounding box en proyección equirectangular sencilla)
+  const T = (model.track || []).filter((p) => p && p[0] != null);
+  const lats = T.map((p) => p[0]), lons = T.map((p) => p[1]);
+  const mm = T.length ? {
+    la0: Math.min(...lats), la1: Math.max(...lats), lo0: Math.min(...lons), lo1: Math.max(...lons),
+    cosLat: Math.cos((Math.min(...lats) + Math.max(...lats)) / 2 * Math.PI / 180) || 1,
+  } : null;
 
   const sample = (t) => {
     let i = 1;
@@ -100,6 +108,30 @@ export function createHud(model, opts = {}) {
     ctx.restore();
   };
 
+  // mini-mapa: trazado + despegue + posición actual, ajustado al rectángulo dado
+  const minimap = (ctx, x, y, bw, bh, curLat, curLon) => {
+    if (!mm) return;
+    ctx.save();
+    roundRect(ctx, x, y, bw, bh, bw * 0.06);
+    ctx.fillStyle = 'rgba(10,12,18,.42)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = bw * 0.012; ctx.stroke();
+    ctx.clip();
+    const pad = 0.16;
+    const spanLo = (mm.lo1 - mm.lo0) * mm.cosLat || 1e-6, spanLa = (mm.la1 - mm.la0) || 1e-6;
+    const sc = Math.min(bw * (1 - pad) / spanLo, bh * (1 - pad) / spanLa);
+    const cx = x + bw / 2, cy = y + bh / 2, mLo = (mm.lo0 + mm.lo1) / 2, mLa = (mm.la0 + mm.la1) / 2;
+    const PX = (lo) => cx + (lo - mLo) * mm.cosLat * sc, PY = (la) => cy - (la - mLa) * sc;
+    ctx.beginPath();
+    T.forEach((p, i) => { const px = PX(p[1]), py = PY(p[0]); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+    ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = Math.max(1, bw * 0.016); ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
+    ctx.fillStyle = '#37cf6b'; ctx.beginPath(); ctx.arc(PX(tk[1]), PY(tk[0]), bw * 0.03, 0, 7); ctx.fill();
+    if (curLat != null) {
+      ctx.fillStyle = accent; ctx.beginPath(); ctx.arc(PX(curLon), PY(curLat), bw * 0.045, 0, 7); ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = bw * 0.016; ctx.stroke();
+    }
+    ctx.restore();
+  };
+
   const draw = (ctx, t, w, h, cfg) => {
     cfg = cfg || DEFAULT_CFG;
     const gz = cfg.gauges || DEFAULT_CFG.gauges;
@@ -149,6 +181,31 @@ export function createHud(model, opts = {}) {
       ctx.fillStyle = 'rgba(10,12,18,.32)'; roundRect(ctx, U * 1.3, U * 1.15, tw + U * 1.7, U * 2.2, U * 1.1); ctx.fill();
       ctx.fillStyle = 'rgba(255,255,255,.96)'; ctx.textAlign = 'left';
       ctx.fillText(tm, U * 2.15, U * 2.3); ls(ctx, 0);
+    }
+
+    // mini-mapa (arriba izquierda, bajo el reloj)
+    if (gz.minimap) {
+      ctx.shadowColor = 'transparent';
+      const mw = Math.min(w, h) * 0.3, mh = mw * 0.64;
+      minimap(ctx, U * 1.3, gz.clock ? U * 4.4 : U * 1.3, mw, mh, s.lat, s.lon);
+    }
+
+    // barra de progreso (borde inferior)
+    if (gz.progress) {
+      ctx.shadowColor = 'transparent';
+      const p = Math.max(0, Math.min(1, t / (S[S.length - 1].t || 1)));
+      const bh = Math.max(2, U * 0.3);
+      ctx.fillStyle = 'rgba(255,255,255,.22)'; ctx.fillRect(0, h - bh, w, bh);
+      ctx.fillStyle = accent; ctx.fillRect(0, h - bh, w * p, bh);
+    }
+
+    // marca de agua (arriba centro)
+    if (gz.watermark && title) {
+      ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = U * 0.6; ctx.shadowOffsetY = U * 0.06;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.font = `600 ${U * 1.05}px ${FONT}`; ls(ctx, U * 0.05);
+      ctx.fillStyle = 'rgba(255,255,255,.72)';
+      ctx.fillText(title, w / 2, U * 1.5); ls(ctx, 0);
     }
 
     ctx.restore();
