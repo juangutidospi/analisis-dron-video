@@ -558,8 +558,8 @@ const styles = css`
 }
 :host(.big) .stage { opacity: 1; visibility: visible; pointer-events: auto; }
 .pip.big {
-  position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%);
-  width: min(92vw, calc(72vh * 16 / 9)); max-width: 1120px; z-index: 5;
+  position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%);
+  width: min(96vw, calc(86vh * 16 / 9)); max-width: 1600px; z-index: 5;
   animation: bigin .26s cubic-bezier(.22,1,.36,1) both;
 }
 .pip.big .expand { width: 38px; height: 38px; font-size: 18px; top: 12px; right: 12px; }
