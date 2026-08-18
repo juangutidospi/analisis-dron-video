@@ -3,6 +3,7 @@ import { mmss } from '../../../geo.js';
 import { t } from '../../../i18n/index.js';
 import { DEFAULT_CFG, GAUGE_KEYS } from '../../../hud.js';
 import { exportHudVideo } from '../../../hud-export.js';
+import { generateAmbient, STYLES } from '../../../music-gen.js';
 import { downloadBlob } from '../../../exports.js';
 import { styles } from './flight-player.css.js';
 
@@ -54,13 +55,29 @@ export class FlightPlayer extends DjiElement {
           <div class="cfg-sec">
             <span class="cfg-t">${t('hud.music')}</span>
             <div class="cfg-music">
-              <button class="cfg-music-btn ${this._music ? 'on' : ''}" id="musicbtn" type="button">
+              <button class="cfg-music-btn ${this._musicName ? 'on' : ''}" id="musicbtn" type="button">
                 <svg viewBox="0 0 24 24" aria-hidden="true" class="cfg-music-ic"><path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/></svg>
-                <span id="musicname">${this._music ? this._music.name : t('hud.music.none')}</span>
+                <span id="musicname">${this._musicName || t('hud.music.none')}</span>
               </button>
-              <button class="cfg-music-x" id="musicclear" type="button" aria-label="${t('hud.music.remove')}" ${this._music ? '' : 'hidden'}>✕</button>
+              <button class="cfg-mini" id="musicgen" type="button" title="${t('hud.music.generate.hint')}">✨ ${t('hud.music.generate')}</button>
+              <button class="cfg-music-x" id="musicclear" type="button" aria-label="${t('hud.music.remove')}" ${this._musicName ? '' : 'hidden'}>✕</button>
             </div>
             <input type="file" id="musicinput" accept="audio/*" hidden>
+            <div class="cfg-music-ctrls" id="musicctrls" ${this._musicName ? '' : 'hidden'}>
+              <div class="cfg-ctrl">
+                <span class="cfg-ctrl-t">${t('hud.music.volume')}</span>
+                <input type="range" id="musicvol" min="0" max="100" value="${Math.round((this._musicVol ?? 1) * 100)}">
+                <span class="cfg-ctrl-v" id="musicvollbl">${Math.round((this._musicVol ?? 1) * 100)}%</span>
+                <button class="cfg-mini ${this._musicNormOn ? 'on' : ''}" id="musicnorm" type="button" title="${t('hud.music.normalize.hint')}">${t('hud.music.normalize')}</button>
+              </div>
+              <div class="cfg-wave">
+                <canvas id="musicwave" class="cfg-wave-cv" title="${t('hud.music.start')}"></canvas>
+                <div class="cfg-wave-foot">
+                  <span class="cfg-ctrl-t">${t('hud.music.start')}</span>
+                  <span class="cfg-ctrl-v" id="musicstartlbl">${mmss(this._musicStart || 0)}</span>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="cfg-foot">
             <div class="cfg-units">
@@ -146,6 +163,7 @@ export class FlightPlayer extends DjiElement {
     const play = this.$('#play'); if (play) { play.textContent = c.playing ? '❚❚' : '▶'; play.setAttribute('aria-label', t(c.playing ? 'player.pause' : 'player.play')); }
     this.$$('[data-sp]').forEach((b) => b.classList.toggle('on', +b.dataset.sp === c.speed));
     this._drawHud();
+    if (this._musicBuf && this._musicPeaks) this._drawWaveform(); // cursor sobre la canción
   }
 
   /** Alterna el modo grande (teatro) del vídeo + HUD. */
@@ -178,16 +196,120 @@ export class FlightPlayer extends DjiElement {
     const btn = this.$('#musicbtn'), input = this.$('#musicinput'), clear = this.$('#musicclear');
     if (!btn || !input) return;
     this.on(btn, 'click', () => input.click());
-    this.on(input, 'change', () => { const f = input.files?.[0]; if (f) { this._music = f; this._musicBuf = null; this._decodeMusic(); this._refreshMusic(); } });
-    if (clear) this.on(clear, 'click', () => { this._music = null; this._musicBuf = null; this._musicStop(); input.value = ''; this._refreshMusic(); });
+    this.on(input, 'change', () => { const f = input.files?.[0]; if (f) { this._music = f; this._musicName = f.name; this._musicGen = false; this._musicBuf = null; this._musicStart = 0; this._decodeMusic(); this._refreshMusic(); } });
+    if (clear) this.on(clear, 'click', () => { this._music = null; this._musicBuf = null; this._musicName = null; this._musicGen = false; this._musicStop(); input.value = ''; this._refreshMusic(); });
+    const gen = this.$('#musicgen');
+    if (gen) this.on(gen, 'click', () => this._generateMusic());
+    const vol = this.$('#musicvol'), norm = this.$('#musicnorm');
+    const applyVol = () => { if (this._musicGain && this._musicAC) this._musicGain.gain.setTargetAtTime(this._musicVolEff(), this._musicAC.currentTime, 0.02); };
+    if (vol) this.on(vol, 'input', () => {
+      this._musicVol = (+vol.value) / 100;
+      const l = this.$('#musicvollbl'); if (l) l.textContent = vol.value + '%';
+      applyVol();
+    });
+    if (norm) this.on(norm, 'click', () => { this._musicNormOn = !this._musicNormOn; norm.classList.toggle('on', this._musicNormOn); applyVol(); });
+    const wave = this.$('#musicwave');
+    if (wave) {
+      const setFromX = (x) => {
+        const r = wave.getBoundingClientRect(), f = Math.max(0, Math.min(1, (x - r.left) / r.width));
+        this._musicStart = +(f * (this._musicBuf?.duration || 0)).toFixed(1);
+        const l = this.$('#musicstartlbl'); if (l) l.textContent = mmss(this._musicStart);
+        this._drawWaveform();
+      };
+      this.on(wave, 'pointerdown', (e) => { wave.setPointerCapture(e.pointerId); this._waveDrag = true; setFromX(e.clientX); });
+      this.on(wave, 'pointermove', (e) => { if (this._waveDrag) setFromX(e.clientX); });
+      this.on(wave, 'pointerup', () => { this._waveDrag = false; this._syncMusic(); });
+    }
+    this._drawWaveform();
   }
 
-  /** Refresca el nombre de la música y la visibilidad del botón de quitar. */
+  /** Calcula los picos (0..1) de la canción para dibujar la forma de onda. */
+  _computePeaks(buf, n = 320) {
+    const ch = buf.getChannelData(0), block = Math.floor(ch.length / n) || 1, peaks = new Array(n);
+    for (let i = 0; i < n; i++) {
+      let m = 0; const s = i * block, e = Math.min(ch.length, s + block);
+      for (let j = s; j < e; j++) { const v = Math.abs(ch[j]); if (v > m) m = v; }
+      peaks[i] = m;
+    }
+    const mx = Math.max(0.01, ...peaks);
+    return peaks.map((p) => p / mx);
+  }
+
+  /** Factor de normalización: sube el volumen percibido (RMS) sin llegar a saturar. */
+  _computeNorm(buf) {
+    let peak = 0, sum = 0, count = 0;
+    for (let c = 0; c < buf.numberOfChannels; c++) {
+      const d = buf.getChannelData(c);
+      for (let j = 0; j < d.length; j += 64) { const v = Math.abs(d[j]); if (v > peak) peak = v; sum += d[j] * d[j]; count++; }
+    }
+    const rms = Math.sqrt(sum / Math.max(1, count));
+    let f = rms > 1e-4 ? 0.2 / rms : 1;          // RMS objetivo ~0,2
+    f = Math.min(f, 0.99 / (peak || 1));          // nunca saturar
+    return Math.max(0.1, Math.min(f, 8));
+  }
+
+  /** Volumen efectivo = volumen del slider × factor de normalización (si está activa). */
+  _musicVolEff() { return (this._musicVol ?? 1) * (this._musicNormOn ? (this._musicNorm || 1) : 1); }
+
+  /** Dibuja la forma de onda: región usada en acento, asa de inicio y cursor. */
+  _drawWaveform() {
+    const cv = this.$('#musicwave');
+    if (!cv || !this._musicPeaks || !this._musicBuf) return;
+    const w = cv.clientWidth, h = cv.clientHeight || 46;
+    if (!w) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+    const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h);
+    const peaks = this._musicPeaks, n = peaks.length, mid = h / 2;
+    const Dm = this._musicBuf.duration, Dv = this._clock?.dur || Dm, start = this._musicStart || 0;
+    const cs = getComputedStyle(this);
+    const accent = cs.getPropertyValue('--color-accent').trim() || '#5b9dff';
+    const barW = w / n;
+    for (let i = 0; i < n; i++) {
+      const ti = i / n * Dm, inUse = ((ti - start + Dm) % Dm) < Dv, a = Math.max(1, peaks[i] * mid * 0.9);
+      ctx.fillStyle = inUse ? accent : 'rgba(140,150,170,.4)';
+      ctx.fillRect(i * barW, mid - a, Math.max(1, barW * 0.66), a * 2);
+    }
+    const sx = (start / Dm) * w; // asa de inicio
+    ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, h); ctx.stroke();
+    ctx.fillStyle = accent; ctx.beginPath(); ctx.arc(sx, 5, 4, 0, 7); ctx.fill();
+    if (this._clock?.playing) { // cursor de reproducción sobre la canción
+      const cur = (((start + (this._clock.t || 0)) % Dm) / Dm) * w;
+      ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(cur, 0); ctx.lineTo(cur, h); ctx.stroke();
+    }
+  }
+
+  /** Refresca nombre, controles y etiqueta del punto de inicio según la música. */
   _refreshMusic() {
-    const name = this.$('#musicname'), btn = this.$('#musicbtn'), clear = this.$('#musicclear');
-    if (name) name.textContent = this._music ? this._music.name : t('hud.music.none');
-    if (btn) btn.classList.toggle('on', !!this._music);
-    if (clear) clear.hidden = !this._music;
+    const name = this.$('#musicname'), btn = this.$('#musicbtn'), clear = this.$('#musicclear'), ctrls = this.$('#musicctrls');
+    if (name) name.textContent = this._musicName || t('hud.music.none');
+    if (btn) btn.classList.toggle('on', !!this._musicName);
+    if (clear) clear.hidden = !this._musicName;
+    if (ctrls) ctrls.hidden = !this._musicName;
+    const lbl = this.$('#musicstartlbl');
+    if (lbl) lbl.textContent = mmss(this._musicStart || 0);
+  }
+
+  /** Genera música ambiental sintética (cicla entre estilos) y la usa como banda sonora. */
+  async _generateMusic() {
+    const keys = Object.keys(STYLES);
+    this._genIdx = ((this._genIdx ?? -1) + 1) % keys.length;
+    const style = keys[this._genIdx];
+    const gen = this.$('#musicgen');
+    if (gen) { gen.disabled = true; gen.textContent = '⏳ ' + t('hud.music.generating'); }
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      this._musicAC = this._musicAC || new AC();
+      const dur = Math.min(120, Math.max(20, this._clock?.dur || 60));
+      const buf = await generateAmbient(this._musicAC.sampleRate, dur, style);
+      this._music = null; this._musicGen = true; this._musicStart = 0;
+      this._musicName = t('hud.music.ambient') + ' · ' + t('hud.music.style.' + style);
+      this._musicBuf = buf;
+      this._musicPeaks = this._computePeaks(buf);
+      this._musicNorm = this._computeNorm(buf);
+    } catch (e) { console.error(e); }
+    if (gen) { gen.disabled = false; gen.textContent = '✨ ' + t('hud.music.generate'); }
+    this._refreshMusic(); this._drawWaveform(); this._syncMusic();
   }
 
   /** Decodifica el archivo de música para la previsualización (Web Audio). */
@@ -197,7 +319,11 @@ export class FlightPlayer extends DjiElement {
       const AC = window.AudioContext || window.webkitAudioContext;
       this._musicAC = this._musicAC || new AC();
       this._musicBuf = await this._musicAC.decodeAudioData(await this._music.arrayBuffer());
-    } catch { this._musicBuf = null; }
+      this._musicPeaks = this._computePeaks(this._musicBuf);
+      this._musicNorm = this._computeNorm(this._musicBuf);
+    } catch { this._musicBuf = null; this._musicPeaks = null; }
+    this._refreshMusic();
+    this._drawWaveform();
     this._syncMusic();
   }
 
@@ -209,17 +335,20 @@ export class FlightPlayer extends DjiElement {
   /** Alinea la música con el reloj: suena en play (con loop y velocidad), para en pausa/seek. */
   _syncMusic() {
     const c = this._clock;
-    if (!c || !this._music || !this._musicBuf) { this._musicStop(); return; }
+    if (!c || !this._musicBuf) { this._musicStop(); return; }
     this._musicStop();
     if (!c.playing) return;
     const ac = this._musicAC;
     if (ac.state === 'suspended') ac.resume?.();
     const src = ac.createBufferSource(); src.buffer = this._musicBuf; src.loop = true;
     src.playbackRate.value = c.speed || 1;
-    const g = ac.createGain(); g.gain.value = 1;
+    const g = ac.createGain(), vol = this._musicVolEff(), now = ac.currentTime;
+    g.gain.setValueAtTime(0, now); g.gain.linearRampToValueAtTime(vol, now + 0.4); // fundido de entrada
     src.connect(g); g.connect(ac.destination);
-    src.start(0, (c.t || 0) % this._musicBuf.duration);
-    this._musicSrc = src;
+    const dur = this._musicBuf.duration;
+    const off = ((((this._musicStart || 0) + (c.t || 0)) % dur) + dur) % dur; // trim + posición del reloj
+    src.start(0, off);
+    this._musicSrc = src; this._musicGain = g;
   }
 
   /** Exporta el vídeo con el HUD quemado (graba en tiempo real → descarga .webm). */
@@ -232,7 +361,7 @@ export class FlightPlayer extends DjiElement {
     const ctrl = new AbortController();
     ov.cancelBtn.onclick = () => ctrl.abort();
     try {
-      const blob = await exportHudVideo({ video: this._video, draw: this._hud, cfg: this._cfg(), music: this._music, onProgress: ov.set, signal: ctrl.signal });
+      const blob = await exportHudVideo({ video: this._video, draw: this._hud, cfg: this._cfg(), musicBuffer: this._musicBuf, musicVolume: this._musicVolEff(), musicStart: this._musicStart || 0, onProgress: ov.set, signal: ctrl.signal });
       const ext = (blob.type || '').includes('mp4') ? 'mp4' : 'webm';
       downloadBlob('vuelo-hud.' + ext, blob);
       ov.done();

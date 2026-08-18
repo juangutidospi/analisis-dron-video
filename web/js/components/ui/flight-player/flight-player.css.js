@@ -113,6 +113,35 @@ export const styles = css`
   color: var(--color-text-muted); font-size: 12px; cursor: pointer; display: grid; place-items: center; transition: color .12s, background .12s;
 }
 .cfg-music-x:hover { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 8%, transparent); }
+.cfg-music-ctrls { display: flex; gap: 16px; width: 100%; margin-top: 9px; flex-wrap: wrap; }
+.cfg-music-ctrls[hidden] { display: none; }
+.cfg-ctrl { display: flex; align-items: center; gap: 9px; flex: 1; min-width: 190px; }
+.cfg-ctrl-t { font-size: 11px; font-weight: 600; color: var(--color-text-muted); width: 52px; flex: none; }
+.cfg-ctrl-v { font-size: 11.5px; font-weight: 650; color: var(--color-text); font-variant-numeric: tabular-nums; min-width: 38px; text-align: right; }
+.cfg-ctrl input[type=range] {
+  flex: 1; min-width: 0; height: 4px; -webkit-appearance: none; appearance: none; border-radius: 100px; cursor: pointer;
+  background: color-mix(in srgb, var(--color-text) 15%, transparent); accent-color: var(--color-accent);
+}
+.cfg-ctrl input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 15px; height: 15px; border-radius: 50%; background: var(--color-accent);
+  border: 2px solid var(--color-surface-solid); box-shadow: 0 1px 4px rgba(0,0,0,.35); cursor: pointer;
+}
+.cfg-ctrl input[type=range]::-moz-range-thumb {
+  width: 13px; height: 13px; border-radius: 50%; background: var(--color-accent); border: 2px solid var(--color-surface-solid); cursor: pointer;
+}
+.cfg-mini {
+  flex: none; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer; color: var(--color-text-muted);
+  border: 1px solid var(--color-divider); background: transparent; border-radius: 7px; padding: 4px 9px; transition: color .14s, border-color .14s, background .14s;
+}
+.cfg-mini:hover { color: var(--color-text); border-color: color-mix(in srgb, var(--color-text) 24%, transparent); }
+.cfg-mini.on { color: var(--color-text); border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); background: color-mix(in srgb, var(--color-accent) 14%, transparent); }
+.cfg-wave { width: 100%; display: flex; flex-direction: column; gap: 5px; }
+.cfg-wave-cv {
+  width: 100%; height: 46px; display: block; cursor: ew-resize; border-radius: 8px; touch-action: none;
+  background: color-mix(in srgb, var(--color-text) 6%, transparent); border: 1px solid var(--color-divider);
+}
+.cfg-wave-foot { display: flex; align-items: center; gap: 8px; }
+.cfg-wave-foot .cfg-ctrl-v { min-width: 0; }
 .cfg-foot { display: flex; align-items: center; gap: 10px; padding: 10px; }
 .cfg-units { display: flex; gap: 2px; background: color-mix(in srgb, var(--color-text) 8%, transparent); border-radius: 10px; padding: 3px; flex: none; }
 .cfg-units button {
