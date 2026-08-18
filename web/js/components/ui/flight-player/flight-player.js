@@ -44,6 +44,13 @@ export class FlightPlayer extends DjiElement {
             <span class="cfg-t">${t('hud.elements')}</span>
             <div class="cfg-chips">${['heading', 'clock', 'minimap', 'progress', 'watermark'].map((k) => this._chipTpl(k, cfg)).join('')}</div>
           </div>
+          <div class="cfg-sec">
+            <span class="cfg-t">${t('hud.theme')}</span>
+            <div class="cfg-units">
+              <button class="${cfg.theme === 'modern' ? 'on' : ''}" data-th="modern" type="button">${t('hud.theme.modern')}</button>
+              <button class="${cfg.theme === 'aviation' ? 'on' : ''}" data-th="aviation" type="button">${t('hud.theme.aviation')}</button>
+            </div>
+          </div>
           <div class="cfg-foot">
             <div class="cfg-units">
               <button class="${cfg.units === 'metric' ? 'on' : ''}" data-u="metric" type="button">${t('hud.metric')}</button>
@@ -71,7 +78,7 @@ export class FlightPlayer extends DjiElement {
 
   /** Config del HUD (qué gauges y unidades), persistente en memoria. */
   _cfg() {
-    if (!this._hudCfg) this._hudCfg = { units: DEFAULT_CFG.units, gauges: { ...DEFAULT_CFG.gauges } };
+    if (!this._hudCfg) this._hudCfg = { units: DEFAULT_CFG.units, theme: DEFAULT_CFG.theme, gauges: { ...DEFAULT_CFG.gauges } };
     return this._hudCfg;
   }
 
@@ -143,8 +150,11 @@ export class FlightPlayer extends DjiElement {
     this.$$('.cfg-chip').forEach((b) => this.on(b, 'click', () => {
       const k = b.dataset.g; cfg.gauges[k] = cfg.gauges[k] ? 0 : 1; b.classList.toggle('on', !!cfg.gauges[k]); this._drawHud();
     }));
-    this.$$('.cfg-units button').forEach((b) => this.on(b, 'click', () => {
-      cfg.units = b.dataset.u; this.$$('.cfg-units button').forEach((x) => x.classList.toggle('on', x === b)); this._drawHud();
+    this.$$('button[data-u]').forEach((b) => this.on(b, 'click', () => {
+      cfg.units = b.dataset.u; this.$$('button[data-u]').forEach((x) => x.classList.toggle('on', x === b)); this._drawHud();
+    }));
+    this.$$('button[data-th]').forEach((b) => this.on(b, 'click', () => {
+      cfg.theme = b.dataset.th; this.$$('button[data-th]').forEach((x) => x.classList.toggle('on', x === b)); this._drawHud();
     }));
     const exp = this.$('#exportbtn');
     if (exp) this.on(exp, 'click', () => this._exportVideo());
