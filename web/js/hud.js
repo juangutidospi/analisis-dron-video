@@ -15,7 +15,7 @@ const bearing = (la1, lo1, la2, lo2) => {
 const CARD = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
 
 /** Config por defecto del HUD (qué gauges y unidades). */
-export const DEFAULT_CFG = { units: 'metric', gauges: { speed: 1, alt: 1, dist: 1, vspeed: 0, heading: 1, clock: 1, minimap: 1, progress: 1, watermark: 0 } };
+export const DEFAULT_CFG = { units: 'metric', theme: 'modern', gauges: { speed: 1, alt: 1, dist: 1, vspeed: 0, heading: 1, clock: 1, minimap: 1, progress: 1, watermark: 0 } };
 /** Orden de los gauges para el panel de ajustes. */
 export const GAUGE_KEYS = ['speed', 'alt', 'dist', 'vspeed', 'heading', 'clock', 'minimap', 'progress', 'watermark'];
 
@@ -31,6 +31,9 @@ const CONV = {
  */
 export function createHud(model, opts = {}) {
   const S = model.series, tk = model.takeoff;
+  // máximos reales del vuelo → escala estable de los diales de aviación
+  const maxHs = S.reduce((m, p) => Math.max(m, p.hs || 0), 1);
+  const maxRel = S.reduce((m, p) => Math.max(m, p.rel || 0), 1);
   const accent = opts.accent || '#5b9dff';
   const title = opts.title || '';
   // track para el mini-mapa (bounding box en proyección equirectangular sencilla)
@@ -48,8 +51,18 @@ export function createHud(model, opts = {}) {
     const span = (b.t - a.t) || 1, f = Math.max(0, Math.min(1, (t - a.t) / span));
     const lerp = (k) => (a[k] != null && b[k] != null) ? a[k] + (b[k] - a[k]) * f : (a[k] ?? b[k]);
     const lat = lerp('lat'), lon = lerp('lon');
+    // alabeo estimado (giro coordinado): tan(bank) = v·ω/g
+    let bank = 0;
+    const j0 = Math.max(1, i - 1), j1 = Math.min(i + 1, S.length - 1);
+    if (S[j0 - 1]?.lat != null && S[j0].lat != null && S[j1 - 1]?.lat != null && S[j1]?.lat != null && S[j1].t > S[j0].t) {
+      const h1 = bearing(S[j0 - 1].lat, S[j0 - 1].lon, S[j0].lat, S[j0].lon);
+      const h2 = bearing(S[j1 - 1].lat, S[j1 - 1].lon, S[j1].lat, S[j1].lon);
+      const dh = ((h2 - h1 + 540) % 360) - 180;
+      const om = dh * Math.PI / 180 / (S[j1].t - S[j0].t);
+      bank = Math.max(-40, Math.min(40, Math.atan((lerp('hs') || 0) * om / 9.81) * 180 / Math.PI));
+    }
     return {
-      hs: lerp('hs'), rel: lerp('rel'), vs: lerp('vs'), lat, lon,
+      hs: lerp('hs'), rel: lerp('rel'), vs: lerp('vs'), lat, lon, pitch: lerp('pitch'), bank,
       far: (lat != null) ? hav(tk[0], tk[1], lat, lon) : null,
       heading: (a.lat != null && b.lat != null) ? bearing(a.lat, a.lon, b.lat, b.lon) : null,
     };
@@ -132,6 +145,204 @@ export function createHud(model, opts = {}) {
     ctx.restore();
   };
 
+  // ---- tema "instrumentos de aviación" ----
+  const AMBER = '#ffb43d';
+  // redondea a un máximo "bonito" (1/2/5 ×10ⁿ) para graduar los diales
+  const niceMax = (v) => { if (v <= 0) return 1; const p = 10 ** Math.floor(Math.log10(v)); const n = v / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p; };
+
+  // bisel metálico + filo brillante (aro del instrumento)
+  const bezel = (ctx, cx, cy, R) => {
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,.55)'; ctx.shadowBlur = R * 0.16; ctx.shadowOffsetY = R * 0.06;
+    const g = ctx.createLinearGradient(cx, cy - R, cx, cy + R);
+    g.addColorStop(0, '#676e7d'); g.addColorStop(.5, '#20242e'); g.addColorStop(1, '#090b10');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.fill();
+    ctx.restore();
+    // reflejo torneado (sheen): luz arriba-izquierda, sombra abajo-derecha
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(255,255,255,.24)'; ctx.lineWidth = R * 0.05; ctx.beginPath(); ctx.arc(cx, cy, R * 0.955, Math.PI * 1.08, Math.PI * 1.62); ctx.stroke();
+    ctx.strokeStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.arc(cx, cy, R * 0.955, Math.PI * 0.12, Math.PI * 0.6); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.16)'; ctx.lineWidth = R * 0.012; ctx.beginPath(); ctx.arc(cx, cy, R * 0.985, 0, 7); ctx.stroke();
+  };
+
+  // cara oscura abombada + viñeta (fondo de los diales)
+  const instrBase = (ctx, cx, cy, R) => {
+    bezel(ctx, cx, cy, R);
+    const rf = R * 0.9;
+    let f = ctx.createRadialGradient(cx - rf * 0.3, cy - rf * 0.35, rf * 0.1, cx, cy, rf);
+    f.addColorStop(0, '#1b212c'); f.addColorStop(.7, '#0c0f15'); f.addColorStop(1, '#05070b');
+    ctx.fillStyle = f; ctx.beginPath(); ctx.arc(cx, cy, rf, 0, 7); ctx.fill();
+    let v = ctx.createRadialGradient(cx, cy, rf * 0.55, cx, cy, rf);
+    v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,.5)');
+    ctx.fillStyle = v; ctx.beginPath(); ctx.arc(cx, cy, rf, 0, 7); ctx.fill();
+    // chaflán interior (bisel torneado): luz arriba, sombra abajo
+    ctx.lineWidth = R * 0.02;
+    ctx.strokeStyle = 'rgba(255,255,255,.26)'; ctx.beginPath(); ctx.arc(cx, cy, rf, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+    ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.beginPath(); ctx.arc(cx, cy, rf, Math.PI * 0.15, Math.PI * 0.85); ctx.stroke();
+  };
+
+  // reflejo de cristal (se pinta al final, sobre el contenido)
+  const glass = (ctx, cx, cy, R) => {
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, R * 0.9, 0, 7); ctx.clip();
+    const g = ctx.createLinearGradient(cx, cy - R, cx, cy + R * 0.15);
+    g.addColorStop(0, 'rgba(255,255,255,.15)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(cx, cy - R * 0.34, R * 0.72, R * 0.44, 0, 0, 7); ctx.fill();
+    const sp = ctx.createRadialGradient(cx - R * 0.34, cy - R * 0.42, 0, cx - R * 0.34, cy - R * 0.42, R * 0.42);
+    sp.addColorStop(0, 'rgba(255,255,255,.4)'); sp.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = sp; ctx.beginPath(); ctx.arc(cx - R * 0.34, cy - R * 0.42, R * 0.42, 0, 7); ctx.fill();
+    ctx.restore();
+  };
+
+  const dial = (ctx, cx, cy, R, value, unit, label, max, redline) => {
+    const A0 = 135 * Math.PI / 180, SPAN = 270 * Math.PI / 180; // arco abierto abajo
+    instrBase(ctx, cx, cy, R);
+    ctx.save();
+    // pista + arco de valor (con brillo)
+    ctx.lineCap = 'round'; ctx.lineWidth = R * 0.05;
+    ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.beginPath(); ctx.arc(cx, cy, R * 0.78, A0, A0 + SPAN); ctx.stroke();
+    const frac = Math.max(0, Math.min(1, value / (max || 1)));
+    ctx.strokeStyle = accent; ctx.shadowColor = accent; ctx.shadowBlur = R * 0.12;
+    ctx.beginPath(); ctx.arc(cx, cy, R * 0.78, A0, A0 + SPAN * frac); ctx.stroke();
+    ctx.shadowColor = 'transparent';
+    if (redline) { ctx.strokeStyle = '#ff4d4d'; ctx.lineCap = 'butt'; ctx.beginPath(); ctx.arc(cx, cy, R * 0.78, A0 + SPAN * 0.9, A0 + SPAN); ctx.stroke(); ctx.lineCap = 'round'; }
+    // graduaciones + números
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (let i = 0; i <= 10; i++) {
+      const a = A0 + SPAN * i / 10, major = i % 2 === 0, r1 = R * 0.68, r2 = major ? R * 0.56 : R * 0.62;
+      ctx.strokeStyle = `rgba(255,255,255,${major ? .8 : .38})`; ctx.lineWidth = R * (major ? 0.028 : 0.015);
+      ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1); ctx.lineTo(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2); ctx.stroke();
+      if (major) { ctx.fillStyle = 'rgba(255,255,255,.78)'; ctx.font = `600 ${R * 0.12}px ${FONT}`; ctx.fillText(`${Math.round(max * i / 10)}`, cx + Math.cos(a) * R * 0.42, cy + Math.sin(a) * R * 0.42); }
+    }
+    // marcas finas intermedias
+    for (let i = 1; i < 20; i += 2) {
+      const a = A0 + SPAN * i / 20;
+      ctx.strokeStyle = 'rgba(255,255,255,.3)'; ctx.lineWidth = R * 0.01;
+      ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * R * 0.68, cy + Math.sin(a) * R * 0.68); ctx.lineTo(cx + Math.cos(a) * R * 0.63, cy + Math.sin(a) * R * 0.63); ctx.stroke();
+    }
+    // aguja afilada + contrapeso
+    const a = A0 + SPAN * frac;
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(a);
+    ctx.shadowColor = 'rgba(0,0,0,.5)'; ctx.shadowBlur = R * 0.04; ctx.shadowOffsetX = R * 0.015; ctx.shadowOffsetY = R * 0.015;
+    ctx.fillStyle = accent; ctx.beginPath(); ctx.moveTo(-R * 0.14, R * 0.03); ctx.lineTo(R * 0.62, 0); ctx.lineTo(-R * 0.14, -R * 0.03); ctx.closePath(); ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.fillStyle = '#c9ced8'; ctx.beginPath(); ctx.arc(-R * 0.14, 0, R * 0.045, 0, 7); ctx.fill();
+    ctx.restore();
+    // buje central (metálico)
+    let hub = ctx.createRadialGradient(cx - R * 0.02, cy - R * 0.02, R * 0.005, cx, cy, R * 0.09);
+    hub.addColorStop(0, '#eef1f6'); hub.addColorStop(1, '#444a56');
+    ctx.fillStyle = hub; ctx.beginPath(); ctx.arc(cx, cy, R * 0.075, 0, 7); ctx.fill();
+    // etiqueta arriba + lectura digital abajo
+    ctx.fillStyle = accent; ctx.font = `700 ${R * 0.13}px ${FONT}`; ls(ctx, R * 0.02); ctx.fillText(label, cx, cy - R * 0.54); ls(ctx, 0);
+    const vs = `${Math.round(value)}`;
+    ctx.font = `600 ${R * 0.24}px ${FONT}`; const vw = ctx.measureText(vs).width;
+    ctx.font = `600 ${R * 0.12}px ${FONT}`; const uw = ctx.measureText(unit).width;
+    const pw = vw + uw + R * 0.28, py = cy + R * 0.5;
+    roundRect(ctx, cx - pw / 2, py - R * 0.16, pw, R * 0.32, R * 0.06); ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.1)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#fff'; ctx.font = `600 ${R * 0.24}px ${FONT}`; ctx.fillText(vs, cx - pw / 2 + R * 0.1, py);
+    ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.font = `600 ${R * 0.12}px ${FONT}`; ctx.fillText(unit, cx - pw / 2 + R * 0.1 + vw + R * 0.07, py);
+    ctx.restore();
+    glass(ctx, cx, cy, R);
+  };
+
+  const attitude = (ctx, cx, cy, R, pitch, roll) => {
+    const ppd = R / 30; // píxeles por grado
+    bezel(ctx, cx, cy, R);
+    // horizonte (recortado al cristal, girado por alabeo)
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, R * 0.9, 0, 7); ctx.clip();
+    ctx.translate(cx, cy); ctx.rotate(-roll * Math.PI / 180);
+    const hy = pitch * ppd;
+    let sky = ctx.createLinearGradient(0, -2.4 * R, 0, hy);
+    sky.addColorStop(0, '#0e3c74'); sky.addColorStop(1, '#5ba0da');
+    ctx.fillStyle = sky; ctx.fillRect(-2 * R, -2.4 * R, 4 * R, 2.4 * R + hy);
+    let gnd = ctx.createLinearGradient(0, hy, 0, 2.4 * R);
+    gnd.addColorStop(0, '#9c7238'); gnd.addColorStop(1, '#3f2d12');
+    ctx.fillStyle = gnd; ctx.fillRect(-2 * R, hy, 4 * R, 2.4 * R);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = R * 0.018; ctx.beginPath(); ctx.moveTo(-2 * R, hy); ctx.lineTo(2 * R, hy); ctx.stroke();
+    // escalera de cabeceo
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineCap = 'round';
+    for (const d of [-20, -15, -10, -5, 5, 10, 15, 20]) {
+      const y = hy - d * ppd, major = d % 10 === 0, ww = major ? R * 0.3 : R * 0.15;
+      ctx.strokeStyle = 'rgba(255,255,255,.88)'; ctx.lineWidth = R * 0.013;
+      ctx.beginPath(); ctx.moveTo(-ww, y); ctx.lineTo(ww, y); ctx.stroke();
+      if (major) { ctx.fillStyle = 'rgba(255,255,255,.88)'; ctx.font = `500 ${R * 0.1}px ${FONT}`; ctx.fillText(`${Math.abs(d)}`, -ww - R * 0.13, y); ctx.fillText(`${Math.abs(d)}`, ww + R * 0.13, y); }
+    }
+    ctx.restore();
+    // escala de alabeo fija + puntero móvil
+    ctx.save(); ctx.translate(cx, cy);
+    for (const b of [-60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60]) {
+      const a = (-90 + b) * Math.PI / 180, major = b % 30 === 0, r1 = R * 0.9, r2 = major ? R * 0.79 : R * 0.84;
+      ctx.strokeStyle = 'rgba(255,255,255,.82)'; ctx.lineWidth = R * (major ? 0.02 : 0.012);
+      ctx.beginPath(); ctx.moveTo(Math.cos(a) * r1, Math.sin(a) * r1); ctx.lineTo(Math.cos(a) * r2, Math.sin(a) * r2); ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.beginPath(); ctx.moveTo(0, -R * 0.79); ctx.lineTo(-R * 0.05, -R * 0.9); ctx.lineTo(R * 0.05, -R * 0.9); ctx.closePath(); ctx.fill();
+    ctx.rotate(-roll * Math.PI / 180);
+    ctx.fillStyle = AMBER; ctx.beginPath(); ctx.moveTo(0, -R * 0.77); ctx.lineTo(-R * 0.055, -R * 0.66); ctx.lineTo(R * 0.055, -R * 0.66); ctx.closePath(); ctx.fill();
+    ctx.restore();
+    // símbolo del avión (fijo, ámbar)
+    ctx.save();
+    ctx.strokeStyle = AMBER; ctx.lineWidth = R * 0.045; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx - R * 0.42, cy); ctx.lineTo(cx - R * 0.16, cy); ctx.lineTo(cx - R * 0.16, cy + R * 0.09);
+    ctx.moveTo(cx + R * 0.42, cy); ctx.lineTo(cx + R * 0.16, cy); ctx.lineTo(cx + R * 0.16, cy + R * 0.09);
+    ctx.stroke();
+    ctx.fillStyle = AMBER; ctx.beginPath(); ctx.arc(cx, cy, R * 0.03, 0, 7); ctx.fill();
+    ctx.restore();
+    // inclinómetro (bola de derrape) — vuelo coordinado → centrada
+    ctx.save();
+    const by = cy + R * 0.64;
+    ctx.strokeStyle = 'rgba(255,255,255,.32)'; ctx.lineWidth = R * 0.1; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.arc(cx, by - R * 1.15, R * 1.25, Math.PI * 0.455, Math.PI * 0.545); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = R * 0.012;
+    ctx.beginPath(); ctx.moveTo(cx - R * 0.08, by - R * 0.075); ctx.lineTo(cx - R * 0.08, by + R * 0.055); ctx.moveTo(cx + R * 0.08, by - R * 0.075); ctx.lineTo(cx + R * 0.08, by + R * 0.055); ctx.stroke();
+    ctx.fillStyle = '#f4f6fa'; ctx.beginPath(); ctx.arc(cx, by, R * 0.05, 0, 7); ctx.fill();
+    ctx.restore();
+    glass(ctx, cx, cy, R);
+  };
+
+  // cinta de rumbo (ribbon) con marcas, cardinales e índice central
+  const headingTape = (ctx, cx, cy, W, heading) => {
+    const H = W * 0.14, x0 = cx - W / 2, y0 = cy - H / 2, ppd = W / 84;
+    ctx.save();
+    roundRect(ctx, x0, y0, W, H, H * 0.32);
+    ctx.fillStyle = 'rgba(8,10,15,.72)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.save(); roundRect(ctx, x0, y0, W, H, H * 0.32); ctx.clip();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const start = Math.floor((heading - 45) / 5) * 5;
+    for (let deg = start; deg <= heading + 45; deg += 5) {
+      const x = cx + (deg - heading) * ppd, dd = ((deg % 360) + 360) % 360, major = dd % 10 === 0;
+      ctx.strokeStyle = `rgba(255,255,255,${major ? .6 : .32})`; ctx.lineWidth = major ? 1.6 : 1;
+      ctx.beginPath(); ctx.moveTo(x, y0 + H * (major ? 0.42 : 0.5)); ctx.lineTo(x, y0 + H * 0.64); ctx.stroke();
+      if (dd % 30 === 0) {
+        const lbl = dd % 90 === 0 ? ['N', 'E', 'S', 'O'][dd / 90 % 4] : String(dd / 10).padStart(2, '0');
+        ctx.fillStyle = dd % 90 === 0 ? accent : 'rgba(255,255,255,.85)';
+        ctx.font = `700 ${H * 0.26}px ${FONT}`; ctx.fillText(lbl, x, y0 + H * 0.26);
+      }
+    }
+    ctx.restore();
+    // índice central + lectura recuadrada
+    const bw = H * 1.5, bh = H * 0.62;
+    roundRect(ctx, cx - bw / 2, y0 - bh * 0.72, bw, bh, bh * 0.22); ctx.fillStyle = accent; ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `700 ${bh * 0.5}px ${FONT}`; ctx.fillText(`${Math.round(heading)}°`, cx, y0 - bh * 0.4);
+    ctx.fillStyle = accent; ctx.beginPath(); ctx.moveTo(cx - H * 0.11, y0); ctx.lineTo(cx + H * 0.11, y0); ctx.lineTo(cx, y0 + H * 0.16); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  };
+
+  const drawAviation = (ctx, s, w, h, U, un) => {
+    const R = Math.min(w, h) * 0.135, cy = h - R - U * 1.4, gap = R * 2.3;
+    ctx.save(); ctx.shadowColor = 'transparent';
+    dial(ctx, w / 2 - gap, cy, R * 0.9, un.spd(s.hs || 0), un.spdU, 'VEL', niceMax(un.spd(maxHs)), true);
+    attitude(ctx, w / 2, cy, R, s.pitch || 0, s.bank || 0);
+    dial(ctx, w / 2 + gap, cy, R * 0.9, un.len(s.rel || 0), un.lenU, 'ALT', niceMax(un.len(maxRel)), false);
+    if (s.heading != null) headingTape(ctx, w / 2, cy - R - U * 2.1, R * 3.4, s.heading);
+    ctx.restore();
+  };
+
   const draw = (ctx, t, w, h, cfg) => {
     cfg = cfg || DEFAULT_CFG;
     const gz = cfg.gauges || DEFAULT_CFG.gauges;
@@ -152,6 +363,7 @@ export function createHud(model, opts = {}) {
     // sombra suave: los elementos "flotan" sobre el metraje
     ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = U * 0.7; ctx.shadowOffsetY = U * 0.06;
 
+    if (cfg.theme === 'aviation') { drawAviation(ctx, s, w, h, U, un); } else {
     // métricas abajo (según los gauges activos y las unidades)
     const metrics = [];
     if (gz.speed) metrics.push([`${Math.round(un.spd(s.hs || 0))}`, un.spdU, 'VEL']);
@@ -170,6 +382,7 @@ export function createHud(model, opts = {}) {
         ctx.font = `600 ${U * 1.1}px ${FONT}`; ls(ctx, U * 0.06);
         ctx.fillText(`${CARD[Math.round(s.heading / 45) % 8]} ${Math.round(s.heading)}°`, w - R - U * 1.5, R * 2 + U * 1.6); ls(ctx, 0);
       }
+    }
     }
 
     // reloj arriba izquierda (píldora fina)
