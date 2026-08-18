@@ -535,13 +535,38 @@ const styles = css`
 @media (prefers-reduced-motion: reduce) { :host { transition: opacity .2s; } :host(.away) { transform: none; } }
 .stack { display: flex; flex-direction: column; align-items: center; gap: 10px; width: min(720px, 100%); }
 .pip {
-  pointer-events: auto; width: clamp(168px, 24vw, 260px); aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden;
+  position: relative; pointer-events: auto; width: clamp(168px, 24vw, 260px); aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden;
   border: 1px solid var(--color-divider); box-shadow: var(--shadow-lg); background: #000; display: none;
   animation: rise .35s cubic-bezier(.22,1,.36,1) both;
 }
 .pip.on { display: block; }
 .pip video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.hud { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.expand {
+  position: absolute; top: 8px; right: 8px; z-index: 2; width: 30px; height: 30px; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.28); background: rgba(0,0,0,.42); color: #fff; font-size: 15px; line-height: 1;
+  cursor: pointer; display: grid; place-items: center; backdrop-filter: blur(6px); pointer-events: auto;
+  opacity: 0; transition: opacity .15s, background .15s, transform .15s;
+}
+.pip:hover .expand, .pip.big .expand { opacity: 1; }
+.expand:hover { background: rgba(0,0,0,.6); transform: scale(1.08); }
+/* fondo desenfocado detrás del vídeo grande (focaliza la vista) */
+.stage {
+  position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: 0; visibility: hidden;
+  background: rgba(6, 7, 10, .5); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  transition: opacity .28s ease, visibility .28s;
+}
+:host(.big) .stage { opacity: 1; visibility: visible; pointer-events: auto; }
+.pip.big {
+  position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%);
+  width: min(92vw, calc(72vh * 16 / 9)); max-width: 1120px; z-index: 5;
+  animation: bigin .26s cubic-bezier(.22,1,.36,1) both;
+}
+.pip.big .expand { width: 38px; height: 38px; font-size: 18px; top: 12px; right: 12px; }
+@keyframes bigin { from { opacity: .4; transform: translateX(-50%) scale(.9); } }
+@media (prefers-reduced-motion: reduce) { .pip.big { animation: none; } }
 .player {
+  position: relative; z-index: 6;
   pointer-events: auto; display: flex; align-items: center; gap: 13px; width: 100%;
   background: color-mix(in srgb, var(--color-surface-solid) 92%, transparent); border: 1px solid var(--color-divider);
   border-radius: 100px; padding: 10px 16px; box-shadow: var(--shadow-lg); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
@@ -600,10 +625,18 @@ class FlightPlayer extends DjiElement {
   set video(v) { this._video = v; if (this.isConnected) this._mountVideo(); }
   get video() { return this._video; }
 
+  /** @param {((ctx:CanvasRenderingContext2D,t:number,w:number,h:number)=>void)|null} fn HUD a pintar sobre el vídeo */
+  set hud(fn) { this._hud = fn; if (this.isConnected) this._drawHud(); }
+  get hud() { return this._hud; }
+
   render() {
     this.shadowRoot.innerHTML = `
+      <div class="stage" id="stage"></div>
       <div class="stack">
-        <div class="pip" id="pip"></div>
+        <div class="pip" id="pip">
+          <canvas class="hud" id="hud"></canvas>
+          <button class="expand" id="expand" type="button" aria-label="${t('player.expand')}">⤢</button>
+        </div>
         <div class="player">
           <button class="play" id="play" type="button" aria-label="${t('player.play')}">▶</button>
           <span class="time" id="cur">0:00</span>
@@ -631,6 +664,9 @@ class FlightPlayer extends DjiElement {
 
   afterRender() {
     this._mountVideo();
+    this.on(this.$('#expand'), 'click', () => this._toggleBig());
+    this.on(this.$('#stage'), 'click', () => { if (this._big) this._toggleBig(); }); // clic fuera reduce
+    if (this._big) this._applyBig();
     const c = this._clock;
     if (!c) return;
     this.$('#tot').textContent = mmss(c.dur);
@@ -661,6 +697,36 @@ class FlightPlayer extends DjiElement {
     const cur = this.$('#cur'); if (cur) cur.textContent = mmss(c.t);
     const play = this.$('#play'); if (play) { play.textContent = c.playing ? '❚❚' : '▶'; play.setAttribute('aria-label', t(c.playing ? 'player.pause' : 'player.play')); }
     this.$$('[data-sp]').forEach((b) => b.classList.toggle('on', +b.dataset.sp === c.speed));
+    this._drawHud();
+  }
+
+  /** Alterna el modo grande (teatro) del vídeo + HUD. */
+  _toggleBig() { this._big = !this._big; this._applyBig(); }
+
+  /** Sale del modo grande (p. ej. al salir de la sección del mapa). */
+  collapse() { if (this._big) { this._big = false; this._applyBig(); } }
+
+  _applyBig() {
+    const pip = this.$('#pip'), btn = this.$('#expand');
+    if (!pip) return;
+    pip.classList.toggle('big', this._big);
+    this.classList.toggle('big', this._big); // activa el backdrop desenfocado
+    if (btn) { btn.textContent = this._big ? '⤡' : '⤢'; btn.setAttribute('aria-label', t(this._big ? 'player.collapse' : 'player.expand')); }
+    requestAnimationFrame(() => this._drawHud()); // redibuja el HUD al nuevo tamaño
+  }
+
+  /** Pinta el HUD sobre el vídeo (si hay miniatura y HUD configurado). */
+  _drawHud() {
+    const canvas = this.$('#hud'), pip = this.$('#pip');
+    if (!canvas || !this._hud || !this._clock || !pip || !pip.classList.contains('on')) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = pip.clientWidth, h = pip.clientHeight;
+    if (!w || !h) return;
+    if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    this._hud(ctx, this._clock.t, w, h);
   }
 }
 
@@ -1564,6 +1630,7 @@ __req("js/components/ui/flight-player/flight-player.js");
 __req("js/components/ui/reading-nav/reading-nav.js");
 const { PlayerClock } = __req("js/core/player-clock.js");
 const { reveal } = __req("js/core/reveal.js");
+const { createHud } = __req("js/hud.js");
 const { styles } = __req("js/components/views/flight-report/flight-report.css.js");
 
 const f = (v, d = 0) => (v == null ? '—' : v.toFixed(d));
@@ -2080,8 +2147,9 @@ class FlightReport extends DjiElement {
     if (!('IntersectionObserver' in window)) { this._player.classList.remove('away'); return; }
     this._playerIO = new IntersectionObserver((es) => {
       const vis = es.some((e) => e.isIntersecting);
-      // se mantiene visible mientras se reproduce, aunque el mapa quede fuera de pantalla
-      this._player.classList.toggle('away', !vis && !this._clock?.playing);
+      // al salir el mapa de pantalla: no dejamos el vídeo flotando ni el scroll bloqueado
+      if (!vis) { if (this._clock?.playing) this._clock.pause(); this._player.collapse?.(); }
+      this._player.classList.toggle('away', !vis);
     }, { rootMargin: '0px 0px -12% 0px', threshold: 0 });
     this._playerIO.observe(anchor);
   }
@@ -2147,6 +2215,13 @@ class FlightReport extends DjiElement {
     }
     this._player.clock = this._clock;
     this._player.video = this._video || null;
+    // HUD de telemetría sobre el vídeo (con el color de acento del tema)
+    if (this._video) {
+      const accent = getComputedStyle(this).getPropertyValue('--color-accent').trim() || '#5b9dff';
+      this._player.hud = createHud(this.model, { accent }).draw;
+    } else {
+      this._player.hud = null;
+    }
     // reserva hueco al final para que la barra fija del reproductor no tape el contenido
     this.classList.toggle('has-video', !!this._video);
   }
@@ -3259,6 +3334,153 @@ Object.assign(__x, { reverseGeocode, firstCoords });
 
 };
 
+__m["js/hud.js"] = function (__x, __req) {
+// Motor de HUD: dibuja gauges de telemetría sobre un canvas, sincronizados por
+// tiempo con la serie del vuelo. Independiente del render: dado t, pinta el frame.
+// Convención de overlay de vídeo: texto blanco + scrim oscuro (legible sobre
+// cualquier metraje), con el color de acento para los realces.
+
+const { hav } = __req("js/srt.js");
+
+const bearing = (la1, lo1, la2, lo2) => {
+  const p1 = la1 * Math.PI / 180, p2 = la2 * Math.PI / 180, dl = (lo2 - lo1) * Math.PI / 180;
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+};
+
+const CARD = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
+
+/**
+ * @param {object} model modelo del vuelo (series, meta, takeoff)
+ * @param {{accent?:string}} [opts]
+ * @returns {{draw:(ctx:CanvasRenderingContext2D, t:number, w:number, h:number)=>void}}
+ */
+function createHud(model, opts = {}) {
+  const S = model.series, tk = model.takeoff;
+  const accent = opts.accent || '#5b9dff';
+
+  const sample = (t) => {
+    let i = 1;
+    while (i < S.length && S[i].t < t) i++;
+    const a = S[i - 1], b = S[Math.min(i, S.length - 1)];
+    const span = (b.t - a.t) || 1, f = Math.max(0, Math.min(1, (t - a.t) / span));
+    const lerp = (k) => (a[k] != null && b[k] != null) ? a[k] + (b[k] - a[k]) * f : (a[k] ?? b[k]);
+    const lat = lerp('lat'), lon = lerp('lon');
+    return {
+      hs: lerp('hs'), rel: lerp('rel'), vs: lerp('vs'), lat, lon,
+      far: (lat != null) ? hav(tk[0], tk[1], lat, lon) : null,
+      heading: (a.lat != null && b.lat != null) ? bearing(a.lat, a.lon, b.lat, b.lon) : null,
+    };
+  };
+
+  const roundRect = (ctx, x, y, w, h, r) => {
+    ctx.beginPath(); ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  };
+
+  const FONT = '-apple-system, "SF Pro Display", system-ui, sans-serif';
+  const ls = (ctx, v) => { if ('letterSpacing' in ctx) ctx.letterSpacing = `${v}px`; };
+
+  const metric = (ctx, cx, baseY, U, value, unit, label) => {
+    // etiqueta: fina, con tracking amplio
+    ctx.textAlign = 'center';
+    ctx.font = `600 ${U * 1.05}px ${FONT}`; ls(ctx, U * 0.16);
+    ctx.fillStyle = accent;
+    ctx.fillText(label, cx, baseY - U * 3.15); ls(ctx, 0);
+    // valor + unidad, centrados como grupo, con peso ligero
+    const vFont = `450 ${U * 3.0}px ${FONT}`, uFont = `500 ${U * 1.25}px ${FONT}`;
+    ctx.font = vFont; ls(ctx, -U * 0.04); const vw = ctx.measureText(value).width; ls(ctx, 0);
+    ctx.font = uFont; const uw = ctx.measureText(unit).width;
+    const gap = U * 0.34, startX = cx - (vw + gap + uw) / 2;
+    ctx.textAlign = 'left';
+    ctx.font = vFont; ls(ctx, -U * 0.04); ctx.fillStyle = '#fff'; ctx.fillText(value, startX, baseY); ls(ctx, 0);
+    ctx.font = uFont; ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.fillText(unit, startX + vw + gap, baseY);
+  };
+
+  const compass = (ctx, cx, cy, R, heading) => {
+    ctx.save();
+    ctx.lineCap = 'round';
+    // disco muy sutil + anillo fino
+    ctx.shadowColor = 'rgba(0,0,0,.3)'; ctx.shadowBlur = R * 0.12;
+    ctx.fillStyle = 'rgba(10,12,18,.26)'; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = R * 0.026; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.stroke();
+    // marcas cada 45° (finas)
+    for (let i = 0; i < 8; i++) {
+      const a = i * Math.PI / 4, major = i % 2 === 0;
+      const r2 = major ? R * 0.8 : R * 0.86;
+      ctx.strokeStyle = `rgba(255,255,255,${major ? .55 : .3})`; ctx.lineWidth = R * (major ? 0.03 : 0.02);
+      ctx.beginPath(); ctx.moveTo(cx + Math.sin(a) * R * 0.9, cy - Math.cos(a) * R * 0.9); ctx.lineTo(cx + Math.sin(a) * r2, cy - Math.cos(a) * r2); ctx.stroke();
+    }
+    // aguja fina bicolor (cola blanca, punta de acento)
+    const a = (heading || 0) * Math.PI / 180, sn = Math.sin(a), cs = Math.cos(a);
+    ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = R * 0.055;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx - sn * R * 0.4, cy + cs * R * 0.4); ctx.stroke();
+    ctx.strokeStyle = accent; ctx.lineWidth = R * 0.065;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + sn * R * 0.66, cy - cs * R * 0.66); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx, cy, R * 0.055, 0, 7); ctx.fill();
+    // N (fina)
+    ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `600 ${R * 0.32}px ${FONT}`; ctx.fillText('N', cx, cy - R * 0.68);
+    ctx.restore();
+  };
+
+  const draw = (ctx, t, w, h) => {
+    const s = sample(t);
+    const U = Math.max(6, Math.min(w, h) * 0.03); // unidad proporcional
+    ctx.save();
+    ctx.textBaseline = 'alphabetic';
+
+    // scrims sutiles (arriba y abajo) para legibilidad, sin sombra
+    let g = ctx.createLinearGradient(0, h * 0.68, 0, h);
+    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.4)');
+    ctx.fillStyle = g; ctx.fillRect(0, h * 0.68, w, h * 0.32);
+    g = ctx.createLinearGradient(0, 0, 0, h * 0.24);
+    g.addColorStop(0, 'rgba(0,0,0,.26)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h * 0.24);
+
+    // sombra suave: los elementos "flotan" sobre el metraje
+    ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = U * 0.7; ctx.shadowOffsetY = U * 0.06;
+
+    // métricas abajo
+    const metrics = [
+      [`${Math.round((s.hs || 0) * 3.6)}`, 'km/h', 'VEL'],
+      [`${Math.round(s.rel || 0)}`, 'm', 'ALT'],
+      [`${Math.round(s.far || 0)}`, 'm', 'DIST'],
+    ];
+    const baseY = h - U * 1.8;
+    metrics.forEach((m, i) => metric(ctx, w * ((i + 0.5) / metrics.length), baseY, U, m[0], m[1], m[2]));
+
+    // brújula arriba derecha (más fina y compacta)
+    const R = Math.min(w, h) * 0.108;
+    compass(ctx, w - R - U * 1.5, R + U * 1.4, R, s.heading);
+    if (s.heading != null) {
+      ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.font = `600 ${U * 1.1}px ${FONT}`; ls(ctx, U * 0.06);
+      ctx.fillText(`${CARD[Math.round(s.heading / 45) % 8]} ${Math.round(s.heading)}°`, w - R - U * 1.5, R * 2 + U * 1.6); ls(ctx, 0);
+    }
+
+    // reloj arriba izquierda (píldora fina)
+    ctx.textBaseline = 'middle';
+    const tm = `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+    ctx.font = `550 ${U * 1.35}px ${FONT}`; ls(ctx, U * 0.02);
+    const tw = ctx.measureText(tm).width;
+    ctx.fillStyle = 'rgba(10,12,18,.32)'; roundRect(ctx, U * 1.3, U * 1.15, tw + U * 1.7, U * 2.2, U * 1.1); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.96)'; ctx.textAlign = 'left';
+    ctx.fillText(tm, U * 2.15, U * 2.3); ls(ctx, 0);
+
+    ctx.restore();
+  };
+
+  return { draw };
+}
+
+Object.assign(__x, { createHud });
+
+};
+
 __m["js/i18n/en.js"] = function (__x, __req) {
 /** English dictionary. Keep key parity with es.js (checked by the test). */
 __x.default = {
@@ -3388,6 +3610,8 @@ __x.default = {
   'player.play': 'Play the flight',
   'player.pause': 'Pause',
   'player.seek': 'Seek in the flight',
+  'player.expand': 'Enlarge video',
+  'player.collapse': 'Shrink video',
   'lightbox.close': 'Close',
   'lightbox.prev': 'Previous',
   'lightbox.next': 'Next',
@@ -3636,6 +3860,8 @@ __x.default = {
   'player.play': 'Reproducir el vuelo',
   'player.pause': 'Pausa',
   'player.seek': 'Buscar en el vuelo',
+  'player.expand': 'Ampliar vídeo',
+  'player.collapse': 'Reducir vídeo',
   'lightbox.close': 'Cerrar',
   'lightbox.prev': 'Anterior',
   'lightbox.next': 'Siguiente',
