@@ -622,6 +622,22 @@ const styles = css`
 .cfg-chip:hover { color: var(--color-text); border-color: color-mix(in srgb, var(--color-text) 24%, transparent); }
 .cfg-chip.on { color: var(--color-text); border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
 .cfg-chip.on .chip-dot { background: var(--color-accent); box-shadow: 0 0 0 1.4px var(--color-accent), 0 0 6px color-mix(in srgb, var(--color-accent) 55%, transparent); opacity: 1; }
+.cfg-music { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.cfg-music-btn {
+  display: inline-flex; align-items: center; gap: 8px; flex: 1; min-width: 0; font-family: inherit; cursor: pointer; text-align: left;
+  font-size: 12.5px; font-weight: 550; color: var(--color-text-muted); border: 1px solid var(--color-divider);
+  background: transparent; border-radius: 9px; padding: 7px 11px; transition: color .14s, border-color .14s, background .14s;
+}
+.cfg-music-btn:hover { color: var(--color-text); border-color: color-mix(in srgb, var(--color-text) 24%, transparent); }
+.cfg-music-btn.on { color: var(--color-text); border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+.cfg-music-btn.on .cfg-music-ic { color: var(--color-accent); }
+.cfg-music-ic { width: 15px; height: 15px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.cfg-music-btn #musicname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfg-music-x {
+  flex: none; width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--color-divider); background: transparent;
+  color: var(--color-text-muted); font-size: 12px; cursor: pointer; display: grid; place-items: center; transition: color .12s, background .12s;
+}
+.cfg-music-x:hover { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 8%, transparent); }
 .cfg-foot { display: flex; align-items: center; gap: 10px; padding: 10px; }
 .cfg-units { display: flex; gap: 2px; background: color-mix(in srgb, var(--color-text) 8%, transparent); border-radius: 10px; padding: 3px; flex: none; }
 .cfg-units button {
@@ -723,6 +739,17 @@ class FlightPlayer extends DjiElement {
               <button class="${cfg.theme === 'aviation' ? 'on' : ''}" data-th="aviation" type="button">${t('hud.theme.aviation')}</button>
             </div>
           </div>
+          <div class="cfg-sec">
+            <span class="cfg-t">${t('hud.music')}</span>
+            <div class="cfg-music">
+              <button class="cfg-music-btn ${this._music ? 'on' : ''}" id="musicbtn" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true" class="cfg-music-ic"><path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/></svg>
+                <span id="musicname">${this._music ? this._music.name : t('hud.music.none')}</span>
+              </button>
+              <button class="cfg-music-x" id="musicclear" type="button" aria-label="${t('hud.music.remove')}" ${this._music ? '' : 'hidden'}>✕</button>
+            </div>
+            <input type="file" id="musicinput" accept="audio/*" hidden>
+          </div>
           <div class="cfg-foot">
             <div class="cfg-units">
               <button class="${cfg.units === 'metric' ? 'on' : ''}" data-u="metric" type="button">${t('hud.metric')}</button>
@@ -793,6 +820,7 @@ class FlightPlayer extends DjiElement {
       const sync = () => this._sync();
       c.addEventListener('tick', sync);
       c.addEventListener('state', sync);
+      c.addEventListener('state', () => this._syncMusic()); // play/pausa/seek/velocidad → música
     }
     this._sync();
   }
@@ -828,8 +856,58 @@ class FlightPlayer extends DjiElement {
     this.$$('button[data-th]').forEach((b) => this.on(b, 'click', () => {
       cfg.theme = b.dataset.th; this.$$('button[data-th]').forEach((x) => x.classList.toggle('on', x === b)); this._drawHud();
     }));
+    this._wireMusic();
     const exp = this.$('#exportbtn');
     if (exp) this.on(exp, 'click', () => this._exportVideo());
+  }
+
+  /** Cablea la carga/borrado del archivo de música para la exportación. */
+  _wireMusic() {
+    const btn = this.$('#musicbtn'), input = this.$('#musicinput'), clear = this.$('#musicclear');
+    if (!btn || !input) return;
+    this.on(btn, 'click', () => input.click());
+    this.on(input, 'change', () => { const f = input.files?.[0]; if (f) { this._music = f; this._musicBuf = null; this._decodeMusic(); this._refreshMusic(); } });
+    if (clear) this.on(clear, 'click', () => { this._music = null; this._musicBuf = null; this._musicStop(); input.value = ''; this._refreshMusic(); });
+  }
+
+  /** Refresca el nombre de la música y la visibilidad del botón de quitar. */
+  _refreshMusic() {
+    const name = this.$('#musicname'), btn = this.$('#musicbtn'), clear = this.$('#musicclear');
+    if (name) name.textContent = this._music ? this._music.name : t('hud.music.none');
+    if (btn) btn.classList.toggle('on', !!this._music);
+    if (clear) clear.hidden = !this._music;
+  }
+
+  /** Decodifica el archivo de música para la previsualización (Web Audio). */
+  async _decodeMusic() {
+    if (!this._music) return;
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      this._musicAC = this._musicAC || new AC();
+      this._musicBuf = await this._musicAC.decodeAudioData(await this._music.arrayBuffer());
+    } catch { this._musicBuf = null; }
+    this._syncMusic();
+  }
+
+  /** Detiene la música de previsualización, si sonaba. */
+  _musicStop() {
+    if (this._musicSrc) { try { this._musicSrc.stop(); } catch {} try { this._musicSrc.disconnect(); } catch {} this._musicSrc = null; }
+  }
+
+  /** Alinea la música con el reloj: suena en play (con loop y velocidad), para en pausa/seek. */
+  _syncMusic() {
+    const c = this._clock;
+    if (!c || !this._music || !this._musicBuf) { this._musicStop(); return; }
+    this._musicStop();
+    if (!c.playing) return;
+    const ac = this._musicAC;
+    if (ac.state === 'suspended') ac.resume?.();
+    const src = ac.createBufferSource(); src.buffer = this._musicBuf; src.loop = true;
+    src.playbackRate.value = c.speed || 1;
+    const g = ac.createGain(); g.gain.value = 1;
+    src.connect(g); g.connect(ac.destination);
+    src.start(0, (c.t || 0) % this._musicBuf.duration);
+    this._musicSrc = src;
   }
 
   /** Exporta el vídeo con el HUD quemado (graba en tiempo real → descarga .webm). */
@@ -842,7 +920,7 @@ class FlightPlayer extends DjiElement {
     const ctrl = new AbortController();
     ov.cancelBtn.onclick = () => ctrl.abort();
     try {
-      const blob = await exportHudVideo({ video: this._video, draw: this._hud, cfg: this._cfg(), onProgress: ov.set, signal: ctrl.signal });
+      const blob = await exportHudVideo({ video: this._video, draw: this._hud, cfg: this._cfg(), music: this._music, onProgress: ov.set, signal: ctrl.signal });
       const ext = (blob.type || '').includes('mp4') ? 'mp4' : 'webm';
       downloadBlob('vuelo-hud.' + ext, blob);
       ov.done();
@@ -3510,8 +3588,9 @@ Object.assign(__x, { reverseGeocode, firstCoords });
 __m["js/hud-export.js"] = function (__x, __req) {
 // Exporta el vídeo con el HUD "quemado" encima, 100% en el navegador.
 // Compone cada fotograma (vídeo + HUD) en un canvas. Preferimos WebCodecs +
-// muxer MP4 estándar (compatible con iOS, sin audio); si no hay WebCodecs, se
-// usa MediaRecorder (webm/mp4 fragmentado, con audio). Siempre en tiempo real.
+// muxer MP4 estándar (compatible con iOS, con audio AAC si el navegador y el
+// vídeo lo permiten); si no hay WebCodecs, se usa MediaRecorder (webm/mp4
+// fragmentado, con audio). Siempre en tiempo real.
 
 const { createMp4 } = __req("js/mp4-muxer.js");
 
@@ -3524,8 +3603,8 @@ async function exportHudVideo(opts) {
   return exportViaMediaRecorder(opts);
 }
 
-/** WebCodecs → MP4 estándar (H.264, sin audio). Compatible con iPhone/QuickTime. */
-async function exportViaWebCodecs({ video, draw, cfg, maxHeight = 1080, onProgress, signal }) {
+/** WebCodecs → MP4 estándar (H.264 + AAC). Compatible con iPhone/QuickTime. */
+async function exportViaWebCodecs({ video, draw, cfg, music, maxHeight = 1080, onProgress, signal }) {
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) throw new Error('El vídeo aún no está listo.');
   const scale = Math.min(1, maxHeight / vh);
@@ -3546,6 +3625,8 @@ async function exportViaWebCodecs({ video, draw, cfg, maxHeight = 1080, onProgre
   encoder.configure({ codec: H > 1080 ? 'avc1.640033' : 'avc1.640028', width: W, height: H, bitrate: 12_000_000, framerate: 30, latencyMode: 'realtime', avc: { format: 'avc' } });
 
   await seek(video, 0);
+  // Con música propia usamos ese archivo; si no, capturamos el audio del vídeo.
+  const audioCap = music ? null : await setupAudioCapture(video, muxer).catch(() => null);
   let running = true, cancelled = false, idx = 0;
   const dur = video.duration || 0;
   const finish = () => { running = false; try { video.pause(); } catch {} };
@@ -3567,10 +3648,119 @@ async function exportViaWebCodecs({ video, draw, cfg, maxHeight = 1080, onProgre
     video.onended = () => { finish(); resolve(); };
     useRVFC ? video.requestVideoFrameCallback(onFrame) : requestAnimationFrame(onFrame);
   });
+  if (audioCap) await audioCap.stop();
+  if (music) await encodeMusic(muxer, music, video.duration || 0).catch(() => {});
   await encoder.flush(); encoder.close();
   if (cancelled) throw new DOMException('Exportación cancelada', 'AbortError');
   if (encErr) throw encErr;
   return muxer.finalize();
+}
+
+/**
+ * Decodifica un archivo de audio (mp3/m4a/wav…) y lo codifica a AAC como pista
+ * del muxer: en bucle si es más corto que el vídeo, recortado a su duración y
+ * con fundido de salida. Offline (no depende de la reproducción).
+ * @returns {Promise<boolean>} true si añadió audio
+ */
+async function encodeMusic(muxer, file, durationSec) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!('AudioEncoder' in window) || !AC || !durationSec) return false;
+  const actx = new AC();
+  let audioBuf;
+  try { audioBuf = await actx.decodeAudioData(await file.arrayBuffer()); }
+  catch { try { actx.close(); } catch {} return false; }
+  const SR = audioBuf.sampleRate, CH = Math.min(2, audioBuf.numberOfChannels), srcLen = audioBuf.length;
+  const srcCh = []; for (let c = 0; c < CH; c++) srcCh.push(audioBuf.getChannelData(c % audioBuf.numberOfChannels));
+  const totalFrames = Math.ceil(durationSec * SR);
+  const fade = Math.min(SR * 0.8, totalFrames * 0.15) | 0; // fundido de salida ~0,8 s
+
+  let encErr = null, needCfg = true;
+  const enc = new AudioEncoder({
+    output: (chunk, meta) => {
+      if (needCfg && meta?.decoderConfig?.description) { muxer.setAudioConfig({ sampleRate: SR, channels: CH, description: meta.decoderConfig.description }); needCfg = false; }
+      if (needCfg) return;
+      const b = new Uint8Array(chunk.byteLength); chunk.copyTo(b); muxer.addAudioSample(b, chunk.timestamp);
+    },
+    error: (e) => { encErr = e; },
+  });
+  enc.configure({ codec: 'mp4a.40.2', sampleRate: SR, numberOfChannels: CH, bitrate: 192_000, aac: { format: 'aac' } });
+
+  const N = 1024;
+  for (let off = 0; off < totalFrames && !encErr; off += N) {
+    const n = Math.min(N, totalFrames - off);
+    const data = new Float32Array(N * CH); // el resto del último bloque queda en silencio
+    for (let c = 0; c < CH; c++) {
+      const src = srcCh[c];
+      for (let j = 0; j < n; j++) {
+        const gi = off + j, rem = totalFrames - gi;
+        let v = src[gi % srcLen];                 // bucle si la música es más corta
+        if (rem < fade) v *= rem / fade;          // fundido de salida
+        data[c * N + j] = v;
+      }
+    }
+    const ad = new AudioData({ format: 'f32-planar', sampleRate: SR, numberOfChannels: CH, numberOfFrames: N, timestamp: Math.round(off / SR * 1e6), data });
+    enc.encode(ad); ad.close();
+  }
+  try { await enc.flush(); } catch {} try { enc.close(); } catch {} try { actx.close(); } catch {}
+  return !needCfg && !encErr;
+}
+
+/**
+ * Captura el audio del vídeo y lo codifica a AAC en paralelo, alimentando el
+ * muxer. Best-effort: devuelve null si el navegador no soporta la captura o el
+ * códec, o si el vídeo no tiene pista de audio.
+ * @returns {Promise<{stop:()=>Promise<void>}|null>}
+ */
+async function setupAudioCapture(video, muxer) {
+  if (!('AudioEncoder' in window) || typeof MediaStreamTrackProcessor === 'undefined') return null;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  if (!video._hudAudioCtx) { video._hudAudioCtx = new AC(); video._hudAudioSrc = video._hudAudioCtx.createMediaElementSource(video); }
+  const actx = video._hudAudioCtx;
+  await actx.resume?.();
+  const dest = actx.createMediaStreamDestination();
+  video._hudAudioSrc.connect(dest);
+  const track = dest.stream.getAudioTracks()[0];
+  if (!track) { try { video._hudAudioSrc.disconnect(dest); } catch {} return null; }
+
+  let sr = 0, ch = 0, needCfg = true, encErr = null;
+  const enc = new AudioEncoder({
+    output: (chunk, meta) => {
+      if (needCfg && meta?.decoderConfig?.description) { muxer.setAudioConfig({ sampleRate: sr, channels: ch, description: meta.decoderConfig.description }); needCfg = false; }
+      if (needCfg) return; // sin AudioSpecificConfig no podemos muxear
+      const buf = new Uint8Array(chunk.byteLength); chunk.copyTo(buf);
+      muxer.addAudioSample(buf, chunk.timestamp);
+    },
+    error: (e) => { encErr = e; },
+  });
+
+  const reader = track && new MediaStreamTrackProcessor({ track }).readable.getReader();
+  let configured = false;
+  const pump = (async () => {
+    try {
+      while (!encErr) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!configured) {
+          sr = value.sampleRate; ch = value.numberOfChannels;
+          enc.configure({ codec: 'mp4a.40.2', sampleRate: sr, numberOfChannels: ch, bitrate: 128_000, aac: { format: 'aac' } });
+          configured = true;
+        }
+        if (enc.state === 'configured') enc.encode(value);
+        value.close();
+      }
+    } catch { /* fin de la captura */ }
+  })();
+
+  return {
+    async stop() {
+      try { await reader.cancel(); } catch {}
+      await pump;
+      try { if (enc.state === 'configured') await enc.flush(); } catch {}
+      try { enc.close(); } catch {}
+      try { video._hudAudioSrc.disconnect(dest); } catch {}
+    },
+  };
 }
 
 /** Espera a que el vídeo termine de buscar a t. */
@@ -3593,7 +3783,7 @@ function seek(video, t) {
  * @param {AbortSignal} [o.signal]
  * @returns {Promise<Blob>}
  */
-async function exportViaMediaRecorder({ video, draw, cfg, maxHeight = 1080, fps = 30, onProgress, signal }) {
+async function exportViaMediaRecorder({ video, draw, cfg, music, maxHeight = 1080, fps = 30, onProgress, signal }) {
   if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) {
     throw new Error('Tu navegador no soporta la grabación de canvas.');
   }
@@ -3605,10 +3795,19 @@ async function exportViaMediaRecorder({ video, draw, cfg, maxHeight = 1080, fps 
   const ctx = canvas.getContext('2d', { alpha: false });
   const stream = canvas.captureStream(fps);
 
-  // audio del vídeo, capturado en silencio vía Web Audio (no suena por los altavoces)
+  // Pista de audio: música propia (en bucle) o el audio del vídeo (silencioso).
+  let startMusic = null, musicCtx = null;
   try {
     const AC = window.AudioContext || window.webkitAudioContext;
-    if (AC) {
+    if (AC && music) {
+      musicCtx = new AC();
+      const ab = await musicCtx.decodeAudioData(await music.arrayBuffer());
+      const src = musicCtx.createBufferSource(); src.buffer = ab; src.loop = true;
+      const dest = musicCtx.createMediaStreamDestination();
+      src.connect(dest);
+      const at = dest.stream.getAudioTracks()[0];
+      if (at) { stream.addTrack(at); startMusic = () => { try { src.start(); } catch {} }; }
+    } else if (AC) {
       if (!video._hudAudioCtx) { video._hudAudioCtx = new AC(); video._hudAudioSrc = video._hudAudioCtx.createMediaElementSource(video); }
       await video._hudAudioCtx.resume?.();
       const dest = video._hudAudioCtx.createMediaStreamDestination();
@@ -3651,11 +3850,13 @@ async function exportViaMediaRecorder({ video, draw, cfg, maxHeight = 1080, fps 
   rec.start(1000);
   video.onended = finish;
   await video.play();
+  startMusic?.();
   loop();
 
   await stopped;
   video.muted = true;
   try { video._hudAudioSrc?.disconnect(); } catch {}
+  try { musicCtx?.close(); } catch {}
   if (cancelled) throw new DOMException('Exportación cancelada', 'AbortError');
   return new Blob(chunks, { type: mime });
 }
@@ -4237,6 +4438,9 @@ __x.default = {
   'hud.theme': 'Theme',
   'hud.theme.modern': 'Modern',
   'hud.theme.aviation': 'Aviation',
+  'hud.music': 'Music',
+  'hud.music.none': 'None (video audio)',
+  'hud.music.remove': 'Remove music',
   'hud.g.speed': 'Speed',
   'hud.g.alt': 'Altitude',
   'hud.g.dist': 'Distance',
@@ -4511,6 +4715,9 @@ __x.default = {
   'hud.theme': 'Tema',
   'hud.theme.modern': 'Moderno',
   'hud.theme.aviation': 'Aviación',
+  'hud.music': 'Música',
+  'hud.music.none': 'Ninguna (audio del vídeo)',
+  'hud.music.remove': 'Quitar música',
   'hud.g.speed': 'Velocidad',
   'hud.g.alt': 'Altura',
   'hud.g.dist': 'Distancia',
@@ -4952,11 +5159,12 @@ Object.assign(__x, { buildKMZ });
 };
 
 __m["js/mp4-muxer.js"] = function (__x, __req) {
-// Muxer MP4 mínimo para vídeo H.264 (muestras en formato AVCC), salida progresiva
-// estándar (moov al final): compatible con iOS/QuickTime, a diferencia del MP4
-// fragmentado que produce MediaRecorder. Sin audio (vídeo puro).
+// Muxer MP4 mínimo, salida progresiva estándar (moov al final): compatible con
+// iOS/QuickTime, a diferencia del MP4 fragmentado que produce MediaRecorder.
+// Pista de vídeo H.264 (muestras AVCC) + pista de audio AAC opcional. Si no se
+// aporta audio, la salida es idéntica al muxer de vídeo puro.
 
-const TS = 90000; // timescale de medios
+const VTS = 90000; // timescale de la pista de vídeo
 
 const u8 = (...n) => new Uint8Array(n);
 const u16 = (n) => new Uint8Array([(n >> 8) & 255, n & 255]);
@@ -4965,73 +5173,133 @@ const str = (s) => new Uint8Array([...s].map((c) => c.charCodeAt(0)));
 const cat = (arrs) => { let len = 0; for (const a of arrs) len += a.length; const o = new Uint8Array(len); let p = 0; for (const a of arrs) { o.set(a, p); p += a.length; } return o; };
 const box = (type, ...payload) => { const body = cat(payload); return cat([u32(body.length + 8), str(type), body]); };
 const fbox = (type, version, flags, ...payload) => box(type, u8(version), u8((flags >> 16) & 255, (flags >> 8) & 255, flags & 255), ...payload);
+// descriptor MPEG-4 (tag + longitud en 1 byte; suficiente para AudioSpecificConfig)
+const descr = (tag, payload) => cat([u8(tag), u8(payload.length), payload]);
 const MATRIX = cat([u32(0x00010000), u32(0), u32(0), u32(0), u32(0x00010000), u32(0), u32(0), u32(0), u32(0x40000000)]);
 
 /**
  * @param {{width:number,height:number}} o
- * @returns {{setDescription:(d:BufferSource)=>void, addSample:(bytes:Uint8Array,isKey:boolean,tsMicros:number)=>void, finalize:()=>Blob}}
+ * @returns {{setDescription:(d:BufferSource)=>void, addSample:(bytes:Uint8Array,isKey:boolean,tsMicros:number)=>void, setAudioConfig:(c:{sampleRate:number,channels:number,description:BufferSource})=>void, addAudioSample:(bytes:BufferSource,tsMicros:number)=>void, finalize:()=>Blob}}
  */
 function createMp4({ width, height }) {
   let description = null;
-  const samples = [];      // { size, key, ts (en TS), offset }
+  const samples = [];      // vídeo: { size, key, ts (en VTS), offset }
   const data = [];
   let dataLen = 0;
+
+  // audio (opcional)
+  let audio = null;        // { sampleRate, channels, desc }
+  const aSamples = [];     // { size }
+  const aData = [];
+  let aDataLen = 0;
 
   return {
     setDescription(d) { description = new Uint8Array(d instanceof ArrayBuffer ? d : d.buffer || d); },
     addSample(bytes, isKey, tsMicros) {
       const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-      samples.push({ size: b.length, key: !!isKey, ts: Math.round(tsMicros * TS / 1e6), offset: dataLen });
+      samples.push({ size: b.length, key: !!isKey, ts: Math.round(tsMicros * VTS / 1e6), offset: dataLen });
       data.push(b); dataLen += b.length;
+    },
+    setAudioConfig({ sampleRate, channels, description: d }) {
+      audio = { sampleRate, channels: channels || 2, desc: new Uint8Array(d instanceof ArrayBuffer ? d : d.buffer || d) };
+    },
+    addAudioSample(bytes) {
+      const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      aSamples.push({ size: b.length });
+      aData.push(b); aDataLen += b.length;
     },
     finalize() {
       if (!description || !samples.length) throw new Error('MP4 sin datos.');
-      // duraciones a partir de los timestamps
+      const hasAudio = !!(audio && aSamples.length);
+
+      // duraciones de vídeo a partir de los timestamps
       for (let i = 0; i < samples.length; i++) {
         samples[i].dur = i < samples.length - 1
           ? Math.max(1, samples[i + 1].ts - samples[i].ts)
           : (samples.length > 1 ? samples[i - 1].ts - (samples[i - 2]?.ts ?? samples[i - 1].ts) || 3000 : 3000);
       }
       if (samples.length > 1) samples[samples.length - 1].dur = samples[samples.length - 2].dur;
-      const totalDur = samples.reduce((s, x) => s + x.dur, 0);
-      const durMovie = Math.round(totalDur / TS * 1000);
+      const vTotal = samples.reduce((s, x) => s + x.dur, 0);
+      const vDurMs = Math.round(vTotal / VTS * 1000);
+
+      // audio: 1024 muestras PCM por frame AAC-LC
+      const AAC_FRAME = 1024;
+      const aTotal = hasAudio ? aSamples.length * AAC_FRAME : 0;
+      const aDurMs = hasAudio ? Math.round(aTotal / audio.sampleRate * 1000) : 0;
+      const durMovie = Math.max(vDurMs, aDurMs);
 
       const ftyp = box('ftyp', str('isom'), u32(0x200), str('isom'), str('iso2'), str('avc1'), str('mp41'));
-      const mdatHeader = cat([u32(dataLen + 8), str('mdat')]);
-      const mdatDataOffset = ftyp.length + mdatHeader.length; // offset absoluto del primer byte de muestra
+      const totalData = dataLen + aDataLen;
+      const mdatHeader = cat([u32(totalData + 8), str('mdat')]);
+      const vBase = ftyp.length + mdatHeader.length;   // offset del primer byte de vídeo
+      const aBase = vBase + dataLen;                   // el audio va tras el vídeo en el mdat
 
+      // ---- pista de vídeo ----
       const avc1 = box('avc1',
-        u8(0, 0, 0, 0, 0, 0), u16(1),                       // reserved + data_reference_index
-        u16(0), u16(0), u8(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), // pre_defined + reserved + pre_defined[3]
+        u8(0, 0, 0, 0, 0, 0), u16(1),
+        u16(0), u16(0), u8(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
         u16(width), u16(height),
         u32(0x00480000), u32(0x00480000), u32(0), u16(1),
-        new Uint8Array(32),                                  // compressorname
+        new Uint8Array(32),
         u16(0x0018), u16(0xFFFF),
         box('avcC', description));
-      const stsd = fbox('stsd', 0, 0, u32(1), avc1);
+      const vStsd = fbox('stsd', 0, 0, u32(1), avc1);
       const sttsE = [];
       for (const s of samples) { const l = sttsE[sttsE.length - 1]; if (l && l.dur === s.dur) l.count++; else sttsE.push({ count: 1, dur: s.dur }); }
-      const stts = fbox('stts', 0, 0, u32(sttsE.length), cat(sttsE.map((e) => cat([u32(e.count), u32(e.dur)]))));
-      const stsc = fbox('stsc', 0, 0, u32(1), cat([u32(1), u32(samples.length), u32(1)]));
-      const stsz = fbox('stsz', 0, 0, u32(0), u32(samples.length), cat(samples.map((s) => u32(s.size))));
-      const stco = fbox('stco', 0, 0, u32(1), u32(mdatDataOffset));
+      const vStts = fbox('stts', 0, 0, u32(sttsE.length), cat(sttsE.map((e) => cat([u32(e.count), u32(e.dur)]))));
+      const vStsc = fbox('stsc', 0, 0, u32(1), cat([u32(1), u32(samples.length), u32(1)]));
+      const vStsz = fbox('stsz', 0, 0, u32(0), u32(samples.length), cat(samples.map((s) => u32(s.size))));
+      const vStco = fbox('stco', 0, 0, u32(1), u32(vBase));
       const keys = samples.map((s, i) => (s.key ? i + 1 : 0)).filter(Boolean);
-      const stss = fbox('stss', 0, 0, u32(keys.length), cat(keys.map((k) => u32(k))));
-      const stbl = box('stbl', stsd, stts, stsc, stsz, stco, stss);
+      const vStss = fbox('stss', 0, 0, u32(keys.length), cat(keys.map((k) => u32(k))));
+      const vStbl = box('stbl', vStsd, vStts, vStsc, vStsz, vStco, vStss);
       const vmhd = fbox('vmhd', 0, 1, u16(0), u16(0), u16(0), u16(0));
       const dinf = box('dinf', fbox('dref', 0, 0, u32(1), fbox('url ', 0, 1)));
-      const minf = box('minf', vmhd, dinf, stbl);
-      const hdlr = fbox('hdlr', 0, 0, u32(0), str('vide'), u8(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), cat([str('VideoHandler'), u8(0)]));
-      const mdhd = fbox('mdhd', 0, 0, u32(0), u32(0), u32(TS), u32(totalDur), u16(0x55c4), u16(0));
-      const mdia = box('mdia', mdhd, hdlr, minf);
-      const tkhd = fbox('tkhd', 0, 7, u32(0), u32(0), u32(1), u32(0), u32(durMovie),
+      const vMinf = box('minf', vmhd, dinf, vStbl);
+      const vHdlr = fbox('hdlr', 0, 0, u32(0), str('vide'), u8(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), cat([str('VideoHandler'), u8(0)]));
+      const vMdhd = fbox('mdhd', 0, 0, u32(0), u32(0), u32(VTS), u32(vTotal), u16(0x55c4), u16(0));
+      const vMdia = box('mdia', vMdhd, vHdlr, vMinf);
+      const vTkhd = fbox('tkhd', 0, 7, u32(0), u32(0), u32(1), u32(0), u32(durMovie),
         u8(0, 0, 0, 0, 0, 0, 0, 0), u16(0), u16(0), u16(0), u16(0), MATRIX, u32(width << 16), u32(height << 16));
-      const trak = box('trak', tkhd, mdia);
-      const mvhd = fbox('mvhd', 0, 0, u32(0), u32(0), u32(1000), u32(durMovie), u32(0x00010000), u16(0x0100), u16(0),
-        u32(0), u32(0), MATRIX, u32(0), u32(0), u32(0), u32(0), u32(0), u32(0), u32(2));
-      const moov = box('moov', mvhd, trak);
+      const vTrak = box('trak', vTkhd, vMdia);
 
-      return new Blob([ftyp, mdatHeader, ...data, moov], { type: 'video/mp4' });
+      // ---- pista de audio (opcional) ----
+      let aTrak = null;
+      if (hasAudio) {
+        const esds = fbox('esds', 0, 0,
+          descr(0x03, cat([u16(0), u8(0),                                  // ES_ID + flags
+            descr(0x04, cat([u8(0x40), u8(0x15), u8(0, 0, 0), u32(0), u32(128000), // AAC, audioStream, buffer/max/avg bitrate
+              descr(0x05, audio.desc)])),                                  // AudioSpecificConfig
+            descr(0x06, u8(0x02))])));                                     // SLConfig
+        const mp4a = box('mp4a',
+          u8(0, 0, 0, 0, 0, 0), u16(1),           // reserved + data_reference_index
+          u32(0), u32(0),                         // reserved
+          u16(audio.channels), u16(16),           // channelcount + samplesize
+          u16(0), u16(0),                         // pre_defined + reserved
+          u32((audio.sampleRate * 65536) >>> 0),  // samplerate 16.16
+          esds);
+        const aStsd = fbox('stsd', 0, 0, u32(1), mp4a);
+        const aStts = fbox('stts', 0, 0, u32(1), cat([u32(aSamples.length), u32(AAC_FRAME)]));
+        const aStsc = fbox('stsc', 0, 0, u32(1), cat([u32(1), u32(aSamples.length), u32(1)]));
+        const aStsz = fbox('stsz', 0, 0, u32(0), u32(aSamples.length), cat(aSamples.map((s) => u32(s.size))));
+        const aStco = fbox('stco', 0, 0, u32(1), u32(aBase));
+        const aStbl = box('stbl', aStsd, aStts, aStsc, aStsz, aStco);
+        const smhd = fbox('smhd', 0, 0, u16(0), u16(0));
+        const aMinf = box('minf', smhd, dinf, aStbl);
+        const aHdlr = fbox('hdlr', 0, 0, u32(0), str('soun'), u8(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), cat([str('SoundHandler'), u8(0)]));
+        const aMdhd = fbox('mdhd', 0, 0, u32(0), u32(0), u32(audio.sampleRate), u32(aTotal), u16(0x55c4), u16(0));
+        const aMdia = box('mdia', aMdhd, aHdlr, aMinf);
+        const aTkhd = fbox('tkhd', 0, 7, u32(0), u32(0), u32(2), u32(0), u32(durMovie),
+          u8(0, 0, 0, 0, 0, 0, 0, 0), u16(0), u16(0), u16(0x0100), u16(0), MATRIX, u32(0), u32(0));
+        aTrak = box('trak', aTkhd, aMdia);
+      }
+
+      const nextTrack = hasAudio ? 3 : 2;
+      const mvhd = fbox('mvhd', 0, 0, u32(0), u32(0), u32(1000), u32(durMovie), u32(0x00010000), u16(0x0100), u16(0),
+        u32(0), u32(0), MATRIX, u32(0), u32(0), u32(0), u32(0), u32(0), u32(0), u32(nextTrack));
+      const moov = hasAudio ? box('moov', mvhd, vTrak, aTrak) : box('moov', mvhd, vTrak);
+
+      return new Blob([ftyp, mdatHeader, ...data, ...aData, moov], { type: 'video/mp4' });
     },
   };
 }
