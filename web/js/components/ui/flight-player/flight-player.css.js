@@ -97,6 +97,22 @@ export const styles = css`
 .cfg-chip:hover { color: var(--color-text); border-color: color-mix(in srgb, var(--color-text) 24%, transparent); }
 .cfg-chip.on { color: var(--color-text); border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
 .cfg-chip.on .chip-dot { background: var(--color-accent); box-shadow: 0 0 0 1.4px var(--color-accent), 0 0 6px color-mix(in srgb, var(--color-accent) 55%, transparent); opacity: 1; }
+.cfg-music { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.cfg-music-btn {
+  display: inline-flex; align-items: center; gap: 8px; flex: 1; min-width: 0; font-family: inherit; cursor: pointer; text-align: left;
+  font-size: 12.5px; font-weight: 550; color: var(--color-text-muted); border: 1px solid var(--color-divider);
+  background: transparent; border-radius: 9px; padding: 7px 11px; transition: color .14s, border-color .14s, background .14s;
+}
+.cfg-music-btn:hover { color: var(--color-text); border-color: color-mix(in srgb, var(--color-text) 24%, transparent); }
+.cfg-music-btn.on { color: var(--color-text); border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+.cfg-music-btn.on .cfg-music-ic { color: var(--color-accent); }
+.cfg-music-ic { width: 15px; height: 15px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.cfg-music-btn #musicname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfg-music-x {
+  flex: none; width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--color-divider); background: transparent;
+  color: var(--color-text-muted); font-size: 12px; cursor: pointer; display: grid; place-items: center; transition: color .12s, background .12s;
+}
+.cfg-music-x:hover { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 8%, transparent); }
 .cfg-foot { display: flex; align-items: center; gap: 10px; padding: 10px; }
 .cfg-units { display: flex; gap: 2px; background: color-mix(in srgb, var(--color-text) 8%, transparent); border-radius: 10px; padding: 3px; flex: none; }
 .cfg-units button {

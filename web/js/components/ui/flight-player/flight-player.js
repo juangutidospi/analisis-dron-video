@@ -51,6 +51,17 @@ export class FlightPlayer extends DjiElement {
               <button class="${cfg.theme === 'aviation' ? 'on' : ''}" data-th="aviation" type="button">${t('hud.theme.aviation')}</button>
             </div>
           </div>
+          <div class="cfg-sec">
+            <span class="cfg-t">${t('hud.music')}</span>
+            <div class="cfg-music">
+              <button class="cfg-music-btn ${this._music ? 'on' : ''}" id="musicbtn" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true" class="cfg-music-ic"><path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/></svg>
+                <span id="musicname">${this._music ? this._music.name : t('hud.music.none')}</span>
+              </button>
+              <button class="cfg-music-x" id="musicclear" type="button" aria-label="${t('hud.music.remove')}" ${this._music ? '' : 'hidden'}>✕</button>
+            </div>
+            <input type="file" id="musicinput" accept="audio/*" hidden>
+          </div>
           <div class="cfg-foot">
             <div class="cfg-units">
               <button class="${cfg.units === 'metric' ? 'on' : ''}" data-u="metric" type="button">${t('hud.metric')}</button>
@@ -121,6 +132,7 @@ export class FlightPlayer extends DjiElement {
       const sync = () => this._sync();
       c.addEventListener('tick', sync);
       c.addEventListener('state', sync);
+      c.addEventListener('state', () => this._syncMusic()); // play/pausa/seek/velocidad → música
     }
     this._sync();
   }
@@ -156,8 +168,58 @@ export class FlightPlayer extends DjiElement {
     this.$$('button[data-th]').forEach((b) => this.on(b, 'click', () => {
       cfg.theme = b.dataset.th; this.$$('button[data-th]').forEach((x) => x.classList.toggle('on', x === b)); this._drawHud();
     }));
+    this._wireMusic();
     const exp = this.$('#exportbtn');
     if (exp) this.on(exp, 'click', () => this._exportVideo());
+  }
+
+  /** Cablea la carga/borrado del archivo de música para la exportación. */
+  _wireMusic() {
+    const btn = this.$('#musicbtn'), input = this.$('#musicinput'), clear = this.$('#musicclear');
+    if (!btn || !input) return;
+    this.on(btn, 'click', () => input.click());
+    this.on(input, 'change', () => { const f = input.files?.[0]; if (f) { this._music = f; this._musicBuf = null; this._decodeMusic(); this._refreshMusic(); } });
+    if (clear) this.on(clear, 'click', () => { this._music = null; this._musicBuf = null; this._musicStop(); input.value = ''; this._refreshMusic(); });
+  }
+
+  /** Refresca el nombre de la música y la visibilidad del botón de quitar. */
+  _refreshMusic() {
+    const name = this.$('#musicname'), btn = this.$('#musicbtn'), clear = this.$('#musicclear');
+    if (name) name.textContent = this._music ? this._music.name : t('hud.music.none');
+    if (btn) btn.classList.toggle('on', !!this._music);
+    if (clear) clear.hidden = !this._music;
+  }
+
+  /** Decodifica el archivo de música para la previsualización (Web Audio). */
+  async _decodeMusic() {
+    if (!this._music) return;
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      this._musicAC = this._musicAC || new AC();
+      this._musicBuf = await this._musicAC.decodeAudioData(await this._music.arrayBuffer());
+    } catch { this._musicBuf = null; }
+    this._syncMusic();
+  }
+
+  /** Detiene la música de previsualización, si sonaba. */
+  _musicStop() {
+    if (this._musicSrc) { try { this._musicSrc.stop(); } catch {} try { this._musicSrc.disconnect(); } catch {} this._musicSrc = null; }
+  }
+
+  /** Alinea la música con el reloj: suena en play (con loop y velocidad), para en pausa/seek. */
+  _syncMusic() {
+    const c = this._clock;
+    if (!c || !this._music || !this._musicBuf) { this._musicStop(); return; }
+    this._musicStop();
+    if (!c.playing) return;
+    const ac = this._musicAC;
+    if (ac.state === 'suspended') ac.resume?.();
+    const src = ac.createBufferSource(); src.buffer = this._musicBuf; src.loop = true;
+    src.playbackRate.value = c.speed || 1;
+    const g = ac.createGain(); g.gain.value = 1;
+    src.connect(g); g.connect(ac.destination);
+    src.start(0, (c.t || 0) % this._musicBuf.duration);
+    this._musicSrc = src;
   }
 
   /** Exporta el vídeo con el HUD quemado (graba en tiempo real → descarga .webm). */
@@ -170,7 +232,7 @@ export class FlightPlayer extends DjiElement {
     const ctrl = new AbortController();
     ov.cancelBtn.onclick = () => ctrl.abort();
     try {
-      const blob = await exportHudVideo({ video: this._video, draw: this._hud, cfg: this._cfg(), onProgress: ov.set, signal: ctrl.signal });
+      const blob = await exportHudVideo({ video: this._video, draw: this._hud, cfg: this._cfg(), music: this._music, onProgress: ov.set, signal: ctrl.signal });
       const ext = (blob.type || '').includes('mp4') ? 'mp4' : 'webm';
       downloadBlob('vuelo-hud.' + ext, blob);
       ov.done();
