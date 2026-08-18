@@ -1,7 +1,8 @@
 // Exporta el vídeo con el HUD "quemado" encima, 100% en el navegador.
 // Compone cada fotograma (vídeo + HUD) en un canvas. Preferimos WebCodecs +
-// muxer MP4 estándar (compatible con iOS, sin audio); si no hay WebCodecs, se
-// usa MediaRecorder (webm/mp4 fragmentado, con audio). Siempre en tiempo real.
+// muxer MP4 estándar (compatible con iOS, con audio AAC si el navegador y el
+// vídeo lo permiten); si no hay WebCodecs, se usa MediaRecorder (webm/mp4
+// fragmentado, con audio). Siempre en tiempo real.
 
 import { createMp4 } from './mp4-muxer.js';
 
@@ -14,8 +15,8 @@ export async function exportHudVideo(opts) {
   return exportViaMediaRecorder(opts);
 }
 
-/** WebCodecs → MP4 estándar (H.264, sin audio). Compatible con iPhone/QuickTime. */
-async function exportViaWebCodecs({ video, draw, cfg, maxHeight = 1080, onProgress, signal }) {
+/** WebCodecs → MP4 estándar (H.264 + AAC). Compatible con iPhone/QuickTime. */
+async function exportViaWebCodecs({ video, draw, cfg, music, maxHeight = 1080, onProgress, signal }) {
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) throw new Error('El vídeo aún no está listo.');
   const scale = Math.min(1, maxHeight / vh);
@@ -36,6 +37,8 @@ async function exportViaWebCodecs({ video, draw, cfg, maxHeight = 1080, onProgre
   encoder.configure({ codec: H > 1080 ? 'avc1.640033' : 'avc1.640028', width: W, height: H, bitrate: 12_000_000, framerate: 30, latencyMode: 'realtime', avc: { format: 'avc' } });
 
   await seek(video, 0);
+  // Con música propia usamos ese archivo; si no, capturamos el audio del vídeo.
+  const audioCap = music ? null : await setupAudioCapture(video, muxer).catch(() => null);
   let running = true, cancelled = false, idx = 0;
   const dur = video.duration || 0;
   const finish = () => { running = false; try { video.pause(); } catch {} };
@@ -57,10 +60,119 @@ async function exportViaWebCodecs({ video, draw, cfg, maxHeight = 1080, onProgre
     video.onended = () => { finish(); resolve(); };
     useRVFC ? video.requestVideoFrameCallback(onFrame) : requestAnimationFrame(onFrame);
   });
+  if (audioCap) await audioCap.stop();
+  if (music) await encodeMusic(muxer, music, video.duration || 0).catch(() => {});
   await encoder.flush(); encoder.close();
   if (cancelled) throw new DOMException('Exportación cancelada', 'AbortError');
   if (encErr) throw encErr;
   return muxer.finalize();
+}
+
+/**
+ * Decodifica un archivo de audio (mp3/m4a/wav…) y lo codifica a AAC como pista
+ * del muxer: en bucle si es más corto que el vídeo, recortado a su duración y
+ * con fundido de salida. Offline (no depende de la reproducción).
+ * @returns {Promise<boolean>} true si añadió audio
+ */
+async function encodeMusic(muxer, file, durationSec) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!('AudioEncoder' in window) || !AC || !durationSec) return false;
+  const actx = new AC();
+  let audioBuf;
+  try { audioBuf = await actx.decodeAudioData(await file.arrayBuffer()); }
+  catch { try { actx.close(); } catch {} return false; }
+  const SR = audioBuf.sampleRate, CH = Math.min(2, audioBuf.numberOfChannels), srcLen = audioBuf.length;
+  const srcCh = []; for (let c = 0; c < CH; c++) srcCh.push(audioBuf.getChannelData(c % audioBuf.numberOfChannels));
+  const totalFrames = Math.ceil(durationSec * SR);
+  const fade = Math.min(SR * 0.8, totalFrames * 0.15) | 0; // fundido de salida ~0,8 s
+
+  let encErr = null, needCfg = true;
+  const enc = new AudioEncoder({
+    output: (chunk, meta) => {
+      if (needCfg && meta?.decoderConfig?.description) { muxer.setAudioConfig({ sampleRate: SR, channels: CH, description: meta.decoderConfig.description }); needCfg = false; }
+      if (needCfg) return;
+      const b = new Uint8Array(chunk.byteLength); chunk.copyTo(b); muxer.addAudioSample(b, chunk.timestamp);
+    },
+    error: (e) => { encErr = e; },
+  });
+  enc.configure({ codec: 'mp4a.40.2', sampleRate: SR, numberOfChannels: CH, bitrate: 192_000, aac: { format: 'aac' } });
+
+  const N = 1024;
+  for (let off = 0; off < totalFrames && !encErr; off += N) {
+    const n = Math.min(N, totalFrames - off);
+    const data = new Float32Array(N * CH); // el resto del último bloque queda en silencio
+    for (let c = 0; c < CH; c++) {
+      const src = srcCh[c];
+      for (let j = 0; j < n; j++) {
+        const gi = off + j, rem = totalFrames - gi;
+        let v = src[gi % srcLen];                 // bucle si la música es más corta
+        if (rem < fade) v *= rem / fade;          // fundido de salida
+        data[c * N + j] = v;
+      }
+    }
+    const ad = new AudioData({ format: 'f32-planar', sampleRate: SR, numberOfChannels: CH, numberOfFrames: N, timestamp: Math.round(off / SR * 1e6), data });
+    enc.encode(ad); ad.close();
+  }
+  try { await enc.flush(); } catch {} try { enc.close(); } catch {} try { actx.close(); } catch {}
+  return !needCfg && !encErr;
+}
+
+/**
+ * Captura el audio del vídeo y lo codifica a AAC en paralelo, alimentando el
+ * muxer. Best-effort: devuelve null si el navegador no soporta la captura o el
+ * códec, o si el vídeo no tiene pista de audio.
+ * @returns {Promise<{stop:()=>Promise<void>}|null>}
+ */
+async function setupAudioCapture(video, muxer) {
+  if (!('AudioEncoder' in window) || typeof MediaStreamTrackProcessor === 'undefined') return null;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  if (!video._hudAudioCtx) { video._hudAudioCtx = new AC(); video._hudAudioSrc = video._hudAudioCtx.createMediaElementSource(video); }
+  const actx = video._hudAudioCtx;
+  await actx.resume?.();
+  const dest = actx.createMediaStreamDestination();
+  video._hudAudioSrc.connect(dest);
+  const track = dest.stream.getAudioTracks()[0];
+  if (!track) { try { video._hudAudioSrc.disconnect(dest); } catch {} return null; }
+
+  let sr = 0, ch = 0, needCfg = true, encErr = null;
+  const enc = new AudioEncoder({
+    output: (chunk, meta) => {
+      if (needCfg && meta?.decoderConfig?.description) { muxer.setAudioConfig({ sampleRate: sr, channels: ch, description: meta.decoderConfig.description }); needCfg = false; }
+      if (needCfg) return; // sin AudioSpecificConfig no podemos muxear
+      const buf = new Uint8Array(chunk.byteLength); chunk.copyTo(buf);
+      muxer.addAudioSample(buf, chunk.timestamp);
+    },
+    error: (e) => { encErr = e; },
+  });
+
+  const reader = track && new MediaStreamTrackProcessor({ track }).readable.getReader();
+  let configured = false;
+  const pump = (async () => {
+    try {
+      while (!encErr) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!configured) {
+          sr = value.sampleRate; ch = value.numberOfChannels;
+          enc.configure({ codec: 'mp4a.40.2', sampleRate: sr, numberOfChannels: ch, bitrate: 128_000, aac: { format: 'aac' } });
+          configured = true;
+        }
+        if (enc.state === 'configured') enc.encode(value);
+        value.close();
+      }
+    } catch { /* fin de la captura */ }
+  })();
+
+  return {
+    async stop() {
+      try { await reader.cancel(); } catch {}
+      await pump;
+      try { if (enc.state === 'configured') await enc.flush(); } catch {}
+      try { enc.close(); } catch {}
+      try { video._hudAudioSrc.disconnect(dest); } catch {}
+    },
+  };
 }
 
 /** Espera a que el vídeo termine de buscar a t. */
@@ -83,7 +195,7 @@ function seek(video, t) {
  * @param {AbortSignal} [o.signal]
  * @returns {Promise<Blob>}
  */
-async function exportViaMediaRecorder({ video, draw, cfg, maxHeight = 1080, fps = 30, onProgress, signal }) {
+async function exportViaMediaRecorder({ video, draw, cfg, music, maxHeight = 1080, fps = 30, onProgress, signal }) {
   if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) {
     throw new Error('Tu navegador no soporta la grabación de canvas.');
   }
@@ -95,10 +207,19 @@ async function exportViaMediaRecorder({ video, draw, cfg, maxHeight = 1080, fps 
   const ctx = canvas.getContext('2d', { alpha: false });
   const stream = canvas.captureStream(fps);
 
-  // audio del vídeo, capturado en silencio vía Web Audio (no suena por los altavoces)
+  // Pista de audio: música propia (en bucle) o el audio del vídeo (silencioso).
+  let startMusic = null, musicCtx = null;
   try {
     const AC = window.AudioContext || window.webkitAudioContext;
-    if (AC) {
+    if (AC && music) {
+      musicCtx = new AC();
+      const ab = await musicCtx.decodeAudioData(await music.arrayBuffer());
+      const src = musicCtx.createBufferSource(); src.buffer = ab; src.loop = true;
+      const dest = musicCtx.createMediaStreamDestination();
+      src.connect(dest);
+      const at = dest.stream.getAudioTracks()[0];
+      if (at) { stream.addTrack(at); startMusic = () => { try { src.start(); } catch {} }; }
+    } else if (AC) {
       if (!video._hudAudioCtx) { video._hudAudioCtx = new AC(); video._hudAudioSrc = video._hudAudioCtx.createMediaElementSource(video); }
       await video._hudAudioCtx.resume?.();
       const dest = video._hudAudioCtx.createMediaStreamDestination();
@@ -141,11 +262,13 @@ async function exportViaMediaRecorder({ video, draw, cfg, maxHeight = 1080, fps 
   rec.start(1000);
   video.onended = finish;
   await video.play();
+  startMusic?.();
   loop();
 
   await stopped;
   video.muted = true;
   try { video._hudAudioSrc?.disconnect(); } catch {}
+  try { musicCtx?.close(); } catch {}
   if (cancelled) throw new DOMException('Exportación cancelada', 'AbortError');
   return new Blob(chunks, { type: mime });
 }
