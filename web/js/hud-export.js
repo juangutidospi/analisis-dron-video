@@ -5,6 +5,22 @@
 // fragmentado, con audio). Siempre en tiempo real.
 
 import { createMp4 } from './mp4-muxer.js';
+import { trailerFade } from './highlights.js';
+import { drawTitleCard } from './title-card.js';
+
+/** Dimensiones de salida (pares): 16:9 escalado a maxHeight, o 9:16 vertical para redes. */
+function outDims(video, maxHeight, vertical) {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (vertical) { const H = Math.round(Math.min(1920, vh) / 2) * 2; return { W: Math.round(H * 9 / 16 / 2) * 2, H }; }
+  const scale = Math.min(1, maxHeight / vh);
+  return { W: Math.round(vw * scale / 2) * 2, H: Math.round(vh * scale / 2) * 2 };
+}
+
+/** Pinta el vídeo llenando el lienzo: completo en 16:9, con recorte central (cover) en vertical. */
+function paintVideo(ctx, video, W, H, vertical) {
+  if (vertical) { const dw = H * (video.videoWidth / video.videoHeight); ctx.drawImage(video, (W - dw) / 2, 0, dw, H); }
+  else ctx.drawImage(video, 0, 0, W, H);
+}
 
 /** Elige el mejor método disponible. */
 export async function exportHudVideo(opts) {
@@ -16,11 +32,10 @@ export async function exportHudVideo(opts) {
 }
 
 /** WebCodecs → MP4 estándar (H.264 + AAC). Compatible con iPhone/QuickTime. */
-async function exportViaWebCodecs({ video, draw, cfg, musicBuffer, musicVolume = 1, musicStart = 0, maxHeight = 1080, onProgress, signal }) {
+async function exportViaWebCodecs({ video, draw, cfg, musicBuffer, musicVolume = 1, musicStart = 0, vertical = false, maxHeight = 1080, onProgress, signal }) {
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) throw new Error('El vídeo aún no está listo.');
-  const scale = Math.min(1, maxHeight / vh);
-  const W = Math.round(vw * scale / 2) * 2, H = Math.round(vh * scale / 2) * 2;
+  const { W, H } = outDims(video, maxHeight, vertical);
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d', { alpha: false });
   const muxer = createMp4({ width: W, height: H });
@@ -49,7 +64,7 @@ async function exportViaWebCodecs({ video, draw, cfg, musicBuffer, musicVolume =
   await new Promise((resolve) => {
     const onFrame = () => {
       if (!running || encErr) { resolve(); return; }
-      ctx.drawImage(video, 0, 0, W, H);
+      paintVideo(ctx, video, W, H, vertical);
       draw(ctx, video.currentTime, W, H, cfg);
       const frame = new VideoFrame(canvas, { timestamp: Math.round(video.currentTime * 1e6) });
       encoder.encode(frame, { keyFrame: idx % 60 === 0 });
@@ -174,6 +189,138 @@ async function setupAudioCapture(video, muxer) {
   };
 }
 
+/** Efectos de transición disponibles entre tramos del trailer (fundido, zoom, desenfoque). */
+export const TRANSITIONS = ['black', 'zoom', 'blur'];
+
+/**
+ * Compone un frame aplicando el efecto de transición. `src` es el frame ya
+ * pintado (vídeo + HUD); `t` es 0 (sin efecto) → 1 (extremo del corte).
+ * @param {CanvasRenderingContext2D} ctx destino
+ * @param {CanvasImageSource} src frame base
+ * @param {boolean} entering true si entra el clip, false si sale
+ */
+export function applyTransition(ctx, src, W, H, effect, t, entering) {
+  if (t <= 0) { ctx.drawImage(src, 0, 0, W, H); return; }
+  switch (effect) {
+    case 'white':
+      ctx.drawImage(src, 0, 0, W, H);
+      ctx.fillStyle = `rgba(255,255,255,${t})`; ctx.fillRect(0, 0, W, H); break;
+    case 'zoom': {
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+      const s = 1 + 0.22 * t, dw = W * s, dh = H * s;
+      ctx.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
+      ctx.fillStyle = `rgba(0,0,0,${t})`; ctx.fillRect(0, 0, W, H); break;
+    }
+    case 'slide': {
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+      ctx.drawImage(src, (entering ? W * t : -W * t), 0, W, H); break;
+    }
+    case 'blur': {
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+      ctx.filter = `blur(${Math.round(t * 16)}px)`; ctx.drawImage(src, 0, 0, W, H); ctx.filter = 'none';
+      ctx.fillStyle = `rgba(0,0,0,${t * 0.5})`; ctx.fillRect(0, 0, W, H); break;
+    }
+    case 'black': default:
+      ctx.drawImage(src, 0, 0, W, H);
+      ctx.fillStyle = `rgba(0,0,0,${t})`; ctx.fillRect(0, 0, W, H); break;
+  }
+}
+
+/**
+ * Genera un auto-trailer: concatena varios tramos del vídeo (segments) con el
+ * HUD quemado y música, en un único MP4 con timestamps continuos. Requiere
+ * WebCodecs. El HUD se pinta con el tiempo real de cada tramo; la música cubre
+ * la duración total del trailer.
+ * @returns {Promise<Blob>}
+ */
+export async function exportTrailer({ video, draw, cfg, segments, transitions, xf = 0.4, intro, introDur = 3.8, musicBuffer, musicVolume = 1, musicStart = 0, vertical = false, maxHeight = 1080, onProgress, signal }) {
+  if (!('VideoEncoder' in window) || !('VideoFrame' in window)) throw new Error('Tu navegador no soporta la generación del trailer.');
+  if (!segments?.length) throw new Error('No hay momentos para el trailer.');
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) throw new Error('El vídeo aún no está listo.');
+  const { W, H } = outDims(video, maxHeight, vertical);
+  const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d', { alpha: false });
+  const muxer = createMp4({ width: W, height: H });
+
+  let needDesc = true, encErr = null;
+  const encoder = new VideoEncoder({
+    output: (chunk, meta) => {
+      if (needDesc && meta?.decoderConfig?.description) { muxer.setDescription(meta.decoderConfig.description); needDesc = false; }
+      const buf = new Uint8Array(chunk.byteLength); chunk.copyTo(buf);
+      muxer.addSample(buf, chunk.type === 'key', chunk.timestamp);
+    },
+    error: (e) => { encErr = e; },
+  });
+  encoder.configure({ codec: H > 1080 ? 'avc1.640033' : 'avc1.640028', width: W, height: H, bitrate: 12_000_000, framerate: 30, latencyMode: 'realtime', avc: { format: 'avc' } });
+
+  const introSec = intro ? introDur : 0;
+  const total = introSec + (segments.reduce((s, g) => s + (g.end - g.start), 0)) || 1;
+  const pool = transitions === undefined ? TRANSITIONS : transitions;
+  const XF = pool.length ? xf : 0; // sin efectos permitidos → corte seco
+  // un efecto aleatorio por corte (compartido entre la salida de un tramo y la entrada del siguiente)
+  const effects = Array.from({ length: segments.length + 1 }, () => (pool.length ? pool[(Math.random() * pool.length) | 0] : 'black'));
+  const tmp = document.createElement('canvas'); tmp.width = W; tmp.height = H;
+  const tctx = tmp.getContext('2d', { alpha: false });
+  let cancelled = false;
+  if (signal) signal.addEventListener('abort', () => { cancelled = true; try { video.pause(); } catch {} }, { once: true });
+  const useRVFC = 'requestVideoFrameCallback' in video;
+  video.muted = true;
+  let outSec = 0, idx = 0;
+
+  // portada animada al inicio (sin vídeo; se genera cuadro a cuadro)
+  if (intro) {
+    const nF = Math.max(1, Math.round(introDur * 30));
+    for (let f = 0; f < nF && !cancelled && !encErr; f++) {
+      drawTitleCard(ctx, W, H, f / 30, introDur, intro);
+      const frame = new VideoFrame(canvas, { timestamp: Math.round(f / 30 * 1e6) });
+      encoder.encode(frame, { keyFrame: f === 0 || f % 60 === 0 }); frame.close(); idx++;
+      onProgress?.(Math.min(1, (f / 30) / total));
+      if (f % 6 === 0) await new Promise((r) => requestAnimationFrame(r)); // ceder el hilo
+    }
+    outSec += introDur;
+  }
+
+  for (let si = 0; si < segments.length; si++) {
+    if (cancelled || encErr) break;
+    const seg = segments[si], entryFx = effects[si], exitFx = effects[si + 1];
+    await seek(video, seg.start);
+    await video.play().catch(() => {});
+    let firstOfSeg = true;
+    await new Promise((resolve) => {
+      const onFrame = () => {
+        if (cancelled || encErr) { resolve(); return; }
+        const ct = video.currentTime;
+        if (ct >= seg.end - 0.001) { resolve(); return; }
+        const t = trailerFade(ct, seg.start, seg.end, XF);
+        if (t <= 0) {
+          paintVideo(ctx, video, W, H, vertical); draw(ctx, ct, W, H, cfg);
+        } else {
+          paintVideo(tctx, video, W, H, vertical); draw(tctx, ct, W, H, cfg);
+          const entering = (ct - seg.start) <= (seg.end - ct);
+          applyTransition(ctx, tmp, W, H, entering ? entryFx : exitFx, t, entering);
+        }
+        const ts = Math.max(0, Math.round((outSec + (ct - seg.start)) * 1e6));
+        const frame = new VideoFrame(canvas, { timestamp: ts });
+        encoder.encode(frame, { keyFrame: firstOfSeg || idx % 60 === 0 });
+        frame.close(); idx++; firstOfSeg = false;
+        onProgress?.(Math.min(1, (outSec + (ct - seg.start)) / total));
+        useRVFC ? video.requestVideoFrameCallback(onFrame) : requestAnimationFrame(onFrame);
+      };
+      video.onended = () => resolve();
+      useRVFC ? video.requestVideoFrameCallback(onFrame) : requestAnimationFrame(onFrame);
+    });
+    try { video.pause(); } catch {}
+    outSec += (seg.end - seg.start);
+  }
+
+  if (musicBuffer) await encodeMusic(muxer, musicBuffer, outSec, { volume: musicVolume, start: musicStart }).catch(() => {});
+  await encoder.flush(); encoder.close();
+  if (cancelled) throw new DOMException('Generación cancelada', 'AbortError');
+  if (encErr) throw encErr;
+  return muxer.finalize();
+}
+
 /** Espera a que el vídeo termine de buscar a t. */
 function seek(video, t) {
   return new Promise((res) => {
@@ -194,14 +341,13 @@ function seek(video, t) {
  * @param {AbortSignal} [o.signal]
  * @returns {Promise<Blob>}
  */
-async function exportViaMediaRecorder({ video, draw, cfg, musicBuffer, musicVolume = 1, musicStart = 0, maxHeight = 1080, fps = 30, onProgress, signal }) {
+async function exportViaMediaRecorder({ video, draw, cfg, musicBuffer, musicVolume = 1, musicStart = 0, vertical = false, maxHeight = 1080, fps = 30, onProgress, signal }) {
   if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) {
     throw new Error('Tu navegador no soporta la grabación de canvas.');
   }
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) throw new Error('El vídeo aún no está listo.');
-  const scale = Math.min(1, maxHeight / vh);
-  const W = Math.round(vw * scale / 2) * 2, H = Math.round(vh * scale / 2) * 2; // dimensiones pares
+  const { W, H } = outDims(video, maxHeight, vertical);
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d', { alpha: false });
   const stream = canvas.captureStream(fps);
@@ -263,7 +409,7 @@ async function exportViaMediaRecorder({ video, draw, cfg, musicBuffer, musicVolu
   if (signal) signal.addEventListener('abort', () => { cancelled = true; finish(); }, { once: true });
 
   const drawFrame = () => {
-    ctx.drawImage(video, 0, 0, W, H);
+    paintVideo(ctx, video, W, H, vertical);
     draw(ctx, video.currentTime, W, H, cfg);
     onProgress?.(dur ? Math.min(1, video.currentTime / dur) : 0);
   };
