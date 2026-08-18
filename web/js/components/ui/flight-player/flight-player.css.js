@@ -79,33 +79,39 @@ export const styles = css`
 /* panel de ajustes del HUD (sobre la barra) */
 .cfgpanel {
   position: relative; z-index: 7; /* por encima del backdrop del modo grande */
-  pointer-events: auto; width: min(560px, 100%); align-self: center; display: flex; flex-direction: column; gap: 11px;
-  background: color-mix(in srgb, var(--color-surface-solid) 92%, transparent); border: 1px solid var(--color-divider);
-  border-radius: 16px; padding: 13px 16px; box-shadow: var(--shadow-lg); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  pointer-events: auto; width: min(540px, 100%); align-self: center; display: flex; flex-direction: column; gap: 0;
+  background: color-mix(in srgb, var(--color-surface-solid) 94%, transparent); border: 1px solid var(--color-divider);
+  border-radius: 20px; padding: 8px; box-shadow: var(--shadow-lg); backdrop-filter: blur(22px) saturate(1.4); -webkit-backdrop-filter: blur(22px) saturate(1.4);
   animation: rise .28s cubic-bezier(.22,1,.36,1) both;
 }
 .cfgpanel[hidden] { display: none; }
-.cfg-sec { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.cfg-t { font-size: 11px; font-weight: 800; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: .08em; min-width: 66px; }
-.cfg-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.cfg-sec { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 9px 10px; }
+.cfg-sec + .cfg-sec, .cfg-foot { border-top: 1px solid color-mix(in srgb, var(--color-divider) 55%, transparent); }
+.cfg-t { font-size: 10px; font-weight: 700; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: .1em; width: 62px; flex: none; }
+.cfg-chips { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
 .cfg-chip {
-  font-size: 12.5px; font-weight: 600; color: var(--color-text); font-family: inherit; cursor: pointer;
-  border: 1px solid var(--color-divider); background: transparent; border-radius: 100px; padding: 5px 12px; transition: background .12s, border-color .12s, opacity .12s;
+  display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 550; color: var(--color-text-muted); font-family: inherit; cursor: pointer;
+  border: 1px solid var(--color-divider); background: transparent; border-radius: 9px; padding: 6px 11px 6px 9px; transition: color .14s, border-color .14s, background .14s;
 }
-.cfg-chip:not(.on) { opacity: .6; }
-.cfg-chip.on { color: #fff; background: var(--color-accent); border-color: transparent; opacity: 1; }
-.cfg-units { display: flex; gap: 3px; background: color-mix(in srgb, var(--color-text) 8%, transparent); border-radius: 100px; padding: 3px; }
+.chip-dot { width: 6px; height: 6px; border-radius: 50%; box-shadow: inset 0 0 0 1.4px currentColor; opacity: .4; transition: opacity .14s, background .14s, box-shadow .14s; }
+.cfg-chip:hover { color: var(--color-text); border-color: color-mix(in srgb, var(--color-text) 24%, transparent); }
+.cfg-chip.on { color: var(--color-text); border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+.cfg-chip.on .chip-dot { background: var(--color-accent); box-shadow: 0 0 0 1.4px var(--color-accent), 0 0 6px color-mix(in srgb, var(--color-accent) 55%, transparent); opacity: 1; }
+.cfg-foot { display: flex; align-items: center; gap: 10px; padding: 10px; }
+.cfg-units { display: flex; gap: 2px; background: color-mix(in srgb, var(--color-text) 8%, transparent); border-radius: 10px; padding: 3px; flex: none; }
 .cfg-units button {
-  font-size: 12.5px; font-weight: 700; color: var(--color-text-muted); border: none; background: transparent; border-radius: 100px;
-  padding: 5px 15px; cursor: pointer; font-family: inherit;
+  font-size: 12.5px; font-weight: 600; color: var(--color-text-muted); border: none; background: transparent; border-radius: 7px;
+  padding: 5px 15px; cursor: pointer; font-family: inherit; transition: color .14s;
 }
-.cfg-units button.on { color: #fff; background: var(--color-accent); }
+.cfg-units button.on { color: var(--color-text); background: var(--color-surface-solid); box-shadow: 0 1px 3px rgba(0,0,0,.28); }
 .cfg-export {
-  align-self: stretch; margin-top: 2px; border: none; cursor: pointer; font-family: inherit; font-size: 13.5px; font-weight: 700; color: #fff;
-  border-radius: 100px; padding: 10px 16px; background: linear-gradient(135deg, var(--color-accent-2, var(--color-accent)), var(--color-accent));
-  box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--color-accent) 70%, transparent); transition: transform .12s;
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: none; cursor: pointer; font-family: inherit;
+  font-size: 13px; font-weight: 700; color: #fff; border-radius: 11px; padding: 9px 16px;
+  background: linear-gradient(135deg, var(--color-accent-2, var(--color-accent)), var(--color-accent));
+  box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--color-accent) 70%, transparent); transition: transform .12s, box-shadow .12s;
 }
-.cfg-export:hover { transform: translateY(-1px); }
+.cfg-export:hover { transform: translateY(-1px); box-shadow: 0 12px 26px -8px color-mix(in srgb, var(--color-accent) 78%, transparent); }
+.cfg-export-ic { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* overlay de progreso de exportación */
 .export-ov {

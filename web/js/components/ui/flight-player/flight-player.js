@@ -37,19 +37,22 @@ export class FlightPlayer extends DjiElement {
         </div>
         <div class="cfgpanel" id="cfgpanel" hidden>
           <div class="cfg-sec">
-            <span class="cfg-t">${t('hud.gauges')}</span>
-            <div class="cfg-chips">
-              ${GAUGE_KEYS.map((k) => `<button class="cfg-chip ${cfg.gauges[k] ? 'on' : ''}" data-g="${k}" type="button">${t('hud.g.' + k)}</button>`).join('')}
-            </div>
+            <span class="cfg-t">${t('hud.metrics')}</span>
+            <div class="cfg-chips">${['speed', 'alt', 'dist', 'vspeed'].map((k) => this._chipTpl(k, cfg)).join('')}</div>
           </div>
           <div class="cfg-sec">
-            <span class="cfg-t">${t('hud.units')}</span>
+            <span class="cfg-t">${t('hud.elements')}</span>
+            <div class="cfg-chips">${['heading', 'clock', 'minimap', 'progress', 'watermark'].map((k) => this._chipTpl(k, cfg)).join('')}</div>
+          </div>
+          <div class="cfg-foot">
             <div class="cfg-units">
               <button class="${cfg.units === 'metric' ? 'on' : ''}" data-u="metric" type="button">${t('hud.metric')}</button>
               <button class="${cfg.units === 'imperial' ? 'on' : ''}" data-u="imperial" type="button">${t('hud.imperial')}</button>
             </div>
+            <button class="cfg-export" id="exportbtn" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true" class="cfg-export-ic"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>${t('hud.export')}
+            </button>
           </div>
-          <button class="cfg-export" id="exportbtn" type="button">⤓ ${t('hud.export')}</button>
         </div>
         <div class="player">
           <button class="play" id="play" type="button" aria-label="${t('player.play')}">▶</button>
@@ -70,6 +73,10 @@ export class FlightPlayer extends DjiElement {
   _cfg() {
     if (!this._hudCfg) this._hudCfg = { units: DEFAULT_CFG.units, gauges: { ...DEFAULT_CFG.gauges } };
     return this._hudCfg;
+  }
+
+  _chipTpl(k, cfg) {
+    return `<button class="cfg-chip ${cfg.gauges[k] ? 'on' : ''}" data-g="${k}" type="button"><i class="chip-dot"></i>${t('hud.g.' + k)}</button>`;
   }
 
   _mountVideo() {
