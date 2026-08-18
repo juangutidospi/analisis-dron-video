@@ -39,6 +39,11 @@ export const styles = css`
 }
 .pip.big .expand { width: 38px; height: 38px; font-size: 18px; top: 12px; right: 12px; }
 @keyframes bigin { from { opacity: .4; transform: translateX(-50%) scale(.9); } }
+/* en vertical (móvil) el vídeo 16:9 es bajo: centrarlo en pantalla en vez de anclarlo abajo */
+@media (orientation: portrait) {
+  .pip.big { top: 50%; bottom: auto; transform: translate(-50%, -50%); animation-name: bigin-v; }
+}
+@keyframes bigin-v { from { opacity: .4; transform: translate(-50%, -50%) scale(.9); } }
 @media (prefers-reduced-motion: reduce) { .pip.big { animation: none; } }
 .player {
   position: relative; z-index: 6;
@@ -95,15 +100,18 @@ export const styles = css`
 /* panel de ajustes del HUD (sobre la barra) */
 .cfgpanel {
   position: relative; z-index: 7; /* por encima del backdrop del modo grande */
-  pointer-events: auto; width: min(540px, 100%); align-self: center; display: flex; flex-direction: column; gap: 0;
-  background: color-mix(in srgb, var(--color-surface-solid) 94%, transparent); border: 1px solid var(--color-divider);
-  border-radius: 20px; padding: 8px; box-shadow: var(--shadow-lg); backdrop-filter: blur(22px) saturate(1.4); -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  pointer-events: auto; width: min(560px, 100%); align-self: center; display: flex; flex-direction: column; gap: 0;
+  background: color-mix(in srgb, var(--color-surface-solid) 68%, transparent); border: 1px solid color-mix(in srgb, var(--color-text) 14%, transparent);
+  border-radius: 20px; padding: 6px; box-shadow: var(--shadow-lg); backdrop-filter: blur(32px) saturate(1.7); -webkit-backdrop-filter: blur(32px) saturate(1.7);
   animation: rise .28s cubic-bezier(.22,1,.36,1) both;
 }
 .cfgpanel[hidden] { display: none; }
-.cfg-sec { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 9px 10px; }
+.cfg-sec { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 6px 10px; }
+.cfg-row2 { justify-content: space-between; gap: 18px; }
+.cfg-col { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .cfg-sec + .cfg-sec, .cfg-foot { border-top: 1px solid color-mix(in srgb, var(--color-divider) 55%, transparent); }
 .cfg-t { font-size: 10px; font-weight: 700; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: .1em; width: 62px; flex: none; }
+.cfg-col .cfg-t { width: auto; }
 .cfg-chips { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
 .cfg-chip {
   display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 550; color: var(--color-text-muted); font-family: inherit; cursor: pointer;
@@ -158,7 +166,7 @@ export const styles = css`
 }
 .cfg-wave-foot { display: flex; align-items: center; gap: 8px; }
 .cfg-wave-foot .cfg-ctrl-v { min-width: 0; }
-.cfg-foot { display: flex; align-items: center; gap: 10px; padding: 10px; flex-wrap: wrap; }
+.cfg-foot { display: flex; align-items: center; gap: 9px; padding: 9px 10px; flex-wrap: wrap; }
 .cfg-units { display: flex; gap: 2px; background: color-mix(in srgb, var(--color-text) 8%, transparent); border-radius: 10px; padding: 3px; flex: none; }
 .cfg-units button {
   font-size: 12.5px; font-weight: 600; color: var(--color-text-muted); border: none; background: transparent; border-radius: 7px;
