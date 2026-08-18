@@ -585,6 +585,22 @@ const styles = css`
 .bar { flex: 1; height: 7px; border-radius: 100px; background: color-mix(in srgb, var(--color-text) 13%, transparent); position: relative; cursor: pointer; touch-action: none; }
 .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 100px; background: linear-gradient(90deg, var(--color-accent), var(--color-violet)); }
 .fill::after { content: ""; position: absolute; right: -7px; top: 50%; width: 14px; height: 14px; border-radius: 50%; background: #fff; transform: translateY(-50%); box-shadow: 0 1px 5px rgba(0,0,0,.45); }
+/* marcadores de momentos destacados sobre la barra */
+.hl-mark {
+  position: absolute; top: 50%; transform: translate(-50%, -50%); z-index: 3;
+  width: 16px; height: 18px; padding: 0; border: none; background: none; cursor: ew-resize; display: grid; place-items: center;
+  touch-action: none;
+}
+.hl-mark::after {
+  content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--color-accent);
+  border: 2px solid var(--color-surface-solid); box-shadow: 0 1px 3px rgba(0,0,0,.45); transition: transform .12s;
+}
+.hl-mark:hover::after { transform: scale(1.4); }
+.hl-alt::after { background: var(--color-violet, #a06bff); }
+.hl-dist::after { background: #37cf6b; }
+.hl-climb::after { background: #37cf6b; }
+.hl-descent::after { background: #ff5d5d; }
+.hl-turn::after { background: #ffb43d; }
 .speeds { display: flex; gap: 4px; flex: none; }
 .speeds button {
   border: 1px solid var(--color-divider); background: transparent; color: var(--color-text-muted); border-radius: 8px;
@@ -667,7 +683,7 @@ const styles = css`
 }
 .cfg-wave-foot { display: flex; align-items: center; gap: 8px; }
 .cfg-wave-foot .cfg-ctrl-v { min-width: 0; }
-.cfg-foot { display: flex; align-items: center; gap: 10px; padding: 10px; }
+.cfg-foot { display: flex; align-items: center; gap: 10px; padding: 10px; flex-wrap: wrap; }
 .cfg-units { display: flex; gap: 2px; background: color-mix(in srgb, var(--color-text) 8%, transparent); border-radius: 10px; padding: 3px; flex: none; }
 .cfg-units button {
   font-size: 12.5px; font-weight: 600; color: var(--color-text-muted); border: none; background: transparent; border-radius: 7px;
@@ -682,6 +698,17 @@ const styles = css`
 }
 .cfg-export:hover { transform: translateY(-1px); box-shadow: 0 12px 26px -8px color-mix(in srgb, var(--color-accent) 78%, transparent); }
 .cfg-export-ic { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.cfg-trailer {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; font-family: inherit; cursor: pointer;
+  font-size: 13px; font-weight: 650; color: var(--color-text); border: 1px solid var(--color-divider);
+  background: transparent; border-radius: 11px; padding: 9px 13px; transition: border-color .14s, background .14s;
+}
+.cfg-trailer:hover { border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+.cfg-select {
+  flex: none; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--color-text); cursor: pointer;
+  border: 1px solid var(--color-divider); background: transparent; border-radius: 9px; padding: 8px 10px;
+}
+.cfg-select:hover { border-color: color-mix(in srgb, var(--color-text) 24%, transparent); }
 
 /* overlay de progreso de exportación */
 .export-ov {
@@ -719,7 +746,8 @@ const { DjiElement } = __req("js/core/DjiElement.js");
 const { mmss } = __req("js/geo.js");
 const { t } = __req("js/i18n/index.js");
 const { DEFAULT_CFG, GAUGE_KEYS } = __req("js/hud.js");
-const { exportHudVideo } = __req("js/hud-export.js");
+const { exportHudVideo, exportTrailer } = __req("js/hud-export.js");
+const { buildTrailerSegments } = __req("js/highlights.js");
 const { generateAmbient, STYLES } = __req("js/music-gen.js");
 const { downloadBlob } = __req("js/exports.js");
 const { styles } = __req("js/components/ui/flight-player/flight-player.css.js");
@@ -744,6 +772,14 @@ class FlightPlayer extends DjiElement {
   set hud(fn) { this._hud = fn; if (this.isConnected) this._drawHud(); }
   get hud() { return this._hud; }
 
+  /** @param {Array<{t:number,type:string,value:number,unit:string}>} h momentos destacados */
+  set highlights(h) { this._highlights = h || []; if (this.isConnected) this._renderHighlights(); }
+  get highlights() { return this._highlights; }
+
+  /** @param {object} d datos de la portada del trailer (kicker, título, lugar, track, stats) */
+  set intro(d) { this._intro = d; }
+  get intro() { return this._intro; }
+
   render() {
     const cfg = this._cfg();
     this.shadowRoot.innerHTML = `
@@ -760,7 +796,7 @@ class FlightPlayer extends DjiElement {
           </div>
           <div class="cfg-sec">
             <span class="cfg-t">${t('hud.elements')}</span>
-            <div class="cfg-chips">${['heading', 'clock', 'minimap', 'progress', 'watermark'].map((k) => this._chipTpl(k, cfg)).join('')}</div>
+            <div class="cfg-chips">${['heading', 'clock', 'minimap', 'progress', 'watermark', 'location'].map((k) => this._chipTpl(k, cfg)).join('')}</div>
           </div>
           <div class="cfg-sec">
             <span class="cfg-t">${t('hud.theme')}</span>
@@ -801,6 +837,14 @@ class FlightPlayer extends DjiElement {
               <button class="${cfg.units === 'metric' ? 'on' : ''}" data-u="metric" type="button">${t('hud.metric')}</button>
               <button class="${cfg.units === 'imperial' ? 'on' : ''}" data-u="imperial" type="button">${t('hud.imperial')}</button>
             </div>
+            <div class="cfg-units" title="${t('hud.format.hint')}">
+              <button class="${!this._vertical ? 'on' : ''}" data-fmt="h" type="button">16:9</button>
+              <button class="${this._vertical ? 'on' : ''}" data-fmt="v" type="button">9:16</button>
+            </div>
+            <select class="cfg-select" id="trailerfx" title="${t('hud.fx.hint')}" aria-label="${t('hud.fx.hint')}">
+              ${['random', 'smooth', 'dynamic', 'none'].map((k) => `<option value="${k}" ${(this._trailerFx ?? 'random') === k ? 'selected' : ''}>${t('hud.fx.' + k)}</option>`).join('')}
+            </select>
+            <button class="cfg-trailer" id="trailerbtn" type="button" title="${t('hud.trailer.hint')}">🎬 ${t('hud.trailer')}</button>
             <button class="cfg-export" id="exportbtn" type="button">
               <svg viewBox="0 0 24 24" aria-hidden="true" class="cfg-export-ic"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>${t('hud.export')}
             </button>
@@ -869,7 +913,50 @@ class FlightPlayer extends DjiElement {
       c.addEventListener('state', () => this._syncMusic()); // play/pausa/seek/velocidad → música
     }
     this._sync();
+    this._renderHighlights();
   }
+
+  /** Pinta los marcadores de momentos (arrastrables): definen los puntos del trailer. */
+  _renderHighlights() {
+    const bar = this.$('#bar'); const c = this._clock;
+    if (!bar) return;
+    this.$$('.hl-mark').forEach((m) => m.remove());
+    if (!c || !c.dur || !this._highlights?.length) return;
+    const tFromX = (x) => { const r = bar.getBoundingClientRect(); return Math.max(0, Math.min(1, (x - r.left) / r.width)) * c.dur; };
+    for (const h of this._highlights) {
+      const m = document.createElement('button');
+      m.className = 'hl-mark hl-' + h.type; m.type = 'button';
+      m.style.left = Math.max(0, Math.min(100, h.t / c.dur * 100)) + '%';
+      m.title = this._hlLabel(h); m.setAttribute('aria-label', m.title);
+      let dragging = false, moved = false;
+      this.on(m, 'pointerdown', (e) => { e.stopPropagation(); m.setPointerCapture(e.pointerId); dragging = true; moved = false; c.pause(); });
+      this.on(m, 'pointermove', (e) => {
+        if (!dragging) return;
+        moved = true;
+        h.t = tFromX(e.clientX);
+        m.style.left = (h.t / c.dur * 100) + '%';
+        m.title = this._hlLabel(h); m.setAttribute('aria-label', m.title);
+        c.seek(h.t); // salta al frame de este punto mientras se arrastra
+      });
+      this.on(m, 'pointerup', (e) => { dragging = false; if (!moved) c.seek(h.t); }); // clic simple → saltar
+      bar.appendChild(m);
+    }
+  }
+
+  /** Formatea el valor de un momento según las unidades activas. */
+  _hlFmt(h) {
+    const imp = this._cfg().units === 'imperial';
+    switch (h.type) {
+      case 'speed': return imp ? Math.round(h.value * 2.23694) + ' mph' : Math.round(h.value * 3.6) + ' km/h';
+      case 'alt': case 'dist': return imp ? Math.round(h.value * 3.28084) + ' ft' : Math.round(h.value) + ' m';
+      case 'climb': case 'descent': return imp ? (h.value * 3.28084).toFixed(1) + ' ft/s' : h.value.toFixed(1) + ' m/s';
+      case 'turn': return Math.round(h.value) + ' °/s';
+      default: return String(h.value);
+    }
+  }
+
+  /** Etiqueta de un momento: título traducido + valor + instante (se actualiza al arrastrar). */
+  _hlLabel(h) { return t('hl.' + h.type) + ' · ' + this._hlFmt(h) + ' · ' + mmss(h.t); }
 
   _sync() {
     const c = this._clock;
@@ -906,6 +993,44 @@ class FlightPlayer extends DjiElement {
     this._wireMusic();
     const exp = this.$('#exportbtn');
     if (exp) this.on(exp, 'click', () => this._exportVideo());
+    const tb = this.$('#trailerbtn');
+    if (tb) this.on(tb, 'click', () => this._exportTrailer());
+    const fx = this.$('#trailerfx');
+    if (fx) this.on(fx, 'change', () => { this._trailerFx = fx.value; });
+    this.$$('button[data-fmt]').forEach((b) => this.on(b, 'click', () => {
+      this._vertical = b.dataset.fmt === 'v';
+      this.$$('button[data-fmt]').forEach((x) => x.classList.toggle('on', x === b));
+    }));
+  }
+
+  /** Presets de transiciones del trailer (undefined = todas al azar). */
+  _trailerTransitions() {
+    const p = { smooth: ['black', 'blur'], dynamic: ['zoom', 'blur'], none: [] };
+    return (this._trailerFx && this._trailerFx !== 'random') ? p[this._trailerFx] : undefined;
+  }
+
+  /** Genera el auto-trailer (tramos de los momentos destacados) con HUD y música. */
+  async _exportTrailer() {
+    if (this._exporting) return;
+    if (!this._video || !this._hud) return;
+    const segs = buildTrailerSegments(this._highlights, this._clock?.dur || 0, { target: 26 }); // ~30 s con la portada
+    if (!segs.length) return;
+    this._exporting = true;
+    this._clock?.pause();
+    const ov = this._exportOverlay();
+    const ctrl = new AbortController();
+    ov.cancelBtn.onclick = () => ctrl.abort();
+    try {
+      const blob = await exportTrailer({ video: this._video, draw: this._hud, cfg: this._cfg(), segments: segs, transitions: this._trailerTransitions(), intro: this._intro, musicBuffer: this._musicBuf, musicVolume: this._musicVolEff(), musicStart: this._musicStart || 0, vertical: this._vertical, onProgress: ov.set, signal: ctrl.signal });
+      downloadBlob('trailer-vuelo.mp4', blob);
+      ov.done();
+      await new Promise((r) => setTimeout(r, 1400));
+    } catch (e) {
+      if (e.name !== 'AbortError') { console.error(e); ov.fail(e.message); await new Promise((r) => setTimeout(r, 2600)); }
+    } finally {
+      this._exporting = false;
+      ov.close();
+    }
   }
 
   /** Cablea la carga/borrado del archivo de música para la exportación. */
@@ -1078,7 +1203,7 @@ class FlightPlayer extends DjiElement {
     const ctrl = new AbortController();
     ov.cancelBtn.onclick = () => ctrl.abort();
     try {
-      const blob = await exportHudVideo({ video: this._video, draw: this._hud, cfg: this._cfg(), musicBuffer: this._musicBuf, musicVolume: this._musicVolEff(), musicStart: this._musicStart || 0, onProgress: ov.set, signal: ctrl.signal });
+      const blob = await exportHudVideo({ video: this._video, draw: this._hud, cfg: this._cfg(), musicBuffer: this._musicBuf, musicVolume: this._musicVolEff(), musicStart: this._musicStart || 0, vertical: this._vertical, onProgress: ov.set, signal: ctrl.signal });
       const ext = (blob.type || '').includes('mp4') ? 'mp4' : 'webm';
       downloadBlob('vuelo-hud.' + ext, blob);
       ov.done();
@@ -2039,6 +2164,7 @@ __req("js/components/ui/reading-nav/reading-nav.js");
 const { PlayerClock } = __req("js/core/player-clock.js");
 const { reveal } = __req("js/core/reveal.js");
 const { createHud } = __req("js/hud.js");
+const { detectHighlights } = __req("js/highlights.js");
 const { styles } = __req("js/components/views/flight-report/flight-report.css.js");
 
 const f = (v, d = 0) => (v == null ? '—' : v.toFixed(d));
@@ -2624,13 +2750,27 @@ class FlightReport extends DjiElement {
     }
     this._player.clock = this._clock;
     this._player.video = this._video || null;
+    const hl = detectHighlights(this.model);
+    this._player.highlights = hl; // momentos destacados en la barra
+    const accent = getComputedStyle(this).getPropertyValue('--color-accent').trim() || '#5b9dff';
     // HUD de telemetría sobre el vídeo (con el color de acento del tema)
-    if (this._video) {
-      const accent = getComputedStyle(this).getPropertyValue('--color-accent').trim() || '#5b9dff';
-      this._player.hud = createHud(this.model, { accent, title: this.assets?.title }).draw;
-    } else {
-      this._player.hud = null;
-    }
+    this._player.hud = this._video
+      ? createHud(this.model, { accent, title: this.assets?.title, place: this.assets?.place }).draw
+      : null;
+    // datos de la portada del trailer
+    const hv = (type) => hl.find((h) => h.type === type)?.value || 0;
+    this._player.intro = {
+      kicker: t('intro.kicker'),
+      title: this.assets?.title || 'DJI',
+      place: this.assets?.place || '',
+      accent,
+      track: this.model.track || [],
+      stats: [
+        { label: t('intro.dist'), value: Math.round(hv('dist')) + ' m' },
+        { label: t('intro.alt'), value: Math.round(hv('alt')) + ' m' },
+        { label: t('intro.spd'), value: Math.round(hv('speed') * 3.6) + ' km/h' },
+      ],
+    };
     // reserva hueco al final para que la barra fija del reproductor no tape el contenido
     this.classList.toggle('has-video', !!this._video);
   }
@@ -3743,6 +3883,120 @@ Object.assign(__x, { reverseGeocode, firstCoords });
 
 };
 
+__m["js/highlights.js"] = function (__x, __req) {
+// Detección de "momentos destacados" del vuelo: analiza la serie y extrae los
+// instantes clave (máxima velocidad, altura, distancia, ascenso/descenso y giro
+// más cerrado). Base para marcar el timeline y montar un auto-trailer.
+
+const { hav } = __req("js/srt.js");
+
+const bearing = (la1, lo1, la2, lo2) => {
+  const p1 = la1 * Math.PI / 180, p2 = la2 * Math.PI / 180, dl = (lo2 - lo1) * Math.PI / 180;
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+};
+
+/** Prioridad al desempatar momentos próximos o recortar el número. */
+const PRIO = { speed: 5, alt: 4, dist: 3, climb: 2, descent: 2, turn: 1 };
+
+/**
+ * @param {object} model modelo del vuelo (series, takeoff)
+ * @param {{minGap?:number, max?:number}} [opts] minGap = seg mínimos entre momentos; max = nº máximo
+ * @returns {Array<{t:number, type:'speed'|'alt'|'dist'|'climb'|'descent'|'turn', value:number, unit:string}>}
+ */
+function detectHighlights(model, opts = {}) {
+  const S = model.series || [], tk = model.takeoff || [];
+  if (S.length < 2) return [];
+  const minGap = opts.minGap ?? 2.5, max = opts.max ?? 7;
+  const minTurnSpeed = opts.minTurnSpeed ?? 3; // m/s: por debajo, el rumbo GPS es ruido
+
+  let iSpd = -1, vSpd = -1, iAlt = -1, vAlt = -1, iDist = -1, vDist = -1;
+  let iClimb = -1, vClimb = -1, iDesc = -1, vDesc = Infinity, iTurn = -1, vTurn = -1;
+  for (let i = 0; i < S.length; i++) {
+    const s = S[i];
+    if (s.hs != null && s.hs > vSpd) { vSpd = s.hs; iSpd = i; }
+    if (s.rel != null && s.rel > vAlt) { vAlt = s.rel; iAlt = i; }
+    if (s.lat != null && tk.length) { const d = hav(tk[0], tk[1], s.lat, s.lon); if (d > vDist) { vDist = d; iDist = i; } }
+    if (s.vs != null && s.vs > vClimb) { vClimb = s.vs; iClimb = i; }
+    if (s.vs != null && s.vs < vDesc) { vDesc = s.vs; iDesc = i; }
+    if (i >= 2 && S[i - 2].lat != null && S[i - 1].lat != null && s.lat != null && (s.hs ?? 0) >= minTurnSpeed) {
+      const h1 = bearing(S[i - 2].lat, S[i - 2].lon, S[i - 1].lat, S[i - 1].lon);
+      const h2 = bearing(S[i - 1].lat, S[i - 1].lon, s.lat, s.lon);
+      const dt = s.t - S[i - 2].t;
+      if (dt > 0) { const rate = Math.abs(((h2 - h1 + 540) % 360) - 180) / dt; if (rate > vTurn) { vTurn = rate; iTurn = i; } }
+    }
+  }
+
+  const cand = [];
+  const add = (i, type, value, unit) => { if (i >= 0 && isFinite(value)) cand.push({ t: S[i].t, type, value, unit }); };
+  add(iSpd, 'speed', vSpd, 'm/s');
+  add(iAlt, 'alt', vAlt, 'm');
+  add(iDist, 'dist', vDist, 'm');
+  if (vClimb > 0.5) add(iClimb, 'climb', vClimb, 'm/s');
+  if (vDesc < -0.5) add(iDesc, 'descent', vDesc, 'm/s');
+  if (vTurn > 5) add(iTurn, 'turn', vTurn, '°/s');
+
+  // fusionar los momentos demasiado próximos, quedándose con el de mayor prioridad
+  cand.sort((a, b) => a.t - b.t);
+  const out = [];
+  for (const c of cand) {
+    const near = out.find((o) => Math.abs(o.t - c.t) < minGap);
+    if (!near) out.push(c);
+    else if (PRIO[c.type] > PRIO[near.type]) Object.assign(near, c);
+  }
+  // recortar al máximo por prioridad y devolver en orden temporal
+  if (out.length > max) { out.sort((a, b) => PRIO[b.type] - PRIO[a.type]); out.length = max; }
+  return out.sort((a, b) => a.t - b.t);
+}
+
+/**
+ * Ventanas de tiempo para el auto-trailer: un tramo alrededor de cada momento,
+ * recortado al vuelo y fusionando los que se solapan.
+ * @param {Array<{t:number}>} highlights
+ * @param {number} dur duración del vuelo (s)
+ * @param {{pre?:number, post?:number}} [opts] segundos antes/después de cada momento
+ * @returns {Array<{start:number, end:number}>}
+ */
+function buildTrailerSegments(highlights, dur, opts = {}) {
+  if (!highlights?.length || !dur) return [];
+  let pre = opts.pre ?? 1.5, post = opts.post ?? 2.5;
+  if (opts.target) { const per = opts.target / highlights.length; pre = per * 0.4; post = per * 0.6; } // reparte la duración objetivo
+  const wins = highlights
+    .map((h) => ({ start: Math.max(0, h.t - pre), end: Math.min(dur, h.t + post) }))
+    .filter((w) => w.end > w.start)
+    .sort((a, b) => a.start - b.start);
+  const merged = [];
+  for (const w of wins) {
+    const last = merged[merged.length - 1];
+    if (last && w.start <= last.end) last.end = Math.max(last.end, w.end);
+    else merged.push({ ...w });
+  }
+  return merged;
+}
+
+/**
+ * Opacidad del fundido a negro para un instante de un tramo del trailer: 1 en
+ * los extremos (negro), 0 en el interior. Da la transición entre cortes y la
+ * apertura/cierre del trailer.
+ * @param {number} ct instante actual dentro del tramo (s)
+ * @param {number} start inicio del tramo (s)
+ * @param {number} end fin del tramo (s)
+ * @param {number} xf duración del fundido (s)
+ * @returns {number} 0..1
+ */
+function trailerFade(ct, start, end, xf) {
+  const w = Math.min(xf, (end - start) / 2);
+  if (w <= 0) return 0;
+  const a = Math.max(1 - (ct - start) / w, 1 - (end - ct) / w);
+  return Math.max(0, Math.min(1, a));
+}
+
+
+Object.assign(__x, { detectHighlights, buildTrailerSegments, trailerFade });
+
+};
+
 __m["js/hud-export.js"] = function (__x, __req) {
 // Exporta el vídeo con el HUD "quemado" encima, 100% en el navegador.
 // Compone cada fotograma (vídeo + HUD) en un canvas. Preferimos WebCodecs +
@@ -3751,6 +4005,22 @@ __m["js/hud-export.js"] = function (__x, __req) {
 // fragmentado, con audio). Siempre en tiempo real.
 
 const { createMp4 } = __req("js/mp4-muxer.js");
+const { trailerFade } = __req("js/highlights.js");
+const { drawTitleCard } = __req("js/title-card.js");
+
+/** Dimensiones de salida (pares): 16:9 escalado a maxHeight, o 9:16 vertical para redes. */
+function outDims(video, maxHeight, vertical) {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (vertical) { const H = Math.round(Math.min(1920, vh) / 2) * 2; return { W: Math.round(H * 9 / 16 / 2) * 2, H }; }
+  const scale = Math.min(1, maxHeight / vh);
+  return { W: Math.round(vw * scale / 2) * 2, H: Math.round(vh * scale / 2) * 2 };
+}
+
+/** Pinta el vídeo llenando el lienzo: completo en 16:9, con recorte central (cover) en vertical. */
+function paintVideo(ctx, video, W, H, vertical) {
+  if (vertical) { const dw = H * (video.videoWidth / video.videoHeight); ctx.drawImage(video, (W - dw) / 2, 0, dw, H); }
+  else ctx.drawImage(video, 0, 0, W, H);
+}
 
 /** Elige el mejor método disponible. */
 async function exportHudVideo(opts) {
@@ -3762,11 +4032,10 @@ async function exportHudVideo(opts) {
 }
 
 /** WebCodecs → MP4 estándar (H.264 + AAC). Compatible con iPhone/QuickTime. */
-async function exportViaWebCodecs({ video, draw, cfg, musicBuffer, musicVolume = 1, musicStart = 0, maxHeight = 1080, onProgress, signal }) {
+async function exportViaWebCodecs({ video, draw, cfg, musicBuffer, musicVolume = 1, musicStart = 0, vertical = false, maxHeight = 1080, onProgress, signal }) {
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) throw new Error('El vídeo aún no está listo.');
-  const scale = Math.min(1, maxHeight / vh);
-  const W = Math.round(vw * scale / 2) * 2, H = Math.round(vh * scale / 2) * 2;
+  const { W, H } = outDims(video, maxHeight, vertical);
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d', { alpha: false });
   const muxer = createMp4({ width: W, height: H });
@@ -3795,7 +4064,7 @@ async function exportViaWebCodecs({ video, draw, cfg, musicBuffer, musicVolume =
   await new Promise((resolve) => {
     const onFrame = () => {
       if (!running || encErr) { resolve(); return; }
-      ctx.drawImage(video, 0, 0, W, H);
+      paintVideo(ctx, video, W, H, vertical);
       draw(ctx, video.currentTime, W, H, cfg);
       const frame = new VideoFrame(canvas, { timestamp: Math.round(video.currentTime * 1e6) });
       encoder.encode(frame, { keyFrame: idx % 60 === 0 });
@@ -3920,6 +4189,138 @@ async function setupAudioCapture(video, muxer) {
   };
 }
 
+/** Efectos de transición disponibles entre tramos del trailer (fundido, zoom, desenfoque). */
+const TRANSITIONS = ['black', 'zoom', 'blur'];
+
+/**
+ * Compone un frame aplicando el efecto de transición. `src` es el frame ya
+ * pintado (vídeo + HUD); `t` es 0 (sin efecto) → 1 (extremo del corte).
+ * @param {CanvasRenderingContext2D} ctx destino
+ * @param {CanvasImageSource} src frame base
+ * @param {boolean} entering true si entra el clip, false si sale
+ */
+function applyTransition(ctx, src, W, H, effect, t, entering) {
+  if (t <= 0) { ctx.drawImage(src, 0, 0, W, H); return; }
+  switch (effect) {
+    case 'white':
+      ctx.drawImage(src, 0, 0, W, H);
+      ctx.fillStyle = `rgba(255,255,255,${t})`; ctx.fillRect(0, 0, W, H); break;
+    case 'zoom': {
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+      const s = 1 + 0.22 * t, dw = W * s, dh = H * s;
+      ctx.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
+      ctx.fillStyle = `rgba(0,0,0,${t})`; ctx.fillRect(0, 0, W, H); break;
+    }
+    case 'slide': {
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+      ctx.drawImage(src, (entering ? W * t : -W * t), 0, W, H); break;
+    }
+    case 'blur': {
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+      ctx.filter = `blur(${Math.round(t * 16)}px)`; ctx.drawImage(src, 0, 0, W, H); ctx.filter = 'none';
+      ctx.fillStyle = `rgba(0,0,0,${t * 0.5})`; ctx.fillRect(0, 0, W, H); break;
+    }
+    case 'black': default:
+      ctx.drawImage(src, 0, 0, W, H);
+      ctx.fillStyle = `rgba(0,0,0,${t})`; ctx.fillRect(0, 0, W, H); break;
+  }
+}
+
+/**
+ * Genera un auto-trailer: concatena varios tramos del vídeo (segments) con el
+ * HUD quemado y música, en un único MP4 con timestamps continuos. Requiere
+ * WebCodecs. El HUD se pinta con el tiempo real de cada tramo; la música cubre
+ * la duración total del trailer.
+ * @returns {Promise<Blob>}
+ */
+async function exportTrailer({ video, draw, cfg, segments, transitions, xf = 0.4, intro, introDur = 3.8, musicBuffer, musicVolume = 1, musicStart = 0, vertical = false, maxHeight = 1080, onProgress, signal }) {
+  if (!('VideoEncoder' in window) || !('VideoFrame' in window)) throw new Error('Tu navegador no soporta la generación del trailer.');
+  if (!segments?.length) throw new Error('No hay momentos para el trailer.');
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) throw new Error('El vídeo aún no está listo.');
+  const { W, H } = outDims(video, maxHeight, vertical);
+  const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d', { alpha: false });
+  const muxer = createMp4({ width: W, height: H });
+
+  let needDesc = true, encErr = null;
+  const encoder = new VideoEncoder({
+    output: (chunk, meta) => {
+      if (needDesc && meta?.decoderConfig?.description) { muxer.setDescription(meta.decoderConfig.description); needDesc = false; }
+      const buf = new Uint8Array(chunk.byteLength); chunk.copyTo(buf);
+      muxer.addSample(buf, chunk.type === 'key', chunk.timestamp);
+    },
+    error: (e) => { encErr = e; },
+  });
+  encoder.configure({ codec: H > 1080 ? 'avc1.640033' : 'avc1.640028', width: W, height: H, bitrate: 12_000_000, framerate: 30, latencyMode: 'realtime', avc: { format: 'avc' } });
+
+  const introSec = intro ? introDur : 0;
+  const total = introSec + (segments.reduce((s, g) => s + (g.end - g.start), 0)) || 1;
+  const pool = transitions === undefined ? TRANSITIONS : transitions;
+  const XF = pool.length ? xf : 0; // sin efectos permitidos → corte seco
+  // un efecto aleatorio por corte (compartido entre la salida de un tramo y la entrada del siguiente)
+  const effects = Array.from({ length: segments.length + 1 }, () => (pool.length ? pool[(Math.random() * pool.length) | 0] : 'black'));
+  const tmp = document.createElement('canvas'); tmp.width = W; tmp.height = H;
+  const tctx = tmp.getContext('2d', { alpha: false });
+  let cancelled = false;
+  if (signal) signal.addEventListener('abort', () => { cancelled = true; try { video.pause(); } catch {} }, { once: true });
+  const useRVFC = 'requestVideoFrameCallback' in video;
+  video.muted = true;
+  let outSec = 0, idx = 0;
+
+  // portada animada al inicio (sin vídeo; se genera cuadro a cuadro)
+  if (intro) {
+    const nF = Math.max(1, Math.round(introDur * 30));
+    for (let f = 0; f < nF && !cancelled && !encErr; f++) {
+      drawTitleCard(ctx, W, H, f / 30, introDur, intro);
+      const frame = new VideoFrame(canvas, { timestamp: Math.round(f / 30 * 1e6) });
+      encoder.encode(frame, { keyFrame: f === 0 || f % 60 === 0 }); frame.close(); idx++;
+      onProgress?.(Math.min(1, (f / 30) / total));
+      if (f % 6 === 0) await new Promise((r) => requestAnimationFrame(r)); // ceder el hilo
+    }
+    outSec += introDur;
+  }
+
+  for (let si = 0; si < segments.length; si++) {
+    if (cancelled || encErr) break;
+    const seg = segments[si], entryFx = effects[si], exitFx = effects[si + 1];
+    await seek(video, seg.start);
+    await video.play().catch(() => {});
+    let firstOfSeg = true;
+    await new Promise((resolve) => {
+      const onFrame = () => {
+        if (cancelled || encErr) { resolve(); return; }
+        const ct = video.currentTime;
+        if (ct >= seg.end - 0.001) { resolve(); return; }
+        const t = trailerFade(ct, seg.start, seg.end, XF);
+        if (t <= 0) {
+          paintVideo(ctx, video, W, H, vertical); draw(ctx, ct, W, H, cfg);
+        } else {
+          paintVideo(tctx, video, W, H, vertical); draw(tctx, ct, W, H, cfg);
+          const entering = (ct - seg.start) <= (seg.end - ct);
+          applyTransition(ctx, tmp, W, H, entering ? entryFx : exitFx, t, entering);
+        }
+        const ts = Math.max(0, Math.round((outSec + (ct - seg.start)) * 1e6));
+        const frame = new VideoFrame(canvas, { timestamp: ts });
+        encoder.encode(frame, { keyFrame: firstOfSeg || idx % 60 === 0 });
+        frame.close(); idx++; firstOfSeg = false;
+        onProgress?.(Math.min(1, (outSec + (ct - seg.start)) / total));
+        useRVFC ? video.requestVideoFrameCallback(onFrame) : requestAnimationFrame(onFrame);
+      };
+      video.onended = () => resolve();
+      useRVFC ? video.requestVideoFrameCallback(onFrame) : requestAnimationFrame(onFrame);
+    });
+    try { video.pause(); } catch {}
+    outSec += (seg.end - seg.start);
+  }
+
+  if (musicBuffer) await encodeMusic(muxer, musicBuffer, outSec, { volume: musicVolume, start: musicStart }).catch(() => {});
+  await encoder.flush(); encoder.close();
+  if (cancelled) throw new DOMException('Generación cancelada', 'AbortError');
+  if (encErr) throw encErr;
+  return muxer.finalize();
+}
+
 /** Espera a que el vídeo termine de buscar a t. */
 function seek(video, t) {
   return new Promise((res) => {
@@ -3940,14 +4341,13 @@ function seek(video, t) {
  * @param {AbortSignal} [o.signal]
  * @returns {Promise<Blob>}
  */
-async function exportViaMediaRecorder({ video, draw, cfg, musicBuffer, musicVolume = 1, musicStart = 0, maxHeight = 1080, fps = 30, onProgress, signal }) {
+async function exportViaMediaRecorder({ video, draw, cfg, musicBuffer, musicVolume = 1, musicStart = 0, vertical = false, maxHeight = 1080, fps = 30, onProgress, signal }) {
   if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) {
     throw new Error('Tu navegador no soporta la grabación de canvas.');
   }
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) throw new Error('El vídeo aún no está listo.');
-  const scale = Math.min(1, maxHeight / vh);
-  const W = Math.round(vw * scale / 2) * 2, H = Math.round(vh * scale / 2) * 2; // dimensiones pares
+  const { W, H } = outDims(video, maxHeight, vertical);
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d', { alpha: false });
   const stream = canvas.captureStream(fps);
@@ -4009,7 +4409,7 @@ async function exportViaMediaRecorder({ video, draw, cfg, musicBuffer, musicVolu
   if (signal) signal.addEventListener('abort', () => { cancelled = true; finish(); }, { once: true });
 
   const drawFrame = () => {
-    ctx.drawImage(video, 0, 0, W, H);
+    paintVideo(ctx, video, W, H, vertical);
     draw(ctx, video.currentTime, W, H, cfg);
     onProgress?.(dur ? Math.min(1, video.currentTime / dur) : 0);
   };
@@ -4030,7 +4430,7 @@ async function exportViaMediaRecorder({ video, draw, cfg, musicBuffer, musicVolu
   return new Blob(chunks, { type: mime });
 }
 
-Object.assign(__x, { exportHudVideo });
+Object.assign(__x, { exportHudVideo, TRANSITIONS, applyTransition, exportTrailer });
 
 };
 
@@ -4052,9 +4452,9 @@ const bearing = (la1, lo1, la2, lo2) => {
 const CARD = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
 
 /** Config por defecto del HUD (qué gauges y unidades). */
-const DEFAULT_CFG = { units: 'metric', theme: 'modern', gauges: { speed: 1, alt: 1, dist: 1, vspeed: 0, heading: 1, clock: 1, minimap: 1, progress: 1, watermark: 0 } };
+const DEFAULT_CFG = { units: 'metric', theme: 'modern', gauges: { speed: 1, alt: 1, dist: 1, vspeed: 0, heading: 1, clock: 1, minimap: 1, progress: 1, watermark: 0, location: 0 } };
 /** Orden de los gauges para el panel de ajustes. */
-const GAUGE_KEYS = ['speed', 'alt', 'dist', 'vspeed', 'heading', 'clock', 'minimap', 'progress', 'watermark'];
+const GAUGE_KEYS = ['speed', 'alt', 'dist', 'vspeed', 'heading', 'clock', 'minimap', 'progress', 'watermark', 'location'];
 
 const CONV = {
   metric: { spd: (v) => v * 3.6, spdU: 'km/h', len: (v) => v, lenU: 'm', vs: (v) => v, vsU: 'm/s' },
@@ -4073,6 +4473,7 @@ function createHud(model, opts = {}) {
   const maxRel = S.reduce((m, p) => Math.max(m, p.rel || 0), 1);
   const accent = opts.accent || '#5b9dff';
   const title = opts.title || '';
+  const place = opts.place || '';
   // track para el mini-mapa (bounding box en proyección equirectangular sencilla)
   const T = (model.track || []).filter((p) => p && p[0] != null);
   const lats = T.map((p) => p[0]), lons = T.map((p) => p[1]);
@@ -4389,6 +4790,10 @@ function createHud(model, opts = {}) {
     ctx.save();
     ctx.textBaseline = 'alphabetic';
 
+    // intro animada: los elementos aparecen (fade + subida) en el primer instante
+    const intro = 1 - (1 - Math.min(1, Math.max(0, t / 0.7))) ** 3; // easeOutCubic 0→1 en 0,7 s
+    if (intro < 1) { ctx.globalAlpha = intro; ctx.translate(0, (1 - intro) * U * 1.4); }
+
     // scrims sutiles (arriba y abajo) para legibilidad, sin sombra
     let g = ctx.createLinearGradient(0, h * 0.68, 0, h);
     g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.4)');
@@ -4456,6 +4861,25 @@ function createHud(model, opts = {}) {
       ctx.font = `600 ${U * 1.05}px ${FONT}`; ls(ctx, U * 0.05);
       ctx.fillStyle = 'rgba(255,255,255,.72)';
       ctx.fillText(title, w / 2, U * 1.5); ls(ctx, 0);
+    }
+
+    // rótulo de ubicación (píldora con pin, arriba centro)
+    if (gz.location && place) {
+      ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = U * 0.6; ctx.shadowOffsetY = U * 0.06;
+      ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+      ctx.font = `600 ${U * 1.05}px ${FONT}`; ls(ctx, U * 0.02);
+      const tw = ctx.measureText(place).width, padX = U * 0.85, dot = U * 0.9, gap = U * 0.4;
+      const pw = padX * 2 + dot + gap + tw, ph = U * 2.2;
+      const y0 = (gz.watermark && title) ? U * 3.5 : U * 1.4, x0 = w / 2 - pw / 2, cyp = y0 + ph / 2;
+      ctx.fillStyle = 'rgba(10,12,18,.4)'; roundRect(ctx, x0, y0, pw, ph, ph / 2); ctx.fill();
+      ctx.shadowColor = 'transparent';
+      // pin (gota)
+      const px = x0 + padX + dot / 2, py = cyp - dot * 0.12;
+      ctx.fillStyle = accent; ctx.beginPath();
+      ctx.arc(px, py - dot * 0.12, dot * 0.4, Math.PI, 0); ctx.lineTo(px, py + dot * 0.5); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(px, py - dot * 0.12, dot * 0.15, 0, 7); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.96)';
+      ctx.fillText(place, x0 + padX + dot + gap, cyp); ls(ctx, 0);
     }
 
     ctx.restore();
@@ -4630,7 +5054,17 @@ __x.default = {
   'hud.g.minimap': 'Mini-map',
   'hud.g.progress': 'Progress',
   'hud.g.watermark': 'Watermark',
+  'hud.g.location': 'Location',
   'hud.export': 'Export video with HUD',
+  'hud.vertical.hint': 'Vertical 9:16 for social (Reels/TikTok)',
+  'hud.format.hint': 'Video and trailer format (landscape or vertical)',
+  'hud.trailer': 'Trailer',
+  'hud.trailer.hint': 'Assemble a highlights reel with the music',
+  'hud.fx.hint': 'Trailer transition style',
+  'hud.fx.random': 'Transitions: random',
+  'hud.fx.smooth': 'Transitions: smooth',
+  'hud.fx.dynamic': 'Transitions: dynamic',
+  'hud.fx.none': 'Transitions: none',
   'hud.exporting': 'Exporting the video with the HUD…',
   'hud.export.note': 'Records in real time; do not close or switch tabs.',
   'hud.export.cancel': 'Cancel',
@@ -4752,6 +5186,16 @@ __x.default = {
   'notes.good.t': '✅ All in your browser',
   'notes.good.d': 'The SRT and video are processed on your device; nothing is uploaded to any server.',
   'foot': 'Generated in the browser from the telemetry · {n} frames · {fecha}',
+  'hl.speed': 'Top speed',
+  'hl.alt': 'Max altitude',
+  'hl.dist': 'Max distance',
+  'hl.climb': 'Max climb',
+  'hl.descent': 'Max descent',
+  'hl.turn': 'Sharpest turn',
+  'intro.kicker': 'Flight analysis',
+  'intro.dist': 'Distance',
+  'intro.alt': 'Altitude',
+  'intro.spd': 'Speed',
 };
 
 };
@@ -4918,7 +5362,17 @@ __x.default = {
   'hud.g.minimap': 'Mini-mapa',
   'hud.g.progress': 'Progreso',
   'hud.g.watermark': 'Marca de agua',
+  'hud.g.location': 'Lugar',
   'hud.export': 'Exportar vídeo con HUD',
+  'hud.vertical.hint': 'Formato vertical 9:16 para redes (Reels/TikTok)',
+  'hud.format.hint': 'Formato del vídeo y del trailer (horizontal o vertical)',
+  'hud.trailer': 'Trailer',
+  'hud.trailer.hint': 'Monta un resumen con los momentos destacados y la música',
+  'hud.fx.hint': 'Estilo de transición del trailer',
+  'hud.fx.random': 'Transiciones: aleatorias',
+  'hud.fx.smooth': 'Transiciones: suaves',
+  'hud.fx.dynamic': 'Transiciones: dinámicas',
+  'hud.fx.none': 'Transiciones: ninguna',
   'hud.exporting': 'Exportando el vídeo con el HUD…',
   'hud.export.note': 'Se graba en tiempo real; no cierres ni cambies de pestaña.',
   'hud.export.cancel': 'Cancelar',
@@ -5040,6 +5494,16 @@ __x.default = {
   'notes.good.t': '✅ Todo en tu navegador',
   'notes.good.d': 'El SRT y el vídeo se procesan en tu equipo; no se sube nada a ningún servidor.',
   'foot': 'Generado en el navegador a partir de la telemetría · {n} fotogramas · {fecha}',
+  'hl.speed': 'Velocidad máx',
+  'hl.alt': 'Altura máx',
+  'hl.dist': 'Distancia máx',
+  'hl.climb': 'Ascenso máx',
+  'hl.descent': 'Descenso máx',
+  'hl.turn': 'Giro más cerrado',
+  'intro.kicker': 'Análisis de vuelo',
+  'intro.dist': 'Distancia',
+  'intro.alt': 'Altura',
+  'intro.spd': 'Velocidad',
 };
 
 };
@@ -5992,6 +6456,115 @@ async function fetchTerrain(points) {
 }
 
 Object.assign(__x, { fetchTerrain });
+
+};
+
+__m["js/title-card.js"] = function (__x, __req) {
+// Portada animada para el inicio del trailer: fondo premium, el recorrido del
+// vuelo dibujándose con glow, título + lugar con animación de entrada y las
+// cifras clave. Se pinta por frame con el progreso p (0..1) y funde a negro al
+// final para encadenar con la primera escena.
+
+const FONT = '-apple-system, "SF Pro Display", system-ui, sans-serif';
+const ls = (ctx, v) => { if ('letterSpacing' in ctx) ctx.letterSpacing = `${v}px`; };
+const hexA = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; };
+const ease = (x) => 1 - (1 - Math.max(0, Math.min(1, x))) ** 3;           // easeOutCubic
+const easeBack = (x) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * (x - 1) ** 3 + c1 * (x - 1) ** 2; };
+const seg = (t, a, b) => Math.max(0, Math.min(1, (t - a) / (b - a)));      // tramo normalizado (en segundos)
+
+/**
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {number} t instante de la portada (s)
+ * @param {number} dur duración total de la portada (s); el fundido de salida ocurre al final
+ * @param {{kicker?:string,title?:string,place?:string,accent?:string,track?:Array<[number,number]>,stats?:Array<{label:string,value:string}>}} data
+ */
+function drawTitleCard(ctx, W, H, t, dur, data) {
+  const { kicker = '', title = '', place = '', accent = '#5b9dff', track = [], stats = [] } = data || {};
+  const U = Math.min(W, H) * 0.03;
+  ctx.save();
+  ctx.textAlign = 'center';
+
+  // fondo premium: radial oscuro + glow de acento + viñeta
+  let bg = ctx.createRadialGradient(W / 2, H * 0.5, 0, W / 2, H * 0.5, Math.max(W, H) * 0.72);
+  bg.addColorStop(0, '#13161f'); bg.addColorStop(1, '#05070b');
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  let gl = ctx.createRadialGradient(W / 2, H * 0.56, 0, W / 2, H * 0.56, W * 0.55);
+  gl.addColorStop(0, hexA(accent, 0.18)); gl.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = gl; ctx.fillRect(0, 0, W, H);
+  let vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.28, W / 2, H / 2, Math.max(W, H) * 0.72);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.6)');
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+
+  // recorrido dibujándose (glow), en la banda central-inferior
+  const T = track.filter((pt) => pt && pt[0] != null);
+  if (T.length > 1) {
+    const lats = T.map((a) => a[0]), lons = T.map((a) => a[1]);
+    const la0 = Math.min(...lats), la1 = Math.max(...lats), lo0 = Math.min(...lons), lo1 = Math.max(...lons);
+    const cosLat = Math.cos((la0 + la1) / 2 * Math.PI / 180) || 1;
+    const cx = W / 2, cy = H * 0.58, bw = W * 0.46, bh = H * 0.26;
+    const spanLo = (lo1 - lo0) * cosLat || 1e-6, spanLa = (la1 - la0) || 1e-6;
+    const sc = Math.min(bw / spanLo, bh / spanLa);
+    const mLo = (lo0 + lo1) / 2, mLa = (la0 + la1) / 2;
+    const PX = (lo) => cx + (lo - mLo) * cosLat * sc, PY = (la) => cy - (la - mLa) * sc;
+    const td = ease(seg(t, 0.15, 1.4));
+    const n = Math.max(2, Math.floor(T.length * td));
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.strokeStyle = hexA(accent, 0.12); ctx.lineWidth = U * 0.3;
+    ctx.beginPath(); T.forEach((pt, i) => { const x = PX(pt[1]), y = PY(pt[0]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+    ctx.strokeStyle = accent; ctx.lineWidth = U * 0.36; ctx.shadowColor = accent; ctx.shadowBlur = U * 1.2;
+    ctx.beginPath(); for (let i = 0; i < n; i++) { const x = PX(T[i][1]), y = PY(T[i][0]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); } ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#37cf6b'; ctx.beginPath(); ctx.arc(PX(T[0][1]), PY(T[0][0]), U * 0.26, 0, 7); ctx.fill();
+    if (td < 1) { const pt = T[n - 1]; ctx.fillStyle = '#fff'; ctx.shadowColor = accent; ctx.shadowBlur = U * 1.6; ctx.beginPath(); ctx.arc(PX(pt[1]), PY(pt[0]), U * 0.3, 0, 7); ctx.fill(); ctx.shadowBlur = 0; }
+  }
+
+  // kicker (mayúsculas, tracking amplio)
+  const kA = ease(seg(t, 0.4, 0.9));
+  if (kA > 0 && kicker) {
+    ctx.globalAlpha = kA; ctx.textBaseline = 'middle'; ctx.fillStyle = accent;
+    ctx.font = `700 ${U * 0.92}px ${FONT}`; ls(ctx, U * 0.42);
+    ctx.fillText(kicker.toUpperCase(), W / 2, H * 0.16); ls(ctx, 0); ctx.globalAlpha = 1;
+  }
+  // título (scale con rebote + fade)
+  const tp = seg(t, 0.6, 1.35), tA = ease(tp);
+  if (tA > 0 && title) {
+    ctx.save(); ctx.globalAlpha = tA; ctx.translate(W / 2, H * 0.28);
+    const scv = 0.9 + 0.1 * easeBack(Math.min(1, tp / 0.9)); ctx.scale(scv, scv);
+    ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle'; ctx.font = `800 ${U * 2.5}px ${FONT}`; ls(ctx, U * 0.01);
+    ctx.fillText(title, 0, 0); ls(ctx, 0); ctx.restore();
+  }
+  // lugar (pin + nombre)
+  const pA = ease(seg(t, 1.0, 1.5));
+  if (pA > 0 && place) {
+    ctx.globalAlpha = pA; ctx.textBaseline = 'middle';
+    ctx.font = `600 ${U * 1.05}px ${FONT}`;
+    const tw = ctx.measureText(place).width, dot = U * 0.85, gap = U * 0.35, x0 = W / 2 - (dot + gap + tw) / 2, y = H * 0.38;
+    const px = x0 + dot / 2, py = y;
+    ctx.fillStyle = accent; ctx.beginPath(); ctx.arc(px, py - dot * 0.12, dot * 0.4, Math.PI, 0); ctx.lineTo(px, py + dot * 0.5); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(px, py - dot * 0.12, dot * 0.14, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.textAlign = 'left'; ctx.fillText(place, x0 + dot + gap, py);
+    ctx.textAlign = 'center'; ctx.globalAlpha = 1;
+  }
+  // cifras clave (fila inferior, con stagger)
+  if (stats.length) {
+    const nS = stats.length, gapx = (W * 0.78) / Math.max(1, nS - 1), x0 = nS > 1 ? W / 2 - gapx * (nS - 1) / 2 : W / 2, yv = H * 0.84;
+    stats.forEach((st, i) => {
+      const a = ease(seg(t, 1.2 + i * 0.18, 1.6 + i * 0.18)); if (a <= 0) return;
+      const x = x0 + gapx * i; ctx.globalAlpha = a;
+      ctx.fillStyle = '#fff'; ctx.textBaseline = 'alphabetic'; ctx.font = `700 ${U * 1.55}px ${FONT}`; ls(ctx, -U * 0.01);
+      ctx.fillText(st.value, x, yv); ls(ctx, 0);
+      ctx.fillStyle = accent; ctx.textBaseline = 'top'; ctx.font = `700 ${U * 0.66}px ${FONT}`; ls(ctx, U * 0.12);
+      ctx.fillText(st.label.toUpperCase(), x, yv + U * 0.35); ls(ctx, 0); ctx.globalAlpha = 1;
+    });
+  }
+
+  // fundidos: desde negro al abrir, a negro al cerrar (encadena con la primera escena)
+  const dark = Math.max(1 - seg(t, 0, 0.25), seg(t, dur - 0.4, dur));
+  if (dark > 0) { ctx.fillStyle = `rgba(0,0,0,${dark})`; ctx.fillRect(0, 0, W, H); }
+  ctx.restore();
+}
+
+Object.assign(__x, { drawTitleCard });
 
 };
 
