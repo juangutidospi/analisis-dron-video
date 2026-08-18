@@ -128,6 +128,8 @@ export default {
   'player.seek': 'Buscar en el vuelo',
   'hud.settings': 'Ajustes del HUD',
   'hud.gauges': 'Datos',
+  'hud.metrics': 'Métricas',
+  'hud.elements': 'Elementos',
   'hud.units': 'Unidades',
   'hud.metric': 'Métrico',
   'hud.imperial': 'Imperial',

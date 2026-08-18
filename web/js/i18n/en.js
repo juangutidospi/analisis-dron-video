@@ -128,6 +128,8 @@ export default {
   'player.seek': 'Seek in the flight',
   'hud.settings': 'HUD settings',
   'hud.gauges': 'Data',
+  'hud.metrics': 'Metrics',
+  'hud.elements': 'Elements',
   'hud.units': 'Units',
   'hud.metric': 'Metric',
   'hud.imperial': 'Imperial',
