@@ -1,6 +1,7 @@
 import { DjiElement } from '../../../core/DjiElement.js';
 import { mmss } from '../../../geo.js';
 import { t } from '../../../i18n/index.js';
+import { DEFAULT_CFG, GAUGE_KEYS } from '../../../hud.js';
 import { styles } from './flight-player.css.js';
 
 /**
@@ -24,12 +25,28 @@ export class FlightPlayer extends DjiElement {
   get hud() { return this._hud; }
 
   render() {
+    const cfg = this._cfg();
     this.shadowRoot.innerHTML = `
       <div class="stage" id="stage"></div>
       <div class="stack">
         <div class="pip" id="pip">
           <canvas class="hud" id="hud"></canvas>
           <button class="expand" id="expand" type="button" aria-label="${t('player.expand')}">⤢</button>
+        </div>
+        <div class="cfgpanel" id="cfgpanel" hidden>
+          <div class="cfg-sec">
+            <span class="cfg-t">${t('hud.gauges')}</span>
+            <div class="cfg-chips">
+              ${GAUGE_KEYS.map((k) => `<button class="cfg-chip ${cfg.gauges[k] ? 'on' : ''}" data-g="${k}" type="button">${t('hud.g.' + k)}</button>`).join('')}
+            </div>
+          </div>
+          <div class="cfg-sec">
+            <span class="cfg-t">${t('hud.units')}</span>
+            <div class="cfg-units">
+              <button class="${cfg.units === 'metric' ? 'on' : ''}" data-u="metric" type="button">${t('hud.metric')}</button>
+              <button class="${cfg.units === 'imperial' ? 'on' : ''}" data-u="imperial" type="button">${t('hud.imperial')}</button>
+            </div>
+          </div>
         </div>
         <div class="player">
           <button class="play" id="play" type="button" aria-label="${t('player.play')}">▶</button>
@@ -41,8 +58,15 @@ export class FlightPlayer extends DjiElement {
             <button data-sp="2" type="button">2×</button>
             <button data-sp="4" type="button">4×</button>
           </div>
+          <button class="cfg-btn" id="cfgbtn" type="button" aria-label="${t('hud.settings')}">⚙</button>
         </div>
       </div>`;
+  }
+
+  /** Config del HUD (qué gauges y unidades), persistente en memoria. */
+  _cfg() {
+    if (!this._hudCfg) this._hudCfg = { units: DEFAULT_CFG.units, gauges: { ...DEFAULT_CFG.gauges } };
+    return this._hudCfg;
   }
 
   _mountVideo() {
@@ -61,6 +85,7 @@ export class FlightPlayer extends DjiElement {
     this.on(this.$('#expand'), 'click', () => this._toggleBig());
     this.on(this.$('#stage'), 'click', () => { if (this._big) this._toggleBig(); }); // clic fuera reduce
     if (this._big) this._applyBig();
+    this._wireConfig();
     const c = this._clock;
     if (!c) return;
     this.$('#tot').textContent = mmss(c.dur);
@@ -100,6 +125,19 @@ export class FlightPlayer extends DjiElement {
   /** Sale del modo grande (p. ej. al salir de la sección del mapa). */
   collapse() { if (this._big) { this._big = false; this._applyBig(); } }
 
+  /** Cablea el panel de ajustes del HUD (gauges + unidades). */
+  _wireConfig() {
+    const cfg = this._cfg();
+    const btn = this.$('#cfgbtn'), panel = this.$('#cfgpanel');
+    if (btn) this.on(btn, 'click', () => { panel.hidden = !panel.hidden; btn.classList.toggle('on', !panel.hidden); });
+    this.$$('.cfg-chip').forEach((b) => this.on(b, 'click', () => {
+      const k = b.dataset.g; cfg.gauges[k] = cfg.gauges[k] ? 0 : 1; b.classList.toggle('on', !!cfg.gauges[k]); this._drawHud();
+    }));
+    this.$$('.cfg-units button').forEach((b) => this.on(b, 'click', () => {
+      cfg.units = b.dataset.u; this.$$('.cfg-units button').forEach((x) => x.classList.toggle('on', x === b)); this._drawHud();
+    }));
+  }
+
   _applyBig() {
     const pip = this.$('#pip'), btn = this.$('#expand');
     if (!pip) return;
@@ -120,7 +158,7 @@ export class FlightPlayer extends DjiElement {
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    this._hud(ctx, this._clock.t, w, h);
+    this._hud(ctx, this._clock.t, w, h, this._cfg());
   }
 }
 

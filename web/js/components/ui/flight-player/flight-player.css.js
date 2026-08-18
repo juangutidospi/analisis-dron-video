@@ -67,6 +67,40 @@ export const styles = css`
 }
 .speeds button.on { color: #fff; background: var(--color-accent); border-color: transparent; }
 
+/* botón de ajustes del HUD */
+.cfg-btn {
+  flex: none; width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--color-divider);
+  background: transparent; color: var(--color-text-muted); font-size: 15px; cursor: pointer; display: grid; place-items: center;
+  transition: color .12s, background .12s, transform .12s;
+}
+.cfg-btn:hover { color: var(--color-text); transform: rotate(35deg); }
+.cfg-btn.on { color: #fff; background: var(--color-accent); border-color: transparent; }
+
+/* panel de ajustes del HUD (sobre la barra) */
+.cfgpanel {
+  position: relative; z-index: 7; /* por encima del backdrop del modo grande */
+  pointer-events: auto; width: min(560px, 100%); align-self: center; display: flex; flex-direction: column; gap: 11px;
+  background: color-mix(in srgb, var(--color-surface-solid) 92%, transparent); border: 1px solid var(--color-divider);
+  border-radius: 16px; padding: 13px 16px; box-shadow: var(--shadow-lg); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  animation: rise .28s cubic-bezier(.22,1,.36,1) both;
+}
+.cfgpanel[hidden] { display: none; }
+.cfg-sec { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cfg-t { font-size: 11px; font-weight: 800; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: .08em; min-width: 66px; }
+.cfg-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.cfg-chip {
+  font-size: 12.5px; font-weight: 600; color: var(--color-text); font-family: inherit; cursor: pointer;
+  border: 1px solid var(--color-divider); background: transparent; border-radius: 100px; padding: 5px 12px; transition: background .12s, border-color .12s, opacity .12s;
+}
+.cfg-chip:not(.on) { opacity: .6; }
+.cfg-chip.on { color: #fff; background: var(--color-accent); border-color: transparent; opacity: 1; }
+.cfg-units { display: flex; gap: 3px; background: color-mix(in srgb, var(--color-text) 8%, transparent); border-radius: 100px; padding: 3px; }
+.cfg-units button {
+  font-size: 12.5px; font-weight: 700; color: var(--color-text-muted); border: none; background: transparent; border-radius: 100px;
+  padding: 5px 15px; cursor: pointer; font-family: inherit;
+}
+.cfg-units button.on { color: #fff; background: var(--color-accent); }
+
 @media (max-width: 480px) {
   .player { gap: 10px; padding: 9px 12px; }
   .speeds button { padding: 5px 6px; min-width: 28px; font-size: 11px; }

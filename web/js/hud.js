@@ -14,6 +14,16 @@ const bearing = (la1, lo1, la2, lo2) => {
 
 const CARD = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
 
+/** Config por defecto del HUD (qué gauges y unidades). */
+export const DEFAULT_CFG = { units: 'metric', gauges: { speed: 1, alt: 1, dist: 1, vspeed: 0, heading: 1, clock: 1 } };
+/** Orden de los gauges para el panel de ajustes. */
+export const GAUGE_KEYS = ['speed', 'alt', 'dist', 'vspeed', 'heading', 'clock'];
+
+const CONV = {
+  metric: { spd: (v) => v * 3.6, spdU: 'km/h', len: (v) => v, lenU: 'm', vs: (v) => v, vsU: 'm/s' },
+  imperial: { spd: (v) => v * 2.23694, spdU: 'mph', len: (v) => v * 3.28084, lenU: 'ft', vs: (v) => v * 3.28084, vsU: 'ft/s' },
+};
+
 /**
  * @param {object} model modelo del vuelo (series, meta, takeoff)
  * @param {{accent?:string}} [opts]
@@ -90,7 +100,10 @@ export function createHud(model, opts = {}) {
     ctx.restore();
   };
 
-  const draw = (ctx, t, w, h) => {
+  const draw = (ctx, t, w, h, cfg) => {
+    cfg = cfg || DEFAULT_CFG;
+    const gz = cfg.gauges || DEFAULT_CFG.gauges;
+    const un = CONV[cfg.units] || CONV.metric;
     const s = sample(t);
     const U = Math.max(6, Math.min(w, h) * 0.03); // unidad proporcional
     ctx.save();
@@ -107,32 +120,36 @@ export function createHud(model, opts = {}) {
     // sombra suave: los elementos "flotan" sobre el metraje
     ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = U * 0.7; ctx.shadowOffsetY = U * 0.06;
 
-    // métricas abajo
-    const metrics = [
-      [`${Math.round((s.hs || 0) * 3.6)}`, 'km/h', 'VEL'],
-      [`${Math.round(s.rel || 0)}`, 'm', 'ALT'],
-      [`${Math.round(s.far || 0)}`, 'm', 'DIST'],
-    ];
+    // métricas abajo (según los gauges activos y las unidades)
+    const metrics = [];
+    if (gz.speed) metrics.push([`${Math.round(un.spd(s.hs || 0))}`, un.spdU, 'VEL']);
+    if (gz.alt) metrics.push([`${Math.round(un.len(s.rel || 0))}`, un.lenU, 'ALT']);
+    if (gz.dist) metrics.push([`${Math.round(un.len(s.far || 0))}`, un.lenU, 'DIST']);
+    if (gz.vspeed) metrics.push([`${un.vs(s.vs || 0).toFixed(1)}`, un.vsU, 'VERT']);
     const baseY = h - U * 1.8;
     metrics.forEach((m, i) => metric(ctx, w * ((i + 0.5) / metrics.length), baseY, U, m[0], m[1], m[2]));
 
     // brújula arriba derecha (más fina y compacta)
-    const R = Math.min(w, h) * 0.108;
-    compass(ctx, w - R - U * 1.5, R + U * 1.4, R, s.heading);
-    if (s.heading != null) {
-      ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.font = `600 ${U * 1.1}px ${FONT}`; ls(ctx, U * 0.06);
-      ctx.fillText(`${CARD[Math.round(s.heading / 45) % 8]} ${Math.round(s.heading)}°`, w - R - U * 1.5, R * 2 + U * 1.6); ls(ctx, 0);
+    if (gz.heading) {
+      const R = Math.min(w, h) * 0.108;
+      compass(ctx, w - R - U * 1.5, R + U * 1.4, R, s.heading);
+      if (s.heading != null) {
+        ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.font = `600 ${U * 1.1}px ${FONT}`; ls(ctx, U * 0.06);
+        ctx.fillText(`${CARD[Math.round(s.heading / 45) % 8]} ${Math.round(s.heading)}°`, w - R - U * 1.5, R * 2 + U * 1.6); ls(ctx, 0);
+      }
     }
 
     // reloj arriba izquierda (píldora fina)
-    ctx.textBaseline = 'middle';
-    const tm = `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
-    ctx.font = `550 ${U * 1.35}px ${FONT}`; ls(ctx, U * 0.02);
-    const tw = ctx.measureText(tm).width;
-    ctx.fillStyle = 'rgba(10,12,18,.32)'; roundRect(ctx, U * 1.3, U * 1.15, tw + U * 1.7, U * 2.2, U * 1.1); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,.96)'; ctx.textAlign = 'left';
-    ctx.fillText(tm, U * 2.15, U * 2.3); ls(ctx, 0);
+    if (gz.clock) {
+      ctx.textBaseline = 'middle';
+      const tm = `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+      ctx.font = `550 ${U * 1.35}px ${FONT}`; ls(ctx, U * 0.02);
+      const tw = ctx.measureText(tm).width;
+      ctx.fillStyle = 'rgba(10,12,18,.32)'; roundRect(ctx, U * 1.3, U * 1.15, tw + U * 1.7, U * 2.2, U * 1.1); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.96)'; ctx.textAlign = 'left';
+      ctx.fillText(tm, U * 2.15, U * 2.3); ls(ctx, 0);
+    }
 
     ctx.restore();
   };
