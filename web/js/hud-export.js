@@ -16,7 +16,7 @@ export async function exportHudVideo(opts) {
 }
 
 /** WebCodecs → MP4 estándar (H.264 + AAC). Compatible con iPhone/QuickTime. */
-async function exportViaWebCodecs({ video, draw, cfg, music, maxHeight = 1080, onProgress, signal }) {
+async function exportViaWebCodecs({ video, draw, cfg, musicBuffer, musicVolume = 1, musicStart = 0, maxHeight = 1080, onProgress, signal }) {
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) throw new Error('El vídeo aún no está listo.');
   const scale = Math.min(1, maxHeight / vh);
@@ -37,8 +37,8 @@ async function exportViaWebCodecs({ video, draw, cfg, music, maxHeight = 1080, o
   encoder.configure({ codec: H > 1080 ? 'avc1.640033' : 'avc1.640028', width: W, height: H, bitrate: 12_000_000, framerate: 30, latencyMode: 'realtime', avc: { format: 'avc' } });
 
   await seek(video, 0);
-  // Con música propia usamos ese archivo; si no, capturamos el audio del vídeo.
-  const audioCap = music ? null : await setupAudioCapture(video, muxer).catch(() => null);
+  // Con música propia usamos ese audio; si no, capturamos el audio del vídeo.
+  const audioCap = musicBuffer ? null : await setupAudioCapture(video, muxer).catch(() => null);
   let running = true, cancelled = false, idx = 0;
   const dur = video.duration || 0;
   const finish = () => { running = false; try { video.pause(); } catch {} };
@@ -61,7 +61,7 @@ async function exportViaWebCodecs({ video, draw, cfg, music, maxHeight = 1080, o
     useRVFC ? video.requestVideoFrameCallback(onFrame) : requestAnimationFrame(onFrame);
   });
   if (audioCap) await audioCap.stop();
-  if (music) await encodeMusic(muxer, music, video.duration || 0).catch(() => {});
+  if (musicBuffer) await encodeMusic(muxer, musicBuffer, video.duration || 0, { volume: musicVolume, start: musicStart }).catch(() => {});
   await encoder.flush(); encoder.close();
   if (cancelled) throw new DOMException('Exportación cancelada', 'AbortError');
   if (encErr) throw encErr;
@@ -69,22 +69,20 @@ async function exportViaWebCodecs({ video, draw, cfg, music, maxHeight = 1080, o
 }
 
 /**
- * Decodifica un archivo de audio (mp3/m4a/wav…) y lo codifica a AAC como pista
- * del muxer: en bucle si es más corto que el vídeo, recortado a su duración y
- * con fundido de salida. Offline (no depende de la reproducción).
+ * Codifica un AudioBuffer (música cargada o generada) a AAC como pista del
+ * muxer: en bucle si es más corto que el vídeo, recortado a su duración, con
+ * volumen, punto de inicio (trim) y fundidos de entrada/salida. Offline.
+ * @param {{volume?:number, start?:number}} [opts]
  * @returns {Promise<boolean>} true si añadió audio
  */
-async function encodeMusic(muxer, file, durationSec) {
-  const AC = window.AudioContext || window.webkitAudioContext;
-  if (!('AudioEncoder' in window) || !AC || !durationSec) return false;
-  const actx = new AC();
-  let audioBuf;
-  try { audioBuf = await actx.decodeAudioData(await file.arrayBuffer()); }
-  catch { try { actx.close(); } catch {} return false; }
+async function encodeMusic(muxer, audioBuf, durationSec, opts = {}) {
+  if (!('AudioEncoder' in window) || !durationSec || !audioBuf) return false;
+  const vol = opts.volume ?? 1;
   const SR = audioBuf.sampleRate, CH = Math.min(2, audioBuf.numberOfChannels), srcLen = audioBuf.length;
   const srcCh = []; for (let c = 0; c < CH; c++) srcCh.push(audioBuf.getChannelData(c % audioBuf.numberOfChannels));
+  const startS = Math.round((opts.start ?? 0) * SR);   // punto de inicio de la canción
   const totalFrames = Math.ceil(durationSec * SR);
-  const fade = Math.min(SR * 0.8, totalFrames * 0.15) | 0; // fundido de salida ~0,8 s
+  const fade = Math.min(SR * 0.8, totalFrames * 0.15) | 0; // fundidos ~0,8 s
 
   let encErr = null, needCfg = true;
   const enc = new AudioEncoder({
@@ -105,15 +103,16 @@ async function encodeMusic(muxer, file, durationSec) {
       const src = srcCh[c];
       for (let j = 0; j < n; j++) {
         const gi = off + j, rem = totalFrames - gi;
-        let v = src[gi % srcLen];                 // bucle si la música es más corta
-        if (rem < fade) v *= rem / fade;          // fundido de salida
+        let v = src[(startS + gi) % srcLen] * vol; // trim + bucle + volumen
+        if (gi < fade) v *= gi / fade;             // fundido de entrada
+        if (rem < fade) v *= rem / fade;           // fundido de salida
         data[c * N + j] = v;
       }
     }
     const ad = new AudioData({ format: 'f32-planar', sampleRate: SR, numberOfChannels: CH, numberOfFrames: N, timestamp: Math.round(off / SR * 1e6), data });
     enc.encode(ad); ad.close();
   }
-  try { await enc.flush(); } catch {} try { enc.close(); } catch {} try { actx.close(); } catch {}
+  try { await enc.flush(); } catch {} try { enc.close(); } catch {}
   return !needCfg && !encErr;
 }
 
@@ -195,7 +194,7 @@ function seek(video, t) {
  * @param {AbortSignal} [o.signal]
  * @returns {Promise<Blob>}
  */
-async function exportViaMediaRecorder({ video, draw, cfg, music, maxHeight = 1080, fps = 30, onProgress, signal }) {
+async function exportViaMediaRecorder({ video, draw, cfg, musicBuffer, musicVolume = 1, musicStart = 0, maxHeight = 1080, fps = 30, onProgress, signal }) {
   if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) {
     throw new Error('Tu navegador no soporta la grabación de canvas.');
   }
@@ -211,14 +210,26 @@ async function exportViaMediaRecorder({ video, draw, cfg, music, maxHeight = 108
   let startMusic = null, musicCtx = null;
   try {
     const AC = window.AudioContext || window.webkitAudioContext;
-    if (AC && music) {
+    if (AC && musicBuffer) {
       musicCtx = new AC();
-      const ab = await musicCtx.decodeAudioData(await music.arrayBuffer());
-      const src = musicCtx.createBufferSource(); src.buffer = ab; src.loop = true;
+      const src = musicCtx.createBufferSource(); src.buffer = musicBuffer; src.loop = true;
+      const g = musicCtx.createGain();
       const dest = musicCtx.createMediaStreamDestination();
-      src.connect(dest);
+      src.connect(g); g.connect(dest);
       const at = dest.stream.getAudioTracks()[0];
-      if (at) { stream.addTrack(at); startMusic = () => { try { src.start(); } catch {} }; }
+      if (at) {
+        stream.addTrack(at);
+        const dur = video.duration || 0, fd = 0.8;
+        startMusic = () => {
+          try {
+            const t0 = musicCtx.currentTime;
+            g.gain.setValueAtTime(0, t0);
+            g.gain.linearRampToValueAtTime(musicVolume, t0 + fd);        // fundido de entrada
+            if (dur > 2 * fd) { g.gain.setValueAtTime(musicVolume, t0 + dur - fd); g.gain.linearRampToValueAtTime(0, t0 + dur); } // fundido de salida
+            src.start(0, musicStart || 0);
+          } catch {}
+        };
+      }
     } else if (AC) {
       if (!video._hudAudioCtx) { video._hudAudioCtx = new AC(); video._hudAudioSrc = video._hudAudioCtx.createMediaElementSource(video); }
       await video._hudAudioCtx.resume?.();
