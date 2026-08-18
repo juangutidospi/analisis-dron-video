@@ -2,6 +2,8 @@ import { DjiElement } from '../../../core/DjiElement.js';
 import { mmss } from '../../../geo.js';
 import { t } from '../../../i18n/index.js';
 import { DEFAULT_CFG, GAUGE_KEYS } from '../../../hud.js';
+import { exportHudVideo } from '../../../hud-export.js';
+import { downloadBlob } from '../../../exports.js';
 import { styles } from './flight-player.css.js';
 
 /**
@@ -47,6 +49,7 @@ export class FlightPlayer extends DjiElement {
               <button class="${cfg.units === 'imperial' ? 'on' : ''}" data-u="imperial" type="button">${t('hud.imperial')}</button>
             </div>
           </div>
+          <button class="cfg-export" id="exportbtn" type="button">⤓ ${t('hud.export')}</button>
         </div>
         <div class="player">
           <button class="play" id="play" type="button" aria-label="${t('player.play')}">▶</button>
@@ -136,6 +139,54 @@ export class FlightPlayer extends DjiElement {
     this.$$('.cfg-units button').forEach((b) => this.on(b, 'click', () => {
       cfg.units = b.dataset.u; this.$$('.cfg-units button').forEach((x) => x.classList.toggle('on', x === b)); this._drawHud();
     }));
+    const exp = this.$('#exportbtn');
+    if (exp) this.on(exp, 'click', () => this._exportVideo());
+  }
+
+  /** Exporta el vídeo con el HUD quemado (graba en tiempo real → descarga .webm). */
+  async _exportVideo() {
+    if (this._exporting) return;
+    if (!this._video || !this._hud) return;
+    this._exporting = true;
+    this._clock?.pause();
+    const ov = this._exportOverlay();
+    const ctrl = new AbortController();
+    ov.cancelBtn.onclick = () => ctrl.abort();
+    try {
+      const blob = await exportHudVideo({ video: this._video, draw: this._hud, cfg: this._cfg(), onProgress: ov.set, signal: ctrl.signal });
+      const ext = (blob.type || '').includes('mp4') ? 'mp4' : 'webm';
+      downloadBlob('vuelo-hud.' + ext, blob);
+      ov.done();
+      await new Promise((r) => setTimeout(r, 1400));
+    } catch (e) {
+      if (e.name !== 'AbortError') { console.error(e); ov.fail(e.message); await new Promise((r) => setTimeout(r, 2600)); }
+    } finally {
+      this._exporting = false;
+      ov.close();
+    }
+  }
+
+  /** Crea el overlay de progreso de exportación en el shadow. */
+  _exportOverlay() {
+    const el = document.createElement('div');
+    el.className = 'export-ov';
+    el.innerHTML = `
+      <div class="export-card">
+        <div class="export-title" id="ex-title">${t('hud.exporting')}</div>
+        <div class="export-track"><div class="export-fill" id="ex-fill"></div></div>
+        <div class="export-pct" id="ex-pct">0%</div>
+        <div class="export-note">${t('hud.export.note')}</div>
+        <button class="export-cancel" id="ex-cancel" type="button">${t('hud.export.cancel')}</button>
+      </div>`;
+    this.shadowRoot.appendChild(el);
+    const fill = el.querySelector('#ex-fill'), pct = el.querySelector('#ex-pct'), title = el.querySelector('#ex-title');
+    return {
+      set: (p) => { const v = Math.round(p * 100); fill.style.width = v + '%'; pct.textContent = v + '%'; },
+      done: () => { title.textContent = t('hud.export.done'); fill.style.width = '100%'; pct.textContent = '100%'; },
+      fail: (m) => { title.textContent = '⚠️ ' + (m || ''); },
+      cancelBtn: el.querySelector('#ex-cancel'),
+      close: () => el.remove(),
+    };
   }
 
   _applyBig() {

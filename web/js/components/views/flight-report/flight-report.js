@@ -534,6 +534,7 @@ export class FlightReport extends DjiElement {
     this._player.classList.add('away'); // arranca oculto
     if (!('IntersectionObserver' in window)) { this._player.classList.remove('away'); return; }
     this._playerIO = new IntersectionObserver((es) => {
+      if (this._player._exporting) return; // no ocultar mientras se exporta el vídeo
       const vis = es.some((e) => e.isIntersecting);
       // al salir el mapa de pantalla: no dejamos el vídeo flotando ni el scroll bloqueado
       if (!vis) { if (this._clock?.playing) this._clock.pause(); this._player.collapse?.(); }
@@ -606,7 +607,7 @@ export class FlightReport extends DjiElement {
     // HUD de telemetría sobre el vídeo (con el color de acento del tema)
     if (this._video) {
       const accent = getComputedStyle(this).getPropertyValue('--color-accent').trim() || '#5b9dff';
-      this._player.hud = createHud(this.model, { accent }).draw;
+      this._player.hud = createHud(this.model, { accent, title: this.assets?.title }).draw;
     } else {
       this._player.hud = null;
     }

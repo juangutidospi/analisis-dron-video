@@ -100,6 +100,32 @@ export const styles = css`
   padding: 5px 15px; cursor: pointer; font-family: inherit;
 }
 .cfg-units button.on { color: #fff; background: var(--color-accent); }
+.cfg-export {
+  align-self: stretch; margin-top: 2px; border: none; cursor: pointer; font-family: inherit; font-size: 13.5px; font-weight: 700; color: #fff;
+  border-radius: 100px; padding: 10px 16px; background: linear-gradient(135deg, var(--color-accent-2, var(--color-accent)), var(--color-accent));
+  box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--color-accent) 70%, transparent); transition: transform .12s;
+}
+.cfg-export:hover { transform: translateY(-1px); }
+
+/* overlay de progreso de exportación */
+.export-ov {
+  position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; pointer-events: auto;
+  background: rgba(6,7,10,.55); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+}
+.export-card {
+  width: min(420px, 90vw); background: var(--color-surface-solid); border: 1px solid var(--color-divider); border-radius: 18px;
+  padding: 24px; box-shadow: var(--shadow-lg); text-align: center; animation: rise .28s cubic-bezier(.22,1,.36,1) both;
+}
+.export-title { font-size: 16px; font-weight: 750; color: var(--color-text); }
+.export-track { height: 8px; border-radius: 100px; background: color-mix(in srgb, var(--color-text) 12%, transparent); margin: 16px 0 8px; overflow: hidden; }
+.export-fill { height: 100%; width: 0; border-radius: 100px; background: linear-gradient(90deg, var(--color-accent-2, var(--color-accent)), var(--color-accent)); transition: width .2s; }
+.export-pct { font-size: 22px; font-weight: 800; color: var(--color-text); font-variant-numeric: tabular-nums; }
+.export-note { font-size: 12.5px; color: var(--color-text-muted); margin: 8px 0 18px; }
+.export-cancel {
+  border: 1px solid var(--color-divider); background: transparent; color: var(--color-text); cursor: pointer; font-family: inherit;
+  font-size: 13px; font-weight: 650; border-radius: 100px; padding: 8px 20px;
+}
+.export-cancel:hover { background: color-mix(in srgb, var(--color-text) 8%, transparent); }
 
 @media (max-width: 480px) {
   .player { gap: 10px; padding: 9px 12px; }
