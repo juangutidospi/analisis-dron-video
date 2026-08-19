@@ -5,6 +5,7 @@ import { DEFAULT_CFG, GAUGE_KEYS } from '../../../hud.js';
 import { exportHudVideo, exportTrailer } from '../../../hud-export.js';
 import { buildTrailerSegments } from '../../../highlights.js';
 import { generateAmbient, STYLES } from '../../../music-gen.js';
+import { FX, FX_KEYS, fxFilter, grainDataUri } from '../../../video-fx.js';
 import { downloadBlob } from '../../../exports.js';
 import { styles } from './flight-player.css.js';
 
@@ -54,11 +55,19 @@ export class FlightPlayer extends DjiElement {
             <span class="cfg-t">${t('hud.elements')}</span>
             <div class="cfg-chips">${['heading', 'clock', 'minimap', 'progress', 'watermark', 'location'].map((k) => this._chipTpl(k, cfg)).join('')}</div>
           </div>
-          <div class="cfg-sec">
-            <span class="cfg-t">${t('hud.theme')}</span>
-            <div class="cfg-units">
-              <button class="${cfg.theme === 'modern' ? 'on' : ''}" data-th="modern" type="button">${t('hud.theme.modern')}</button>
-              <button class="${cfg.theme === 'aviation' ? 'on' : ''}" data-th="aviation" type="button">${t('hud.theme.aviation')}</button>
+          <div class="cfg-sec cfg-row2">
+            <div class="cfg-col">
+              <span class="cfg-t">${t('hud.theme')}</span>
+              <div class="cfg-units">
+                <button class="${cfg.theme === 'modern' ? 'on' : ''}" data-th="modern" type="button">${t('hud.theme.modern')}</button>
+                <button class="${cfg.theme === 'aviation' ? 'on' : ''}" data-th="aviation" type="button">${t('hud.theme.aviation')}</button>
+              </div>
+            </div>
+            <div class="cfg-col">
+              <span class="cfg-t">${t('fx.label')}</span>
+              <select class="cfg-select" id="fxsel" title="${t('fx.label')}">
+                ${FX_KEYS.map((k) => `<option value="${k}" ${(this._fxKey ?? 'none') === k ? 'selected' : ''}>${t('fx.' + k)}</option>`).join('')}
+              </select>
             </div>
           </div>
           <div class="cfg-sec">
@@ -137,8 +146,32 @@ export class FlightPlayer extends DjiElement {
     if (this._video) {
       if (this._video.parentElement !== pip) pip.appendChild(this._video);
       pip.classList.add('on');
+      this._applyFx();
     } else {
       pip.classList.remove('on');
+    }
+  }
+
+  /** Aplica el efecto a la previsualización: filtro CSS al vídeo + capas de superposición. */
+  _applyFx() {
+    if (this._video) this._video.style.filter = fxFilter(this._fxKey);
+    this._applyFxLayers();
+  }
+
+  /** Reconstruye las capas de superposición (halo, degradado, viñeta, grano) sobre el vídeo. */
+  _applyFxLayers() {
+    const pip = this.$('#pip'), hud = this.$('#hud');
+    if (!pip) return;
+    pip.querySelectorAll('.fx-layer').forEach((e) => e.remove());
+    const layers = FX[this._fxKey || 'none']?.layers || [];
+    for (const L of layers) {
+      const d = document.createElement('div'); d.className = 'fx-layer';
+      d.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
+      if (L.type === 'color') { d.style.background = L.color; d.style.mixBlendMode = L.mode; }
+      else if (L.type === 'gradient') { d.style.background = `linear-gradient(180deg, ${L.stops.map((s) => `${s[1]} ${s[0] * 100}%`).join(', ')})`; d.style.mixBlendMode = L.mode; }
+      else if (L.type === 'vignette') { d.style.background = `radial-gradient(ellipse at center, rgba(0,0,0,0) 45%, rgba(0,0,0,${L.strength}) 100%)`; }
+      else if (L.type === 'grain') { d.style.backgroundImage = `url(${grainDataUri()})`; d.style.backgroundRepeat = 'repeat'; d.style.mixBlendMode = 'overlay'; d.style.opacity = L.alpha; }
+      pip.insertBefore(d, hud); // sobre el vídeo, bajo el HUD
     }
   }
 
@@ -257,6 +290,8 @@ export class FlightPlayer extends DjiElement {
       this._vertical = b.dataset.fmt === 'v';
       this.$$('button[data-fmt]').forEach((x) => x.classList.toggle('on', x === b));
     }));
+    const fxs = this.$('#fxsel');
+    if (fxs) this.on(fxs, 'change', () => { this._fxKey = fxs.value; this._applyFx(); });
   }
 
   /** Presets de transiciones del trailer (undefined = todas al azar). */
@@ -277,7 +312,7 @@ export class FlightPlayer extends DjiElement {
     const ctrl = new AbortController();
     ov.cancelBtn.onclick = () => ctrl.abort();
     try {
-      const blob = await exportTrailer({ video: this._video, draw: this._hud, cfg: this._cfg(), segments: segs, transitions: this._trailerTransitions(), intro: this._intro, musicBuffer: this._musicBuf, musicVolume: this._musicVolEff(), musicStart: this._musicStart || 0, vertical: this._vertical, onProgress: ov.set, signal: ctrl.signal });
+      const blob = await exportTrailer({ video: this._video, draw: this._hud, cfg: this._cfg(), segments: segs, transitions: this._trailerTransitions(), intro: this._intro, musicBuffer: this._musicBuf, musicVolume: this._musicVolEff(), musicStart: this._musicStart || 0, vertical: this._vertical, fx: this._fxKey || 'none', onProgress: ov.set, signal: ctrl.signal });
       downloadBlob('trailer-vuelo.mp4', blob);
       ov.done();
       await new Promise((r) => setTimeout(r, 1400));
@@ -459,7 +494,7 @@ export class FlightPlayer extends DjiElement {
     const ctrl = new AbortController();
     ov.cancelBtn.onclick = () => ctrl.abort();
     try {
-      const blob = await exportHudVideo({ video: this._video, draw: this._hud, cfg: this._cfg(), musicBuffer: this._musicBuf, musicVolume: this._musicVolEff(), musicStart: this._musicStart || 0, vertical: this._vertical, onProgress: ov.set, signal: ctrl.signal });
+      const blob = await exportHudVideo({ video: this._video, draw: this._hud, cfg: this._cfg(), musicBuffer: this._musicBuf, musicVolume: this._musicVolEff(), musicStart: this._musicStart || 0, vertical: this._vertical, fx: this._fxKey || 'none', onProgress: ov.set, signal: ctrl.signal });
       const ext = (blob.type || '').includes('mp4') ? 'mp4' : 'webm';
       downloadBlob('vuelo-hud.' + ext, blob);
       ov.done();
@@ -515,7 +550,8 @@ export class FlightPlayer extends DjiElement {
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    this._hud(ctx, this._clock.t, w, h, this._cfg());
+    // en la previsualización pausada mostramos el HUD completo (la intro solo en reproducción)
+    this._hud(ctx, this._clock.t, w, h, { ...this._cfg(), intro: !!this._clock.playing });
   }
 }
 

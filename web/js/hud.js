@@ -78,47 +78,117 @@ export function createHud(model, opts = {}) {
   const FONT = '-apple-system, "SF Pro Display", system-ui, sans-serif';
   const ls = (ctx, v) => { if ('letterSpacing' in ctx) ctx.letterSpacing = `${v}px`; };
 
-  const metric = (ctx, cx, baseY, U, value, unit, label) => {
-    // etiqueta: fina, con tracking amplio
-    ctx.textAlign = 'center';
-    ctx.font = `600 ${U * 1.05}px ${FONT}`; ls(ctx, U * 0.16);
-    ctx.fillStyle = accent;
-    ctx.fillText(label, cx, baseY - U * 3.15); ls(ctx, 0);
-    // valor + unidad, centrados como grupo, con peso ligero
-    const vFont = `450 ${U * 3.0}px ${FONT}`, uFont = `500 ${U * 1.25}px ${FONT}`;
-    ctx.font = vFont; ls(ctx, -U * 0.04); const vw = ctx.measureText(value).width; ls(ctx, 0);
-    ctx.font = uFont; const uw = ctx.measureText(unit).width;
-    const gap = U * 0.34, startX = cx - (vw + gap + uw) / 2;
-    ctx.textAlign = 'left';
-    ctx.font = vFont; ls(ctx, -U * 0.04); ctx.fillStyle = '#fff'; ctx.fillText(value, startX, baseY); ls(ctx, 0);
-    ctx.font = uFont; ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.fillText(unit, startX + vw + gap, baseY);
+  const hexA = (hex, a) => { const n = parseInt(hex.slice(1), 16); return Number.isNaN(n) ? hex : `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; };
+
+  // valor de cada métrica para la mini-gráfica (sparkline)
+  const METRIC_VAL = {
+    speed: (r) => r.hs,
+    alt: (r) => r.rel,
+    dist: (r) => (r.lat != null ? hav(tk[0], tk[1], r.lat, r.lon) : null),
+    vspeed: (r) => r.vs,
+  };
+
+  // mini-gráfica de la evolución reciente de una métrica (últimos ~22 s)
+  const spark = (ctx, x, y, w, h, tNow, key) => {
+    const fn = METRIC_VAL[key]; if (!fn) return;
+    const t0 = Math.max(0, tNow - 22), pts = [];
+    for (let i = 0; i < S.length; i++) { const st = S[i].t; if (st < t0) continue; if (st > tNow) break; const v = fn(S[i]); if (v != null && isFinite(v)) pts.push([st, v]); }
+    if (pts.length < 2) return;
+    let mn = Infinity, mx = -Infinity; for (const p of pts) { if (p[1] < mn) mn = p[1]; if (p[1] > mx) mx = p[1]; }
+    if (mx - mn < 1e-6) mx = mn + 1; const pad = (mx - mn) * 0.2; mn -= pad; mx += pad;
+    const span = (tNow - t0) || 1, PX = (tt) => x + (tt - t0) / span * w, PY = (v) => y + h - (v - mn) / (mx - mn) * h;
+    ctx.save();
+    ctx.beginPath(); ctx.moveTo(PX(pts[0][0]), y + h);
+    for (const p of pts) ctx.lineTo(PX(p[0]), PY(p[1]));
+    ctx.lineTo(PX(pts[pts.length - 1][0]), y + h); ctx.closePath();
+    const g = ctx.createLinearGradient(0, y, 0, y + h); g.addColorStop(0, hexA(accent, 0.32)); g.addColorStop(1, hexA(accent, 0));
+    ctx.fillStyle = g; ctx.fill();
+    ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(PX(p[0]), PY(p[1])) : ctx.moveTo(PX(p[0]), PY(p[1]))));
+    ctx.strokeStyle = accent; ctx.lineWidth = Math.max(1, h * 0.1); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.shadowColor = hexA(accent, 0.6); ctx.shadowBlur = h * 0.25; ctx.stroke(); ctx.shadowBlur = 0;
+    const last = pts[pts.length - 1];
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(PX(last[0]), PY(last[1]), Math.max(1.5, h * 0.12), 0, 7); ctx.fill();
+    ctx.restore();
+  };
+
+  // panel de cristal (glassmorphism) para el grupo de métricas
+  const glassPanel = (ctx, x, y, w2, h2, r) => {
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,.5)'; ctx.shadowBlur = r * 1.1; ctx.shadowOffsetY = r * 0.25;
+    roundRect(ctx, x, y, w2, h2, r);
+    const g = ctx.createLinearGradient(0, y, 0, y + h2); g.addColorStop(0, 'rgba(22,26,34,.42)'); g.addColorStop(1, 'rgba(8,10,14,.52)');
+    ctx.fillStyle = g; ctx.fill();
+    ctx.shadowColor = 'transparent';
+    roundRect(ctx, x, y, w2, h2, r); ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.lineWidth = 1; ctx.stroke();
+    roundRect(ctx, x, y, w2, h2, r); ctx.clip();
+    const gg = ctx.createLinearGradient(0, y, 0, y + h2 * 0.5); gg.addColorStop(0, 'rgba(255,255,255,.09)'); gg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gg; ctx.fillRect(x, y, w2, h2 * 0.5);
+    ctx.restore();
+  };
+
+  // iconos de línea por métrica
+  const metricIcon = (ctx, key, cx, cy, r, color) => {
+    ctx.save(); ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = Math.max(1, r * 0.18); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    if (key === 'speed') { ctx.beginPath(); ctx.arc(cx, cy + r * 0.18, r * 0.68, Math.PI * 0.88, Math.PI * 2.12); ctx.stroke(); ctx.beginPath(); ctx.moveTo(cx, cy + r * 0.18); ctx.lineTo(cx + r * 0.42, cy - r * 0.28); ctx.stroke(); }
+    else if (key === 'alt') { ctx.beginPath(); ctx.moveTo(cx - r * 0.7, cy + r * 0.5); ctx.lineTo(cx - r * 0.12, cy - r * 0.42); ctx.lineTo(cx + r * 0.18, cy + r * 0.02); ctx.lineTo(cx + r * 0.42, cy - r * 0.24); ctx.lineTo(cx + r * 0.74, cy + r * 0.5); ctx.stroke(); }
+    else if (key === 'dist') { ctx.beginPath(); ctx.moveTo(cx - r * 0.55, cy); ctx.lineTo(cx + r * 0.55, cy); ctx.stroke(); ctx.beginPath(); ctx.arc(cx - r * 0.58, cy, r * 0.2, 0, 7); ctx.fill(); ctx.beginPath(); ctx.arc(cx + r * 0.58, cy, r * 0.2, 0, 7); ctx.fill(); }
+    else if (key === 'vspeed') { ctx.beginPath(); ctx.moveTo(cx, cy - r * 0.62); ctx.lineTo(cx, cy + r * 0.62); ctx.stroke(); ctx.beginPath(); ctx.moveTo(cx - r * 0.3, cy - r * 0.28); ctx.lineTo(cx, cy - r * 0.62); ctx.lineTo(cx + r * 0.3, cy - r * 0.28); ctx.stroke(); ctx.beginPath(); ctx.moveTo(cx - r * 0.3, cy + r * 0.28); ctx.lineTo(cx, cy + r * 0.62); ctx.lineTo(cx + r * 0.3, cy + r * 0.28); ctx.stroke(); }
+    ctx.restore();
+  };
+
+  // celda de métrica premium: icono + etiqueta, valor y mini-gráfica (escala con la altura del panel)
+  const metricCell = (ctx, x, y, cw, ch, m, sep, tNow) => {
+    const cx = x + cw / 2;
+    if (sep) { ctx.strokeStyle = 'rgba(255,255,255,.09)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, y + ch * 0.24); ctx.lineTo(x, y + ch * 0.76); ctx.stroke(); }
+    // etiqueta con icono, centradas como grupo
+    ctx.textBaseline = 'middle'; ctx.font = `700 ${ch * 0.15}px ${FONT}`; ls(ctx, ch * 0.02);
+    const lblW = ctx.measureText(m.label).width, icoR = ch * 0.105, gap = ch * 0.07, grpW = icoR * 2 + gap + lblW, gx = cx - grpW / 2, lblY = y + ch * 0.2;
+    metricIcon(ctx, m.key, gx + icoR, lblY, icoR, accent);
+    ctx.fillStyle = accent; ctx.textAlign = 'left'; ctx.fillText(m.label, gx + icoR * 2 + gap, lblY); ls(ctx, 0);
+    // valor + unidad
+    const vFont = `500 ${ch * 0.42}px ${FONT}`, uFont = `500 ${ch * 0.18}px ${FONT}`, vy = y + ch * 0.62;
+    ctx.font = vFont; ls(ctx, -ch * 0.006); const vw = ctx.measureText(m.value).width; ls(ctx, 0);
+    ctx.font = uFont; const uw = ctx.measureText(m.unit).width, g2 = ch * 0.05, sx = cx - (vw + g2 + uw) / 2;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.font = vFont; ls(ctx, -ch * 0.006); ctx.fillStyle = '#fff'; ctx.fillText(m.value, sx, vy); ls(ctx, 0);
+    ctx.font = uFont; ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.fillText(m.unit, sx + vw + g2, vy);
+    // mini-gráfica en vivo
+    spark(ctx, x + cw * 0.16, y + ch * 0.74, cw * 0.68, ch * 0.18, tNow, m.key);
   };
 
   const compass = (ctx, cx, cy, R, heading) => {
     ctx.save();
     ctx.lineCap = 'round';
-    // disco muy sutil + anillo fino
-    ctx.shadowColor = 'rgba(0,0,0,.3)'; ctx.shadowBlur = R * 0.12;
-    ctx.fillStyle = 'rgba(10,12,18,.26)'; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.fill();
+    // disco de cristal (radial) + doble anillo
+    ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = R * 0.16; ctx.shadowOffsetY = R * 0.04;
+    const disc = ctx.createRadialGradient(cx - R * 0.3, cy - R * 0.35, R * 0.1, cx, cy, R);
+    disc.addColorStop(0, 'rgba(30,36,48,.42)'); disc.addColorStop(1, 'rgba(8,10,16,.5)');
+    ctx.fillStyle = disc; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.fill();
     ctx.shadowColor = 'transparent';
-    ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = R * 0.026; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.stroke();
-    // marcas cada 45° (finas)
-    for (let i = 0; i < 8; i++) {
-      const a = i * Math.PI / 4, major = i % 2 === 0;
-      const r2 = major ? R * 0.8 : R * 0.86;
-      ctx.strokeStyle = `rgba(255,255,255,${major ? .55 : .3})`; ctx.lineWidth = R * (major ? 0.03 : 0.02);
-      ctx.beginPath(); ctx.moveTo(cx + Math.sin(a) * R * 0.9, cy - Math.cos(a) * R * 0.9); ctx.lineTo(cx + Math.sin(a) * r2, cy - Math.cos(a) * r2); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = R * 0.02; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.lineWidth = R * 0.012; ctx.beginPath(); ctx.arc(cx, cy, R * 0.82, 0, 7); ctx.stroke();
+    // marcas cada 30° (mayores en los cardinales)
+    for (let i = 0; i < 12; i++) {
+      const a = i * Math.PI / 6, major = i % 3 === 0, r1 = R * 0.9, r2 = major ? R * 0.74 : R * 0.82;
+      ctx.strokeStyle = `rgba(255,255,255,${major ? .6 : .28})`; ctx.lineWidth = R * (major ? 0.028 : 0.016);
+      ctx.beginPath(); ctx.moveTo(cx + Math.sin(a) * r1, cy - Math.cos(a) * r1); ctx.lineTo(cx + Math.sin(a) * r2, cy - Math.cos(a) * r2); ctx.stroke();
     }
-    // aguja fina bicolor (cola blanca, punta de acento)
+    // cardinales
+    ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `700 ${R * 0.2}px ${FONT}`;
+    ctx.fillStyle = accent; ctx.fillText('N', cx, cy - R * 0.6);
+    ctx.fillStyle = 'rgba(255,255,255,.75)';
+    ctx.fillText('S', cx, cy + R * 0.6); ctx.fillText('E', cx + R * 0.6, cy); ctx.fillText('O', cx - R * 0.6, cy);
+    // aguja bicolor con brillo
     const a = (heading || 0) * Math.PI / 180, sn = Math.sin(a), cs = Math.cos(a);
-    ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = R * 0.055;
-    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx - sn * R * 0.4, cy + cs * R * 0.4); ctx.stroke();
-    ctx.strokeStyle = accent; ctx.lineWidth = R * 0.065;
-    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + sn * R * 0.66, cy - cs * R * 0.66); ctx.stroke();
-    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx, cy, R * 0.055, 0, 7); ctx.fill();
-    // N (fina)
-    ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = `600 ${R * 0.32}px ${FONT}`; ctx.fillText('N', cx, cy - R * 0.68);
+    ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = R * 0.05;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx - sn * R * 0.36, cy + cs * R * 0.36); ctx.stroke();
+    ctx.shadowColor = hexA(accent, 0.7); ctx.shadowBlur = R * 0.14;
+    ctx.strokeStyle = accent; ctx.lineWidth = R * 0.07;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + sn * R * 0.46, cy - cs * R * 0.46); ctx.stroke();
+    ctx.shadowColor = 'transparent';
+    const hub = ctx.createRadialGradient(cx - R * 0.02, cy - R * 0.02, R * 0.005, cx, cy, R * 0.09);
+    hub.addColorStop(0, '#fff'); hub.addColorStop(1, hexA(accent, 0.9));
+    ctx.fillStyle = hub; ctx.beginPath(); ctx.arc(cx, cy, R * 0.07, 0, 7); ctx.fill();
     ctx.restore();
   };
 
@@ -353,8 +423,8 @@ export function createHud(model, opts = {}) {
     ctx.save();
     ctx.textBaseline = 'alphabetic';
 
-    // intro animada: los elementos aparecen (fade + subida) en el primer instante
-    const intro = 1 - (1 - Math.min(1, Math.max(0, t / 0.7))) ** 3; // easeOutCubic 0→1 en 0,7 s
+    // intro animada (fade + subida) en el primer instante; desactivable con cfg.intro=false
+    const intro = cfg.intro === false ? 1 : 1 - (1 - Math.min(1, Math.max(0, t / 0.7))) ** 3;
     if (intro < 1) { ctx.globalAlpha = intro; ctx.translate(0, (1 - intro) * U * 1.4); }
 
     // scrims sutiles (arriba y abajo) para legibilidad, sin sombra
@@ -371,21 +441,26 @@ export function createHud(model, opts = {}) {
     if (cfg.theme === 'aviation') { drawAviation(ctx, s, w, h, U, un); } else {
     // métricas abajo (según los gauges activos y las unidades)
     const metrics = [];
-    if (gz.speed) metrics.push([`${Math.round(un.spd(s.hs || 0))}`, un.spdU, 'VEL']);
-    if (gz.alt) metrics.push([`${Math.round(un.len(s.rel || 0))}`, un.lenU, 'ALT']);
-    if (gz.dist) metrics.push([`${Math.round(un.len(s.far || 0))}`, un.lenU, 'DIST']);
-    if (gz.vspeed) metrics.push([`${un.vs(s.vs || 0).toFixed(1)}`, un.vsU, 'VERT']);
-    const baseY = h - U * 1.8;
-    metrics.forEach((m, i) => metric(ctx, w * ((i + 0.5) / metrics.length), baseY, U, m[0], m[1], m[2]));
+    if (gz.speed) metrics.push({ value: `${Math.round(un.spd(s.hs || 0))}`, unit: un.spdU, label: 'VEL', key: 'speed' });
+    if (gz.alt) metrics.push({ value: `${Math.round(un.len(s.rel || 0))}`, unit: un.lenU, label: 'ALT', key: 'alt' });
+    if (gz.dist) metrics.push({ value: `${Math.round(un.len(s.far || 0))}`, unit: un.lenU, label: 'DIST', key: 'dist' });
+    if (gz.vspeed) metrics.push({ value: `${un.vs(s.vs || 0).toFixed(1)}`, unit: un.vsU, label: 'VERT', key: 'vspeed' });
+    if (metrics.length) {
+      const cellW = Math.min(w * 0.56 / metrics.length, U * 4.9), panelW = cellW * metrics.length, panelH = U * 2.95;
+      const px = (w - panelW) / 2, py = h - panelH - U * 0.7;
+      ctx.shadowColor = 'transparent';
+      glassPanel(ctx, px, py, panelW, panelH, U * 0.75);
+      metrics.forEach((m, i) => metricCell(ctx, px + cellW * i, py, cellW, panelH, m, i > 0, t));
+    }
 
     // brújula arriba derecha (más fina y compacta)
     if (gz.heading) {
-      const R = Math.min(w, h) * 0.108;
-      compass(ctx, w - R - U * 1.5, R + U * 1.4, R, s.heading);
+      const R = Math.min(w, h) * 0.078;
+      compass(ctx, w - R - U * 1.3, R + U * 1.2, R, s.heading);
       if (s.heading != null) {
         ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-        ctx.font = `600 ${U * 1.1}px ${FONT}`; ls(ctx, U * 0.06);
-        ctx.fillText(`${CARD[Math.round(s.heading / 45) % 8]} ${Math.round(s.heading)}°`, w - R - U * 1.5, R * 2 + U * 1.6); ls(ctx, 0);
+        ctx.font = `600 ${U * 0.95}px ${FONT}`; ls(ctx, U * 0.05);
+        ctx.fillText(`${CARD[Math.round(s.heading / 45) % 8]} ${Math.round(s.heading)}°`, w - R - U * 1.4, R * 2 + U * 1.45); ls(ctx, 0);
       }
     }
     }
@@ -394,18 +469,18 @@ export function createHud(model, opts = {}) {
     if (gz.clock) {
       ctx.textBaseline = 'middle';
       const tm = `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
-      ctx.font = `550 ${U * 1.35}px ${FONT}`; ls(ctx, U * 0.02);
+      ctx.font = `550 ${U * 1.15}px ${FONT}`; ls(ctx, U * 0.02);
       const tw = ctx.measureText(tm).width;
-      ctx.fillStyle = 'rgba(10,12,18,.32)'; roundRect(ctx, U * 1.3, U * 1.15, tw + U * 1.7, U * 2.2, U * 1.1); ctx.fill();
+      ctx.fillStyle = 'rgba(10,12,18,.32)'; roundRect(ctx, U * 1.3, U * 1.15, tw + U * 1.5, U * 1.9, U * 0.95); ctx.fill();
       ctx.fillStyle = 'rgba(255,255,255,.96)'; ctx.textAlign = 'left';
-      ctx.fillText(tm, U * 2.15, U * 2.3); ls(ctx, 0);
+      ctx.fillText(tm, U * 2.05, U * 2.1); ls(ctx, 0);
     }
 
     // mini-mapa (arriba izquierda, bajo el reloj)
     if (gz.minimap) {
       ctx.shadowColor = 'transparent';
-      const mw = Math.min(w, h) * 0.3, mh = mw * 0.64;
-      minimap(ctx, U * 1.3, gz.clock ? U * 4.4 : U * 1.3, mw, mh, s.lat, s.lon);
+      const mw = Math.min(w, h) * 0.21, mh = mw * 0.64;
+      minimap(ctx, U * 1.3, gz.clock ? U * 4.1 : U * 1.3, mw, mh, s.lat, s.lon);
     }
 
     // barra de progreso (borde inferior)

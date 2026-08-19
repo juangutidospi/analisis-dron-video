@@ -564,6 +564,11 @@ const styles = css`
 }
 .pip.big .expand { width: 38px; height: 38px; font-size: 18px; top: 12px; right: 12px; }
 @keyframes bigin { from { opacity: .4; transform: translateX(-50%) scale(.9); } }
+/* en vertical (móvil) el vídeo 16:9 es bajo: centrarlo en pantalla en vez de anclarlo abajo */
+@media (orientation: portrait) {
+  .pip.big { top: 50%; bottom: auto; transform: translate(-50%, -50%); animation-name: bigin-v; }
+}
+@keyframes bigin-v { from { opacity: .4; transform: translate(-50%, -50%) scale(.9); } }
 @media (prefers-reduced-motion: reduce) { .pip.big { animation: none; } }
 .player {
   position: relative; z-index: 6;
@@ -620,15 +625,18 @@ const styles = css`
 /* panel de ajustes del HUD (sobre la barra) */
 .cfgpanel {
   position: relative; z-index: 7; /* por encima del backdrop del modo grande */
-  pointer-events: auto; width: min(540px, 100%); align-self: center; display: flex; flex-direction: column; gap: 0;
-  background: color-mix(in srgb, var(--color-surface-solid) 94%, transparent); border: 1px solid var(--color-divider);
-  border-radius: 20px; padding: 8px; box-shadow: var(--shadow-lg); backdrop-filter: blur(22px) saturate(1.4); -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  pointer-events: auto; width: min(560px, 100%); align-self: center; display: flex; flex-direction: column; gap: 0;
+  background: color-mix(in srgb, var(--color-surface-solid) 68%, transparent); border: 1px solid color-mix(in srgb, var(--color-text) 14%, transparent);
+  border-radius: 20px; padding: 6px; box-shadow: var(--shadow-lg); backdrop-filter: blur(32px) saturate(1.7); -webkit-backdrop-filter: blur(32px) saturate(1.7);
   animation: rise .28s cubic-bezier(.22,1,.36,1) both;
 }
 .cfgpanel[hidden] { display: none; }
-.cfg-sec { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 9px 10px; }
+.cfg-sec { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 6px 10px; }
+.cfg-row2 { justify-content: space-between; gap: 18px; }
+.cfg-col { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .cfg-sec + .cfg-sec, .cfg-foot { border-top: 1px solid color-mix(in srgb, var(--color-divider) 55%, transparent); }
 .cfg-t { font-size: 10px; font-weight: 700; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: .1em; width: 62px; flex: none; }
+.cfg-col .cfg-t { width: auto; }
 .cfg-chips { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
 .cfg-chip {
   display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 550; color: var(--color-text-muted); font-family: inherit; cursor: pointer;
@@ -683,7 +691,7 @@ const styles = css`
 }
 .cfg-wave-foot { display: flex; align-items: center; gap: 8px; }
 .cfg-wave-foot .cfg-ctrl-v { min-width: 0; }
-.cfg-foot { display: flex; align-items: center; gap: 10px; padding: 10px; flex-wrap: wrap; }
+.cfg-foot { display: flex; align-items: center; gap: 9px; padding: 9px 10px; flex-wrap: wrap; }
 .cfg-units { display: flex; gap: 2px; background: color-mix(in srgb, var(--color-text) 8%, transparent); border-radius: 10px; padding: 3px; flex: none; }
 .cfg-units button {
   font-size: 12.5px; font-weight: 600; color: var(--color-text-muted); border: none; background: transparent; border-radius: 7px;
@@ -749,6 +757,7 @@ const { DEFAULT_CFG, GAUGE_KEYS } = __req("js/hud.js");
 const { exportHudVideo, exportTrailer } = __req("js/hud-export.js");
 const { buildTrailerSegments } = __req("js/highlights.js");
 const { generateAmbient, STYLES } = __req("js/music-gen.js");
+const { FX, FX_KEYS, fxFilter, grainDataUri } = __req("js/video-fx.js");
 const { downloadBlob } = __req("js/exports.js");
 const { styles } = __req("js/components/ui/flight-player/flight-player.css.js");
 
@@ -798,11 +807,19 @@ class FlightPlayer extends DjiElement {
             <span class="cfg-t">${t('hud.elements')}</span>
             <div class="cfg-chips">${['heading', 'clock', 'minimap', 'progress', 'watermark', 'location'].map((k) => this._chipTpl(k, cfg)).join('')}</div>
           </div>
-          <div class="cfg-sec">
-            <span class="cfg-t">${t('hud.theme')}</span>
-            <div class="cfg-units">
-              <button class="${cfg.theme === 'modern' ? 'on' : ''}" data-th="modern" type="button">${t('hud.theme.modern')}</button>
-              <button class="${cfg.theme === 'aviation' ? 'on' : ''}" data-th="aviation" type="button">${t('hud.theme.aviation')}</button>
+          <div class="cfg-sec cfg-row2">
+            <div class="cfg-col">
+              <span class="cfg-t">${t('hud.theme')}</span>
+              <div class="cfg-units">
+                <button class="${cfg.theme === 'modern' ? 'on' : ''}" data-th="modern" type="button">${t('hud.theme.modern')}</button>
+                <button class="${cfg.theme === 'aviation' ? 'on' : ''}" data-th="aviation" type="button">${t('hud.theme.aviation')}</button>
+              </div>
+            </div>
+            <div class="cfg-col">
+              <span class="cfg-t">${t('fx.label')}</span>
+              <select class="cfg-select" id="fxsel" title="${t('fx.label')}">
+                ${FX_KEYS.map((k) => `<option value="${k}" ${(this._fxKey ?? 'none') === k ? 'selected' : ''}>${t('fx.' + k)}</option>`).join('')}
+              </select>
             </div>
           </div>
           <div class="cfg-sec">
@@ -881,8 +898,32 @@ class FlightPlayer extends DjiElement {
     if (this._video) {
       if (this._video.parentElement !== pip) pip.appendChild(this._video);
       pip.classList.add('on');
+      this._applyFx();
     } else {
       pip.classList.remove('on');
+    }
+  }
+
+  /** Aplica el efecto a la previsualización: filtro CSS al vídeo + capas de superposición. */
+  _applyFx() {
+    if (this._video) this._video.style.filter = fxFilter(this._fxKey);
+    this._applyFxLayers();
+  }
+
+  /** Reconstruye las capas de superposición (halo, degradado, viñeta, grano) sobre el vídeo. */
+  _applyFxLayers() {
+    const pip = this.$('#pip'), hud = this.$('#hud');
+    if (!pip) return;
+    pip.querySelectorAll('.fx-layer').forEach((e) => e.remove());
+    const layers = FX[this._fxKey || 'none']?.layers || [];
+    for (const L of layers) {
+      const d = document.createElement('div'); d.className = 'fx-layer';
+      d.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
+      if (L.type === 'color') { d.style.background = L.color; d.style.mixBlendMode = L.mode; }
+      else if (L.type === 'gradient') { d.style.background = `linear-gradient(180deg, ${L.stops.map((s) => `${s[1]} ${s[0] * 100}%`).join(', ')})`; d.style.mixBlendMode = L.mode; }
+      else if (L.type === 'vignette') { d.style.background = `radial-gradient(ellipse at center, rgba(0,0,0,0) 45%, rgba(0,0,0,${L.strength}) 100%)`; }
+      else if (L.type === 'grain') { d.style.backgroundImage = `url(${grainDataUri()})`; d.style.backgroundRepeat = 'repeat'; d.style.mixBlendMode = 'overlay'; d.style.opacity = L.alpha; }
+      pip.insertBefore(d, hud); // sobre el vídeo, bajo el HUD
     }
   }
 
@@ -1001,6 +1042,8 @@ class FlightPlayer extends DjiElement {
       this._vertical = b.dataset.fmt === 'v';
       this.$$('button[data-fmt]').forEach((x) => x.classList.toggle('on', x === b));
     }));
+    const fxs = this.$('#fxsel');
+    if (fxs) this.on(fxs, 'change', () => { this._fxKey = fxs.value; this._applyFx(); });
   }
 
   /** Presets de transiciones del trailer (undefined = todas al azar). */
@@ -1021,7 +1064,7 @@ class FlightPlayer extends DjiElement {
     const ctrl = new AbortController();
     ov.cancelBtn.onclick = () => ctrl.abort();
     try {
-      const blob = await exportTrailer({ video: this._video, draw: this._hud, cfg: this._cfg(), segments: segs, transitions: this._trailerTransitions(), intro: this._intro, musicBuffer: this._musicBuf, musicVolume: this._musicVolEff(), musicStart: this._musicStart || 0, vertical: this._vertical, onProgress: ov.set, signal: ctrl.signal });
+      const blob = await exportTrailer({ video: this._video, draw: this._hud, cfg: this._cfg(), segments: segs, transitions: this._trailerTransitions(), intro: this._intro, musicBuffer: this._musicBuf, musicVolume: this._musicVolEff(), musicStart: this._musicStart || 0, vertical: this._vertical, fx: this._fxKey || 'none', onProgress: ov.set, signal: ctrl.signal });
       downloadBlob('trailer-vuelo.mp4', blob);
       ov.done();
       await new Promise((r) => setTimeout(r, 1400));
@@ -1203,7 +1246,7 @@ class FlightPlayer extends DjiElement {
     const ctrl = new AbortController();
     ov.cancelBtn.onclick = () => ctrl.abort();
     try {
-      const blob = await exportHudVideo({ video: this._video, draw: this._hud, cfg: this._cfg(), musicBuffer: this._musicBuf, musicVolume: this._musicVolEff(), musicStart: this._musicStart || 0, vertical: this._vertical, onProgress: ov.set, signal: ctrl.signal });
+      const blob = await exportHudVideo({ video: this._video, draw: this._hud, cfg: this._cfg(), musicBuffer: this._musicBuf, musicVolume: this._musicVolEff(), musicStart: this._musicStart || 0, vertical: this._vertical, fx: this._fxKey || 'none', onProgress: ov.set, signal: ctrl.signal });
       const ext = (blob.type || '').includes('mp4') ? 'mp4' : 'webm';
       downloadBlob('vuelo-hud.' + ext, blob);
       ov.done();
@@ -1259,7 +1302,8 @@ class FlightPlayer extends DjiElement {
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    this._hud(ctx, this._clock.t, w, h, this._cfg());
+    // en la previsualización pausada mostramos el HUD completo (la intro solo en reproducción)
+    this._hud(ctx, this._clock.t, w, h, { ...this._cfg(), intro: !!this._clock.playing });
   }
 }
 
@@ -4007,6 +4051,7 @@ __m["js/hud-export.js"] = function (__x, __req) {
 const { createMp4 } = __req("js/mp4-muxer.js");
 const { trailerFade } = __req("js/highlights.js");
 const { drawTitleCard } = __req("js/title-card.js");
+const { fxFilter, paintFxLayers } = __req("js/video-fx.js");
 
 /** Dimensiones de salida (pares): 16:9 escalado a maxHeight, o 9:16 vertical para redes. */
 function outDims(video, maxHeight, vertical) {
@@ -4016,10 +4061,14 @@ function outDims(video, maxHeight, vertical) {
   return { W: Math.round(vw * scale / 2) * 2, H: Math.round(vh * scale / 2) * 2 };
 }
 
-/** Pinta el vídeo llenando el lienzo: completo en 16:9, con recorte central (cover) en vertical. */
-function paintVideo(ctx, video, W, H, vertical) {
+/** Pinta el vídeo (16:9 o recorte central en vertical) con el efecto: filtro CSS + segunda capa. */
+function paintVideo(ctx, video, W, H, vertical, fx) {
+  const f = fxFilter(fx);
+  if (f) ctx.filter = f;
   if (vertical) { const dw = H * (video.videoWidth / video.videoHeight); ctx.drawImage(video, (W - dw) / 2, 0, dw, H); }
   else ctx.drawImage(video, 0, 0, W, H);
+  if (f) ctx.filter = 'none';
+  paintFxLayers(ctx, W, H, fx);
 }
 
 /** Elige el mejor método disponible. */
@@ -4032,7 +4081,7 @@ async function exportHudVideo(opts) {
 }
 
 /** WebCodecs → MP4 estándar (H.264 + AAC). Compatible con iPhone/QuickTime. */
-async function exportViaWebCodecs({ video, draw, cfg, musicBuffer, musicVolume = 1, musicStart = 0, vertical = false, maxHeight = 1080, onProgress, signal }) {
+async function exportViaWebCodecs({ video, draw, cfg, musicBuffer, musicVolume = 1, musicStart = 0, vertical = false, fx = '', maxHeight = 1080, onProgress, signal }) {
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) throw new Error('El vídeo aún no está listo.');
   const { W, H } = outDims(video, maxHeight, vertical);
@@ -4064,7 +4113,7 @@ async function exportViaWebCodecs({ video, draw, cfg, musicBuffer, musicVolume =
   await new Promise((resolve) => {
     const onFrame = () => {
       if (!running || encErr) { resolve(); return; }
-      paintVideo(ctx, video, W, H, vertical);
+      paintVideo(ctx, video, W, H, vertical, fx);
       draw(ctx, video.currentTime, W, H, cfg);
       const frame = new VideoFrame(canvas, { timestamp: Math.round(video.currentTime * 1e6) });
       encoder.encode(frame, { keyFrame: idx % 60 === 0 });
@@ -4233,7 +4282,7 @@ function applyTransition(ctx, src, W, H, effect, t, entering) {
  * la duración total del trailer.
  * @returns {Promise<Blob>}
  */
-async function exportTrailer({ video, draw, cfg, segments, transitions, xf = 0.4, intro, introDur = 3.8, musicBuffer, musicVolume = 1, musicStart = 0, vertical = false, maxHeight = 1080, onProgress, signal }) {
+async function exportTrailer({ video, draw, cfg, segments, transitions, xf = 0.4, intro, introDur = 3.8, musicBuffer, musicVolume = 1, musicStart = 0, vertical = false, fx = '', maxHeight = 1080, onProgress, signal }) {
   if (!('VideoEncoder' in window) || !('VideoFrame' in window)) throw new Error('Tu navegador no soporta la generación del trailer.');
   if (!segments?.length) throw new Error('No hay momentos para el trailer.');
   const vw = video.videoWidth, vh = video.videoHeight;
@@ -4294,9 +4343,9 @@ async function exportTrailer({ video, draw, cfg, segments, transitions, xf = 0.4
         if (ct >= seg.end - 0.001) { resolve(); return; }
         const t = trailerFade(ct, seg.start, seg.end, XF);
         if (t <= 0) {
-          paintVideo(ctx, video, W, H, vertical); draw(ctx, ct, W, H, cfg);
+          paintVideo(ctx, video, W, H, vertical, fx); draw(ctx, ct, W, H, cfg);
         } else {
-          paintVideo(tctx, video, W, H, vertical); draw(tctx, ct, W, H, cfg);
+          paintVideo(tctx, video, W, H, vertical, fx); draw(tctx, ct, W, H, cfg);
           const entering = (ct - seg.start) <= (seg.end - ct);
           applyTransition(ctx, tmp, W, H, entering ? entryFx : exitFx, t, entering);
         }
@@ -4341,7 +4390,7 @@ function seek(video, t) {
  * @param {AbortSignal} [o.signal]
  * @returns {Promise<Blob>}
  */
-async function exportViaMediaRecorder({ video, draw, cfg, musicBuffer, musicVolume = 1, musicStart = 0, vertical = false, maxHeight = 1080, fps = 30, onProgress, signal }) {
+async function exportViaMediaRecorder({ video, draw, cfg, musicBuffer, musicVolume = 1, musicStart = 0, vertical = false, fx = '', maxHeight = 1080, fps = 30, onProgress, signal }) {
   if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) {
     throw new Error('Tu navegador no soporta la grabación de canvas.');
   }
@@ -4409,7 +4458,7 @@ async function exportViaMediaRecorder({ video, draw, cfg, musicBuffer, musicVolu
   if (signal) signal.addEventListener('abort', () => { cancelled = true; finish(); }, { once: true });
 
   const drawFrame = () => {
-    paintVideo(ctx, video, W, H, vertical);
+    paintVideo(ctx, video, W, H, vertical, fx);
     draw(ctx, video.currentTime, W, H, cfg);
     onProgress?.(dur ? Math.min(1, video.currentTime / dur) : 0);
   };
@@ -4515,47 +4564,117 @@ function createHud(model, opts = {}) {
   const FONT = '-apple-system, "SF Pro Display", system-ui, sans-serif';
   const ls = (ctx, v) => { if ('letterSpacing' in ctx) ctx.letterSpacing = `${v}px`; };
 
-  const metric = (ctx, cx, baseY, U, value, unit, label) => {
-    // etiqueta: fina, con tracking amplio
-    ctx.textAlign = 'center';
-    ctx.font = `600 ${U * 1.05}px ${FONT}`; ls(ctx, U * 0.16);
-    ctx.fillStyle = accent;
-    ctx.fillText(label, cx, baseY - U * 3.15); ls(ctx, 0);
-    // valor + unidad, centrados como grupo, con peso ligero
-    const vFont = `450 ${U * 3.0}px ${FONT}`, uFont = `500 ${U * 1.25}px ${FONT}`;
-    ctx.font = vFont; ls(ctx, -U * 0.04); const vw = ctx.measureText(value).width; ls(ctx, 0);
-    ctx.font = uFont; const uw = ctx.measureText(unit).width;
-    const gap = U * 0.34, startX = cx - (vw + gap + uw) / 2;
-    ctx.textAlign = 'left';
-    ctx.font = vFont; ls(ctx, -U * 0.04); ctx.fillStyle = '#fff'; ctx.fillText(value, startX, baseY); ls(ctx, 0);
-    ctx.font = uFont; ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.fillText(unit, startX + vw + gap, baseY);
+  const hexA = (hex, a) => { const n = parseInt(hex.slice(1), 16); return Number.isNaN(n) ? hex : `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; };
+
+  // valor de cada métrica para la mini-gráfica (sparkline)
+  const METRIC_VAL = {
+    speed: (r) => r.hs,
+    alt: (r) => r.rel,
+    dist: (r) => (r.lat != null ? hav(tk[0], tk[1], r.lat, r.lon) : null),
+    vspeed: (r) => r.vs,
+  };
+
+  // mini-gráfica de la evolución reciente de una métrica (últimos ~22 s)
+  const spark = (ctx, x, y, w, h, tNow, key) => {
+    const fn = METRIC_VAL[key]; if (!fn) return;
+    const t0 = Math.max(0, tNow - 22), pts = [];
+    for (let i = 0; i < S.length; i++) { const st = S[i].t; if (st < t0) continue; if (st > tNow) break; const v = fn(S[i]); if (v != null && isFinite(v)) pts.push([st, v]); }
+    if (pts.length < 2) return;
+    let mn = Infinity, mx = -Infinity; for (const p of pts) { if (p[1] < mn) mn = p[1]; if (p[1] > mx) mx = p[1]; }
+    if (mx - mn < 1e-6) mx = mn + 1; const pad = (mx - mn) * 0.2; mn -= pad; mx += pad;
+    const span = (tNow - t0) || 1, PX = (tt) => x + (tt - t0) / span * w, PY = (v) => y + h - (v - mn) / (mx - mn) * h;
+    ctx.save();
+    ctx.beginPath(); ctx.moveTo(PX(pts[0][0]), y + h);
+    for (const p of pts) ctx.lineTo(PX(p[0]), PY(p[1]));
+    ctx.lineTo(PX(pts[pts.length - 1][0]), y + h); ctx.closePath();
+    const g = ctx.createLinearGradient(0, y, 0, y + h); g.addColorStop(0, hexA(accent, 0.32)); g.addColorStop(1, hexA(accent, 0));
+    ctx.fillStyle = g; ctx.fill();
+    ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(PX(p[0]), PY(p[1])) : ctx.moveTo(PX(p[0]), PY(p[1]))));
+    ctx.strokeStyle = accent; ctx.lineWidth = Math.max(1, h * 0.1); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.shadowColor = hexA(accent, 0.6); ctx.shadowBlur = h * 0.25; ctx.stroke(); ctx.shadowBlur = 0;
+    const last = pts[pts.length - 1];
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(PX(last[0]), PY(last[1]), Math.max(1.5, h * 0.12), 0, 7); ctx.fill();
+    ctx.restore();
+  };
+
+  // panel de cristal (glassmorphism) para el grupo de métricas
+  const glassPanel = (ctx, x, y, w2, h2, r) => {
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,.5)'; ctx.shadowBlur = r * 1.1; ctx.shadowOffsetY = r * 0.25;
+    roundRect(ctx, x, y, w2, h2, r);
+    const g = ctx.createLinearGradient(0, y, 0, y + h2); g.addColorStop(0, 'rgba(22,26,34,.42)'); g.addColorStop(1, 'rgba(8,10,14,.52)');
+    ctx.fillStyle = g; ctx.fill();
+    ctx.shadowColor = 'transparent';
+    roundRect(ctx, x, y, w2, h2, r); ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.lineWidth = 1; ctx.stroke();
+    roundRect(ctx, x, y, w2, h2, r); ctx.clip();
+    const gg = ctx.createLinearGradient(0, y, 0, y + h2 * 0.5); gg.addColorStop(0, 'rgba(255,255,255,.09)'); gg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gg; ctx.fillRect(x, y, w2, h2 * 0.5);
+    ctx.restore();
+  };
+
+  // iconos de línea por métrica
+  const metricIcon = (ctx, key, cx, cy, r, color) => {
+    ctx.save(); ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = Math.max(1, r * 0.18); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    if (key === 'speed') { ctx.beginPath(); ctx.arc(cx, cy + r * 0.18, r * 0.68, Math.PI * 0.88, Math.PI * 2.12); ctx.stroke(); ctx.beginPath(); ctx.moveTo(cx, cy + r * 0.18); ctx.lineTo(cx + r * 0.42, cy - r * 0.28); ctx.stroke(); }
+    else if (key === 'alt') { ctx.beginPath(); ctx.moveTo(cx - r * 0.7, cy + r * 0.5); ctx.lineTo(cx - r * 0.12, cy - r * 0.42); ctx.lineTo(cx + r * 0.18, cy + r * 0.02); ctx.lineTo(cx + r * 0.42, cy - r * 0.24); ctx.lineTo(cx + r * 0.74, cy + r * 0.5); ctx.stroke(); }
+    else if (key === 'dist') { ctx.beginPath(); ctx.moveTo(cx - r * 0.55, cy); ctx.lineTo(cx + r * 0.55, cy); ctx.stroke(); ctx.beginPath(); ctx.arc(cx - r * 0.58, cy, r * 0.2, 0, 7); ctx.fill(); ctx.beginPath(); ctx.arc(cx + r * 0.58, cy, r * 0.2, 0, 7); ctx.fill(); }
+    else if (key === 'vspeed') { ctx.beginPath(); ctx.moveTo(cx, cy - r * 0.62); ctx.lineTo(cx, cy + r * 0.62); ctx.stroke(); ctx.beginPath(); ctx.moveTo(cx - r * 0.3, cy - r * 0.28); ctx.lineTo(cx, cy - r * 0.62); ctx.lineTo(cx + r * 0.3, cy - r * 0.28); ctx.stroke(); ctx.beginPath(); ctx.moveTo(cx - r * 0.3, cy + r * 0.28); ctx.lineTo(cx, cy + r * 0.62); ctx.lineTo(cx + r * 0.3, cy + r * 0.28); ctx.stroke(); }
+    ctx.restore();
+  };
+
+  // celda de métrica premium: icono + etiqueta, valor y mini-gráfica (escala con la altura del panel)
+  const metricCell = (ctx, x, y, cw, ch, m, sep, tNow) => {
+    const cx = x + cw / 2;
+    if (sep) { ctx.strokeStyle = 'rgba(255,255,255,.09)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, y + ch * 0.24); ctx.lineTo(x, y + ch * 0.76); ctx.stroke(); }
+    // etiqueta con icono, centradas como grupo
+    ctx.textBaseline = 'middle'; ctx.font = `700 ${ch * 0.15}px ${FONT}`; ls(ctx, ch * 0.02);
+    const lblW = ctx.measureText(m.label).width, icoR = ch * 0.105, gap = ch * 0.07, grpW = icoR * 2 + gap + lblW, gx = cx - grpW / 2, lblY = y + ch * 0.2;
+    metricIcon(ctx, m.key, gx + icoR, lblY, icoR, accent);
+    ctx.fillStyle = accent; ctx.textAlign = 'left'; ctx.fillText(m.label, gx + icoR * 2 + gap, lblY); ls(ctx, 0);
+    // valor + unidad
+    const vFont = `500 ${ch * 0.42}px ${FONT}`, uFont = `500 ${ch * 0.18}px ${FONT}`, vy = y + ch * 0.62;
+    ctx.font = vFont; ls(ctx, -ch * 0.006); const vw = ctx.measureText(m.value).width; ls(ctx, 0);
+    ctx.font = uFont; const uw = ctx.measureText(m.unit).width, g2 = ch * 0.05, sx = cx - (vw + g2 + uw) / 2;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.font = vFont; ls(ctx, -ch * 0.006); ctx.fillStyle = '#fff'; ctx.fillText(m.value, sx, vy); ls(ctx, 0);
+    ctx.font = uFont; ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.fillText(m.unit, sx + vw + g2, vy);
+    // mini-gráfica en vivo
+    spark(ctx, x + cw * 0.16, y + ch * 0.74, cw * 0.68, ch * 0.18, tNow, m.key);
   };
 
   const compass = (ctx, cx, cy, R, heading) => {
     ctx.save();
     ctx.lineCap = 'round';
-    // disco muy sutil + anillo fino
-    ctx.shadowColor = 'rgba(0,0,0,.3)'; ctx.shadowBlur = R * 0.12;
-    ctx.fillStyle = 'rgba(10,12,18,.26)'; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.fill();
+    // disco de cristal (radial) + doble anillo
+    ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = R * 0.16; ctx.shadowOffsetY = R * 0.04;
+    const disc = ctx.createRadialGradient(cx - R * 0.3, cy - R * 0.35, R * 0.1, cx, cy, R);
+    disc.addColorStop(0, 'rgba(30,36,48,.42)'); disc.addColorStop(1, 'rgba(8,10,16,.5)');
+    ctx.fillStyle = disc; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.fill();
     ctx.shadowColor = 'transparent';
-    ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = R * 0.026; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.stroke();
-    // marcas cada 45° (finas)
-    for (let i = 0; i < 8; i++) {
-      const a = i * Math.PI / 4, major = i % 2 === 0;
-      const r2 = major ? R * 0.8 : R * 0.86;
-      ctx.strokeStyle = `rgba(255,255,255,${major ? .55 : .3})`; ctx.lineWidth = R * (major ? 0.03 : 0.02);
-      ctx.beginPath(); ctx.moveTo(cx + Math.sin(a) * R * 0.9, cy - Math.cos(a) * R * 0.9); ctx.lineTo(cx + Math.sin(a) * r2, cy - Math.cos(a) * r2); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = R * 0.02; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.lineWidth = R * 0.012; ctx.beginPath(); ctx.arc(cx, cy, R * 0.82, 0, 7); ctx.stroke();
+    // marcas cada 30° (mayores en los cardinales)
+    for (let i = 0; i < 12; i++) {
+      const a = i * Math.PI / 6, major = i % 3 === 0, r1 = R * 0.9, r2 = major ? R * 0.74 : R * 0.82;
+      ctx.strokeStyle = `rgba(255,255,255,${major ? .6 : .28})`; ctx.lineWidth = R * (major ? 0.028 : 0.016);
+      ctx.beginPath(); ctx.moveTo(cx + Math.sin(a) * r1, cy - Math.cos(a) * r1); ctx.lineTo(cx + Math.sin(a) * r2, cy - Math.cos(a) * r2); ctx.stroke();
     }
-    // aguja fina bicolor (cola blanca, punta de acento)
+    // cardinales
+    ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `700 ${R * 0.2}px ${FONT}`;
+    ctx.fillStyle = accent; ctx.fillText('N', cx, cy - R * 0.6);
+    ctx.fillStyle = 'rgba(255,255,255,.75)';
+    ctx.fillText('S', cx, cy + R * 0.6); ctx.fillText('E', cx + R * 0.6, cy); ctx.fillText('O', cx - R * 0.6, cy);
+    // aguja bicolor con brillo
     const a = (heading || 0) * Math.PI / 180, sn = Math.sin(a), cs = Math.cos(a);
-    ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = R * 0.055;
-    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx - sn * R * 0.4, cy + cs * R * 0.4); ctx.stroke();
-    ctx.strokeStyle = accent; ctx.lineWidth = R * 0.065;
-    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + sn * R * 0.66, cy - cs * R * 0.66); ctx.stroke();
-    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx, cy, R * 0.055, 0, 7); ctx.fill();
-    // N (fina)
-    ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = `600 ${R * 0.32}px ${FONT}`; ctx.fillText('N', cx, cy - R * 0.68);
+    ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = R * 0.05;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx - sn * R * 0.36, cy + cs * R * 0.36); ctx.stroke();
+    ctx.shadowColor = hexA(accent, 0.7); ctx.shadowBlur = R * 0.14;
+    ctx.strokeStyle = accent; ctx.lineWidth = R * 0.07;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + sn * R * 0.46, cy - cs * R * 0.46); ctx.stroke();
+    ctx.shadowColor = 'transparent';
+    const hub = ctx.createRadialGradient(cx - R * 0.02, cy - R * 0.02, R * 0.005, cx, cy, R * 0.09);
+    hub.addColorStop(0, '#fff'); hub.addColorStop(1, hexA(accent, 0.9));
+    ctx.fillStyle = hub; ctx.beginPath(); ctx.arc(cx, cy, R * 0.07, 0, 7); ctx.fill();
     ctx.restore();
   };
 
@@ -4790,8 +4909,8 @@ function createHud(model, opts = {}) {
     ctx.save();
     ctx.textBaseline = 'alphabetic';
 
-    // intro animada: los elementos aparecen (fade + subida) en el primer instante
-    const intro = 1 - (1 - Math.min(1, Math.max(0, t / 0.7))) ** 3; // easeOutCubic 0→1 en 0,7 s
+    // intro animada (fade + subida) en el primer instante; desactivable con cfg.intro=false
+    const intro = cfg.intro === false ? 1 : 1 - (1 - Math.min(1, Math.max(0, t / 0.7))) ** 3;
     if (intro < 1) { ctx.globalAlpha = intro; ctx.translate(0, (1 - intro) * U * 1.4); }
 
     // scrims sutiles (arriba y abajo) para legibilidad, sin sombra
@@ -4808,21 +4927,26 @@ function createHud(model, opts = {}) {
     if (cfg.theme === 'aviation') { drawAviation(ctx, s, w, h, U, un); } else {
     // métricas abajo (según los gauges activos y las unidades)
     const metrics = [];
-    if (gz.speed) metrics.push([`${Math.round(un.spd(s.hs || 0))}`, un.spdU, 'VEL']);
-    if (gz.alt) metrics.push([`${Math.round(un.len(s.rel || 0))}`, un.lenU, 'ALT']);
-    if (gz.dist) metrics.push([`${Math.round(un.len(s.far || 0))}`, un.lenU, 'DIST']);
-    if (gz.vspeed) metrics.push([`${un.vs(s.vs || 0).toFixed(1)}`, un.vsU, 'VERT']);
-    const baseY = h - U * 1.8;
-    metrics.forEach((m, i) => metric(ctx, w * ((i + 0.5) / metrics.length), baseY, U, m[0], m[1], m[2]));
+    if (gz.speed) metrics.push({ value: `${Math.round(un.spd(s.hs || 0))}`, unit: un.spdU, label: 'VEL', key: 'speed' });
+    if (gz.alt) metrics.push({ value: `${Math.round(un.len(s.rel || 0))}`, unit: un.lenU, label: 'ALT', key: 'alt' });
+    if (gz.dist) metrics.push({ value: `${Math.round(un.len(s.far || 0))}`, unit: un.lenU, label: 'DIST', key: 'dist' });
+    if (gz.vspeed) metrics.push({ value: `${un.vs(s.vs || 0).toFixed(1)}`, unit: un.vsU, label: 'VERT', key: 'vspeed' });
+    if (metrics.length) {
+      const cellW = Math.min(w * 0.56 / metrics.length, U * 4.9), panelW = cellW * metrics.length, panelH = U * 2.95;
+      const px = (w - panelW) / 2, py = h - panelH - U * 0.7;
+      ctx.shadowColor = 'transparent';
+      glassPanel(ctx, px, py, panelW, panelH, U * 0.75);
+      metrics.forEach((m, i) => metricCell(ctx, px + cellW * i, py, cellW, panelH, m, i > 0, t));
+    }
 
     // brújula arriba derecha (más fina y compacta)
     if (gz.heading) {
-      const R = Math.min(w, h) * 0.108;
-      compass(ctx, w - R - U * 1.5, R + U * 1.4, R, s.heading);
+      const R = Math.min(w, h) * 0.078;
+      compass(ctx, w - R - U * 1.3, R + U * 1.2, R, s.heading);
       if (s.heading != null) {
         ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-        ctx.font = `600 ${U * 1.1}px ${FONT}`; ls(ctx, U * 0.06);
-        ctx.fillText(`${CARD[Math.round(s.heading / 45) % 8]} ${Math.round(s.heading)}°`, w - R - U * 1.5, R * 2 + U * 1.6); ls(ctx, 0);
+        ctx.font = `600 ${U * 0.95}px ${FONT}`; ls(ctx, U * 0.05);
+        ctx.fillText(`${CARD[Math.round(s.heading / 45) % 8]} ${Math.round(s.heading)}°`, w - R - U * 1.4, R * 2 + U * 1.45); ls(ctx, 0);
       }
     }
     }
@@ -4831,18 +4955,18 @@ function createHud(model, opts = {}) {
     if (gz.clock) {
       ctx.textBaseline = 'middle';
       const tm = `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
-      ctx.font = `550 ${U * 1.35}px ${FONT}`; ls(ctx, U * 0.02);
+      ctx.font = `550 ${U * 1.15}px ${FONT}`; ls(ctx, U * 0.02);
       const tw = ctx.measureText(tm).width;
-      ctx.fillStyle = 'rgba(10,12,18,.32)'; roundRect(ctx, U * 1.3, U * 1.15, tw + U * 1.7, U * 2.2, U * 1.1); ctx.fill();
+      ctx.fillStyle = 'rgba(10,12,18,.32)'; roundRect(ctx, U * 1.3, U * 1.15, tw + U * 1.5, U * 1.9, U * 0.95); ctx.fill();
       ctx.fillStyle = 'rgba(255,255,255,.96)'; ctx.textAlign = 'left';
-      ctx.fillText(tm, U * 2.15, U * 2.3); ls(ctx, 0);
+      ctx.fillText(tm, U * 2.05, U * 2.1); ls(ctx, 0);
     }
 
     // mini-mapa (arriba izquierda, bajo el reloj)
     if (gz.minimap) {
       ctx.shadowColor = 'transparent';
-      const mw = Math.min(w, h) * 0.3, mh = mw * 0.64;
-      minimap(ctx, U * 1.3, gz.clock ? U * 4.4 : U * 1.3, mw, mh, s.lat, s.lon);
+      const mw = Math.min(w, h) * 0.21, mh = mw * 0.64;
+      minimap(ctx, U * 1.3, gz.clock ? U * 4.1 : U * 1.3, mw, mh, s.lat, s.lon);
     }
 
     // barra de progreso (borde inferior)
@@ -5196,6 +5320,16 @@ __x.default = {
   'intro.dist': 'Distance',
   'intro.alt': 'Altitude',
   'intro.spd': 'Speed',
+  'fx.label': 'Effect',
+  'fx.none': 'None',
+  'fx.vivid': 'Vivid',
+  'fx.sunset': 'Sunset',
+  'fx.warm': 'Warm',
+  'fx.cool': 'Cool',
+  'fx.sepia': 'Sepia',
+  'fx.bw': 'B&W',
+  'fx.vintage': 'Vintage',
+  'fx.drama': 'Dramatic',
 };
 
 };
@@ -5504,6 +5638,16 @@ __x.default = {
   'intro.dist': 'Distancia',
   'intro.alt': 'Altura',
   'intro.spd': 'Velocidad',
+  'fx.label': 'Efecto',
+  'fx.none': 'Ninguno',
+  'fx.vivid': 'Vívido',
+  'fx.sunset': 'Atardecer',
+  'fx.warm': 'Cálido',
+  'fx.cool': 'Frío',
+  'fx.sepia': 'Sepia',
+  'fx.bw': 'Blanco y negro',
+  'fx.vintage': 'Vintage',
+  'fx.drama': 'Dramático',
 };
 
 };
@@ -6565,6 +6709,67 @@ function drawTitleCard(ctx, W, H, t, dur, data) {
 }
 
 Object.assign(__x, { drawTitleCard });
+
+};
+
+__m["js/video-fx.js"] = function (__x, __req) {
+// Filtros de color para el vídeo (estilo edición móvil). Cada efecto combina:
+//  1) una cadena de filtros CSS (color/contraste/saturación…), aplicada en la
+//     previsualización al <video> y en la exportación al canvas (ctx.filter);
+//  2) una segunda capa opcional de superposiciones (halo de color, degradado,
+//     viñeta, grano) que se dibuja sobre el vídeo y bajo el HUD.
+
+/** Presets: filtro CSS + capas de superposición. */
+const FX = {
+  none: { filter: '', layers: [] },
+  vivid: { filter: 'saturate(1.5) contrast(1.12)', layers: [] },
+  sunset: {
+    filter: 'sepia(0.3) saturate(1.35) contrast(1.04) brightness(1.04) hue-rotate(-8deg)',
+    layers: [{ type: 'gradient', mode: 'soft-light', stops: [[0, 'rgba(255,120,40,0.40)'], [0.55, 'rgba(255,180,90,0.10)'], [1, 'rgba(120,90,160,0.14)']] }],
+  },
+  warm: { filter: 'sepia(0.18) saturate(1.2) brightness(1.05)', layers: [{ type: 'color', mode: 'soft-light', color: 'rgba(255,170,80,0.14)' }] },
+  cool: { filter: 'saturate(1.1) contrast(1.05) hue-rotate(12deg) brightness(1.02)', layers: [{ type: 'color', mode: 'soft-light', color: 'rgba(60,130,255,0.16)' }] },
+  sepia: { filter: 'sepia(0.65) contrast(1.05) brightness(1.02)', layers: [{ type: 'vignette', strength: 0.35 }] },
+  bw: { filter: 'grayscale(1) contrast(1.14)', layers: [{ type: 'vignette', strength: 0.42 }] },
+  vintage: {
+    filter: 'sepia(0.4) saturate(0.82) contrast(0.92) brightness(1.08)',
+    layers: [{ type: 'gradient', mode: 'soft-light', stops: [[0, 'rgba(255,180,90,0.14)'], [1, 'rgba(70,50,90,0.16)']] }, { type: 'vignette', strength: 0.45 }, { type: 'grain', alpha: 0.09 }],
+  },
+  drama: { filter: 'contrast(1.35) saturate(1.1) brightness(0.96)', layers: [{ type: 'vignette', strength: 0.5 }] },
+};
+
+/** Orden de los efectos para el selector. */
+const FX_KEYS = ['none', 'vivid', 'sunset', 'warm', 'cool', 'sepia', 'bw', 'vintage', 'drama'];
+
+/** Cadena de filtros CSS de un efecto. */
+const fxFilter = (key) => FX[key]?.filter || '';
+
+let _grain;
+function grainCanvas() {
+  if (_grain) return _grain;
+  const s = 128, c = document.createElement('canvas'); c.width = s; c.height = s;
+  const g = c.getContext('2d'), id = g.createImageData(s, s);
+  for (let i = 0; i < id.data.length; i += 4) { const v = Math.random() * 255; id.data[i] = id.data[i + 1] = id.data[i + 2] = v; id.data[i + 3] = 255; }
+  g.putImageData(id, 0, 0); _grain = c; return c;
+}
+let _grainUri;
+/** data: URI del patrón de grano, para la previsualización. */
+const grainDataUri = () => (_grainUri || (_grainUri = grainCanvas().toDataURL()));
+
+/** Dibuja la segunda capa de un efecto (halo, degradado, viñeta, grano) en el canvas. */
+function paintFxLayers(ctx, W, H, key) {
+  const layers = FX[key]?.layers; if (!layers?.length) return;
+  for (const L of layers) {
+    ctx.save();
+    if (L.type === 'color') { ctx.globalCompositeOperation = L.mode; ctx.fillStyle = L.color; ctx.fillRect(0, 0, W, H); }
+    else if (L.type === 'gradient') { ctx.globalCompositeOperation = L.mode; const g = ctx.createLinearGradient(0, 0, 0, H); for (const [o, col] of L.stops) g.addColorStop(o, col); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); }
+    else if (L.type === 'vignette') { const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.32, W / 2, H / 2, Math.max(W, H) * 0.62); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, `rgba(0,0,0,${L.strength})`); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); }
+    else if (L.type === 'grain') { ctx.globalCompositeOperation = 'overlay'; ctx.globalAlpha = L.alpha; const ox = Math.random() * 128 | 0, oy = Math.random() * 128 | 0; ctx.fillStyle = ctx.createPattern(grainCanvas(), 'repeat'); ctx.translate(-ox, -oy); ctx.fillRect(ox, oy, W, H); }
+    ctx.restore();
+  }
+}
+
+Object.assign(__x, { FX, FX_KEYS, fxFilter, grainDataUri, paintFxLayers });
 
 };
 
