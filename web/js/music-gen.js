@@ -82,3 +82,45 @@ export async function generateAmbient(sampleRate, duration, style = 'cinematico'
   }
   return ctx.startRendering();
 }
+
+/**
+ * Sonificación reactiva: música generada a partir de la telemetría del vuelo.
+ * La altura modula el brillo y el tono; la velocidad, la densidad de notas.
+ * @param {number} sampleRate @param {object} model @param {number} duration
+ * @returns {Promise<AudioBuffer>}
+ */
+export async function generateFlightMusic(sampleRate, model, duration) {
+  const S = (model.series || []).filter((s) => s.t != null);
+  if (S.length < 4) return generateAmbient(sampleRate, duration, 'cinematico');
+  const dur = Math.max(6, duration);
+  const ctx = new OfflineAudioContext(2, Math.ceil(sampleRate * dur), sampleRate);
+  let rMin = Infinity, rMax = -Infinity, hMax = 1;
+  for (const s of S) { if (s.rel != null) { if (s.rel < rMin) rMin = s.rel; if (s.rel > rMax) rMax = s.rel; } if (s.hs != null && s.hs > hMax) hMax = s.hs; }
+  if (!isFinite(rMin)) { rMin = 0; rMax = 1; } if (rMax <= rMin) rMax = rMin + 1;
+  const at = (t) => { let i = 1; while (i < S.length && S[i].t < t) i++; const a = S[i - 1], b = S[Math.min(i, S.length - 1)]; const sp = (b.t - a.t) || 1, f = Math.max(0, Math.min(1, (t - a.t) / sp)); const L = (k) => (a[k] != null && b[k] != null) ? a[k] + (b[k] - a[k]) * f : (a[k] ?? b[k] ?? 0); return { hs: L('hs'), rel: L('rel') }; };
+
+  const master = ctx.createGain();
+  master.gain.setValueAtTime(0, 0); master.gain.linearRampToValueAtTime(0.85, 2);
+  master.gain.setValueAtTime(0.85, Math.max(2.1, dur - 3)); master.gain.linearRampToValueAtTime(0, dur);
+  master.connect(ctx.destination);
+  const rev = ctx.createConvolver(); rev.buffer = makeImpulse(ctx, 2.6, 2.4); const rg = ctx.createGain(); rg.gain.value = 0.4; master.connect(rev); rev.connect(rg); rg.connect(ctx.destination);
+
+  // pad drone con brillo (cutoff) modulado por la altura
+  const padG = ctx.createGain(); padG.gain.value = 0.12; const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.7; padG.connect(lp); lp.connect(master);
+  for (let t = 0; t < dur; t += 1) { const nr = ((at(t).rel - rMin) / (rMax - rMin)); lp.frequency.setValueAtTime(520 + nr * 2600, t); }
+  [110, 164.81].forEach((f, i) => { const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f; o.detune.value = i ? 6 : -6; o.connect(padG); o.start(0); o.stop(dur); });
+
+  // campanas: tono según altura, cadencia según velocidad (escala pentatónica menor)
+  const scale = [0, 3, 5, 7, 10];
+  let t = 1;
+  while (t < dur - 1) {
+    const { hs, rel } = at(t);
+    const nr = Math.max(0, Math.min(1, (rel - rMin) / (rMax - rMin)));
+    const octave = 2 + Math.round(nr * 2);
+    const semis = scale[(Math.random() * scale.length) | 0] + octave * 12;
+    bell(ctx, master, 220 * 2 ** (semis / 12), t);
+    const speedN = Math.min(1, (hs || 0) / Math.max(4, hMax * 0.7));
+    t += Math.max(0.35, 1.7 - speedN * 1.2);
+  }
+  return ctx.startRendering();
+}
