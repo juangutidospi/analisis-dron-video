@@ -65,6 +65,10 @@ export const styles = css`
 .bar { flex: 1; height: 7px; border-radius: 100px; background: color-mix(in srgb, var(--color-text) 13%, transparent); position: relative; cursor: pointer; touch-action: none; }
 .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 100px; background: linear-gradient(90deg, var(--color-accent), var(--color-violet)); }
 .fill::after { content: ""; position: absolute; right: -7px; top: 50%; width: 14px; height: 14px; border-radius: 50%; background: #fff; transform: translateY(-50%); box-shadow: 0 1px 5px rgba(0,0,0,.45); }
+/* bandas de maniobra al fondo de la barra (color por tipo) */
+.mnv-band { position: absolute; top: 0; bottom: 0; opacity: .42; pointer-events: none; z-index: 0; }
+.mnv-band:first-child { border-radius: 100px 0 0 100px; }
+.mnv-band:last-of-type { border-radius: 0 100px 100px 0; }
 /* marcadores de momentos destacados sobre la barra */
 .hl-mark {
   position: absolute; top: 50%; transform: translate(-50%, -50%); z-index: 3;

@@ -4,7 +4,8 @@ import { t } from '../../../i18n/index.js';
 import { DEFAULT_CFG, GAUGE_KEYS } from '../../../hud.js';
 import { exportHudVideo, exportTrailer } from '../../../hud-export.js';
 import { buildTrailerSegments } from '../../../highlights.js';
-import { generateAmbient, STYLES } from '../../../music-gen.js';
+import { MANEUVER_COLOR } from '../../../maneuvers.js';
+import { generateAmbient, generateFlightMusic, STYLES } from '../../../music-gen.js';
 import { FX, FX_KEYS, fxFilter, grainDataUri } from '../../../video-fx.js';
 import { downloadBlob } from '../../../exports.js';
 import { styles } from './flight-player.css.js';
@@ -36,6 +37,14 @@ export class FlightPlayer extends DjiElement {
   /** @param {object} d datos de la portada del trailer (kicker, título, lugar, track, stats) */
   set intro(d) { this._intro = d; }
   get intro() { return this._intro; }
+
+  /** @param {Array<{t0:number,t1:number,type:string}>} m tramos de maniobra para la barra */
+  set maneuvers(m) { this._maneuvers = m || []; if (this.isConnected) this._renderManeuvers(); }
+  get maneuvers() { return this._maneuvers; }
+
+  /** @param {object} m modelo del vuelo, para la sonificación reactiva de la música */
+  set flightModel(m) { this._flightModel = m; }
+  get flightModel() { return this._flightModel; }
 
   render() {
     const cfg = this._cfg();
@@ -202,7 +211,25 @@ export class FlightPlayer extends DjiElement {
       c.addEventListener('state', () => this._syncMusic()); // play/pausa/seek/velocidad → música
     }
     this._sync();
+    this._renderManeuvers();
     this._renderHighlights();
+  }
+
+  /** Pinta las bandas de maniobra (color por tipo) al fondo de la barra. */
+  _renderManeuvers() {
+    const bar = this.$('#bar'); const c = this._clock;
+    if (!bar) return;
+    this.$$('.mnv-band').forEach((e) => e.remove());
+    if (!c || !c.dur || !this._maneuvers?.length) return;
+    const fill = this.$('#fill');
+    for (const s of this._maneuvers) {
+      const d = document.createElement('div'); d.className = 'mnv-band';
+      d.style.left = Math.max(0, s.t0 / c.dur * 100) + '%';
+      d.style.width = Math.max(0.5, (s.t1 - s.t0) / c.dur * 100) + '%';
+      d.style.background = MANEUVER_COLOR[s.type] || '#8a93a6';
+      d.title = t('mnv.' + s.type);
+      bar.insertBefore(d, fill); // al fondo, bajo el progreso y los marcadores
+    }
   }
 
   /** Pinta los marcadores de momentos (arrastrables): definen los puntos del trailer. */
@@ -425,7 +452,7 @@ export class FlightPlayer extends DjiElement {
 
   /** Genera música ambiental sintética (cicla entre estilos) y la usa como banda sonora. */
   async _generateMusic() {
-    const keys = Object.keys(STYLES);
+    const keys = this._flightModel ? ['flight', ...Object.keys(STYLES)] : Object.keys(STYLES);
     this._genIdx = ((this._genIdx ?? -1) + 1) % keys.length;
     const style = keys[this._genIdx];
     const gen = this.$('#musicgen');
@@ -434,9 +461,11 @@ export class FlightPlayer extends DjiElement {
       const AC = window.AudioContext || window.webkitAudioContext;
       this._musicAC = this._musicAC || new AC();
       const dur = Math.min(120, Math.max(20, this._clock?.dur || 60));
-      const buf = await generateAmbient(this._musicAC.sampleRate, dur, style);
+      const buf = style === 'flight'
+        ? await generateFlightMusic(this._musicAC.sampleRate, this._flightModel, Math.min(150, this._clock?.dur || 60))
+        : await generateAmbient(this._musicAC.sampleRate, dur, style);
       this._music = null; this._musicGen = true; this._musicStart = 0;
-      this._musicName = t('hud.music.ambient') + ' · ' + t('hud.music.style.' + style);
+      this._musicName = style === 'flight' ? t('hud.music.style.flight') : t('hud.music.ambient') + ' · ' + t('hud.music.style.' + style);
       this._musicBuf = buf;
       this._musicPeaks = this._computePeaks(buf);
       this._musicNorm = this._computeNorm(buf);
