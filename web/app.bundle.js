@@ -590,6 +590,10 @@ const styles = css`
 .bar { flex: 1; height: 7px; border-radius: 100px; background: color-mix(in srgb, var(--color-text) 13%, transparent); position: relative; cursor: pointer; touch-action: none; }
 .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 100px; background: linear-gradient(90deg, var(--color-accent), var(--color-violet)); }
 .fill::after { content: ""; position: absolute; right: -7px; top: 50%; width: 14px; height: 14px; border-radius: 50%; background: #fff; transform: translateY(-50%); box-shadow: 0 1px 5px rgba(0,0,0,.45); }
+/* bandas de maniobra al fondo de la barra (color por tipo) */
+.mnv-band { position: absolute; top: 0; bottom: 0; opacity: .42; pointer-events: none; z-index: 0; }
+.mnv-band:first-child { border-radius: 100px 0 0 100px; }
+.mnv-band:last-of-type { border-radius: 0 100px 100px 0; }
 /* marcadores de momentos destacados sobre la barra */
 .hl-mark {
   position: absolute; top: 50%; transform: translate(-50%, -50%); z-index: 3;
@@ -756,7 +760,8 @@ const { t } = __req("js/i18n/index.js");
 const { DEFAULT_CFG, GAUGE_KEYS } = __req("js/hud.js");
 const { exportHudVideo, exportTrailer } = __req("js/hud-export.js");
 const { buildTrailerSegments } = __req("js/highlights.js");
-const { generateAmbient, STYLES } = __req("js/music-gen.js");
+const { MANEUVER_COLOR } = __req("js/maneuvers.js");
+const { generateAmbient, generateFlightMusic, STYLES } = __req("js/music-gen.js");
 const { FX, FX_KEYS, fxFilter, grainDataUri } = __req("js/video-fx.js");
 const { downloadBlob } = __req("js/exports.js");
 const { styles } = __req("js/components/ui/flight-player/flight-player.css.js");
@@ -788,6 +793,14 @@ class FlightPlayer extends DjiElement {
   /** @param {object} d datos de la portada del trailer (kicker, título, lugar, track, stats) */
   set intro(d) { this._intro = d; }
   get intro() { return this._intro; }
+
+  /** @param {Array<{t0:number,t1:number,type:string}>} m tramos de maniobra para la barra */
+  set maneuvers(m) { this._maneuvers = m || []; if (this.isConnected) this._renderManeuvers(); }
+  get maneuvers() { return this._maneuvers; }
+
+  /** @param {object} m modelo del vuelo, para la sonificación reactiva de la música */
+  set flightModel(m) { this._flightModel = m; }
+  get flightModel() { return this._flightModel; }
 
   render() {
     const cfg = this._cfg();
@@ -954,7 +967,25 @@ class FlightPlayer extends DjiElement {
       c.addEventListener('state', () => this._syncMusic()); // play/pausa/seek/velocidad → música
     }
     this._sync();
+    this._renderManeuvers();
     this._renderHighlights();
+  }
+
+  /** Pinta las bandas de maniobra (color por tipo) al fondo de la barra. */
+  _renderManeuvers() {
+    const bar = this.$('#bar'); const c = this._clock;
+    if (!bar) return;
+    this.$$('.mnv-band').forEach((e) => e.remove());
+    if (!c || !c.dur || !this._maneuvers?.length) return;
+    const fill = this.$('#fill');
+    for (const s of this._maneuvers) {
+      const d = document.createElement('div'); d.className = 'mnv-band';
+      d.style.left = Math.max(0, s.t0 / c.dur * 100) + '%';
+      d.style.width = Math.max(0.5, (s.t1 - s.t0) / c.dur * 100) + '%';
+      d.style.background = MANEUVER_COLOR[s.type] || '#8a93a6';
+      d.title = t('mnv.' + s.type);
+      bar.insertBefore(d, fill); // al fondo, bajo el progreso y los marcadores
+    }
   }
 
   /** Pinta los marcadores de momentos (arrastrables): definen los puntos del trailer. */
@@ -1177,7 +1208,7 @@ class FlightPlayer extends DjiElement {
 
   /** Genera música ambiental sintética (cicla entre estilos) y la usa como banda sonora. */
   async _generateMusic() {
-    const keys = Object.keys(STYLES);
+    const keys = this._flightModel ? ['flight', ...Object.keys(STYLES)] : Object.keys(STYLES);
     this._genIdx = ((this._genIdx ?? -1) + 1) % keys.length;
     const style = keys[this._genIdx];
     const gen = this.$('#musicgen');
@@ -1186,9 +1217,11 @@ class FlightPlayer extends DjiElement {
       const AC = window.AudioContext || window.webkitAudioContext;
       this._musicAC = this._musicAC || new AC();
       const dur = Math.min(120, Math.max(20, this._clock?.dur || 60));
-      const buf = await generateAmbient(this._musicAC.sampleRate, dur, style);
+      const buf = style === 'flight'
+        ? await generateFlightMusic(this._musicAC.sampleRate, this._flightModel, Math.min(150, this._clock?.dur || 60))
+        : await generateAmbient(this._musicAC.sampleRate, dur, style);
       this._music = null; this._musicGen = true; this._musicStart = 0;
-      this._musicName = t('hud.music.ambient') + ' · ' + t('hud.music.style.' + style);
+      this._musicName = style === 'flight' ? t('hud.music.style.flight') : t('hud.music.ambient') + ' · ' + t('hud.music.style.' + style);
       this._musicBuf = buf;
       this._musicPeaks = this._computePeaks(buf);
       this._musicNorm = this._computeNorm(buf);
@@ -2180,6 +2213,56 @@ code { background: var(--color-tile); border: 1px solid var(--color-divider); bo
   .hstats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .hstats stat-tile { min-width: 0; }
 }
+
+/* maniobras: leyenda con iconos + línea de tiempo con eje */
+.mnv-legend { display: flex; flex-wrap: wrap; gap: 16px 26px; margin-bottom: 22px; }
+.mnv-leg { display: flex; align-items: center; gap: 12px; }
+.mnv-ic { width: 34px; height: 34px; padding: 7px; border-radius: 10px; flex: none; box-sizing: border-box;
+  color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent); fill: none; stroke: var(--c); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mnv-leg-txt { display: flex; flex-direction: column; line-height: 1.25; }
+.mnv-leg-txt strong { font-size: 14.5px; font-weight: 700; color: var(--color-text); }
+.mnv-leg-txt span { font-size: 12px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.mnv-track { position: relative; height: 30px; border-radius: 9px; background: color-mix(in srgb, var(--color-text) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-text) 6%, transparent); }
+.mnv-seg { position: absolute; top: 3px; bottom: 3px; margin: 0 1px; border-radius: 6px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--c) 88%, white 12%), var(--c));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.22), 0 1px 3px color-mix(in srgb, var(--c) 40%, transparent); transition: filter .12s; }
+.mnv-seg:hover { filter: brightness(1.16) saturate(1.12); transform: scaleY(1.12); }
+.mnv-seg.mnv-dim { opacity: .32; filter: saturate(.55); }
+/* tooltip del tramo */
+.mnv-tip {
+  position: absolute; bottom: calc(100% + 12px); transform: translateX(-50%); z-index: 6; pointer-events: none;
+  min-width: 180px; padding: 12px 14px; border-radius: 13px; background: var(--color-surface-solid);
+  border: 1px solid var(--color-divider); box-shadow: var(--shadow-lg);
+}
+.mnv-tip[hidden] { display: none; }
+.mnv-tip::after { content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 7px solid transparent; border-top-color: var(--color-surface-solid); }
+.mnv-tip-h { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 14px; color: var(--color-text); margin-bottom: 9px; padding-bottom: 9px; border-bottom: 1px solid color-mix(in srgb, var(--color-divider) 60%, transparent); }
+.mnv-tip-ic { width: 22px; height: 22px; padding: 4px; border-radius: 7px; box-sizing: border-box; flex: none; color: var(--c); background: color-mix(in srgb, var(--c) 18%, transparent); fill: none; stroke: var(--c); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.mnv-tip-row { display: flex; justify-content: space-between; gap: 20px; font-size: 12.5px; padding: 2.5px 0; }
+.mnv-tip-row span { color: var(--color-text-muted); }
+.mnv-tip-row b { color: var(--color-text); font-variant-numeric: tabular-nums; }
+
+/* score de pilotaje: anillo + barras + consejos */
+.pscore { display: flex; align-items: center; gap: 34px; flex-wrap: wrap; }
+.pscore-ring { position: relative; width: 132px; height: 132px; flex: none; }
+.pscore-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.pr-bg { fill: none; stroke: color-mix(in srgb, var(--color-text) 10%, transparent); stroke-width: 10; }
+.pr-fg { fill: none; stroke-width: 10; stroke-linecap: round; }
+.pscore-num { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.pscore-num strong { font-size: 40px; font-weight: 800; color: var(--color-text); line-height: 1; }
+.pscore-num span { font-size: 11px; color: var(--color-text-muted); margin-top: 3px; text-transform: uppercase; letter-spacing: .08em; }
+.pscore-bars { flex: 1; min-width: 260px; display: flex; flex-direction: column; gap: 13px; }
+.pbar { display: grid; grid-template-columns: 84px 1fr 32px; align-items: center; gap: 13px; }
+.pbar-l { font-size: 13.5px; font-weight: 600; color: var(--color-text-muted); }
+.pbar-t { height: 9px; border-radius: 100px; background: color-mix(in srgb, var(--color-text) 9%, transparent); overflow: hidden; }
+.pbar-f { height: 100%; border-radius: 100px; }
+.pbar-v { font-size: 14.5px; font-weight: 700; color: var(--color-text); text-align: right; font-variant-numeric: tabular-nums; }
+.pscore-tips { margin-top: 22px; display: flex; flex-direction: column; gap: 12px; }
+.mnv-axis { position: relative; height: 16px; margin-top: 8px; }
+.mnv-tick { position: absolute; transform: translateX(-50%); font-size: 11px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mnv-tick:first-child { transform: translateX(0); }
+.mnv-tick:last-child { transform: translateX(-100%); }
 `;
 
 Object.assign(__x, { styles });
@@ -2209,6 +2292,9 @@ const { PlayerClock } = __req("js/core/player-clock.js");
 const { reveal } = __req("js/core/reveal.js");
 const { createHud } = __req("js/hud.js");
 const { detectHighlights } = __req("js/highlights.js");
+const { detectManeuvers, MANEUVER_TYPES, MANEUVER_COLOR, MANEUVER_ICON } = __req("js/maneuvers.js");
+const { computePilotScore } = __req("js/pilot-score.js");
+const { sunTimes, inGolden } = __req("js/sun-times.js");
 const { styles } = __req("js/components/views/flight-report/flight-report.css.js");
 
 const f = (v, d = 0) => (v == null ? '—' : v.toFixed(d));
@@ -2255,6 +2341,8 @@ class FlightReport extends DjiElement {
         ${this._sectionChart('alt', 'c-alt', `<div class="legend"><span><span class="sw" style="background:var(--c-blue)"></span>${t('alt.series')}</span></div>`)}
         ${this._terrainTpl()}
         ${this._dynamicsTpl()}
+        ${this._maneuversTpl()}
+        ${this._pilotScoreTpl()}
         ${this._windTpl()}
         ${this._cameraTpl(cam, r, iso, a)}
         ${this._solarTpl(m)}
@@ -2404,6 +2492,86 @@ class FlightReport extends DjiElement {
         <h2>${escapeHtml(t(prefix + '.title'))}</h2>
         <p class="sub">${escapeHtml(t(prefix + '.sub'))}</p>
         <div class="card">${legend}<time-chart id="${id}"></time-chart></div>
+      </section>`;
+  }
+
+  _maneuversTpl() {
+    this._mnv = detectManeuvers(this.model);
+    const { segments, summary } = this._mnv;
+    if (!segments.length) return '';
+    const dur = this.model.meta.dur || 1;
+    const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
+    const durBy = {}; for (const s of segments) durBy[s.type] = (durBy[s.type] || 0) + (s.t1 - s.t0);
+    const icon = (ty) => `<svg viewBox="0 0 24 24" class="mnv-ic" aria-hidden="true"><path d="${MANEUVER_ICON[ty]}"/></svg>`;
+    const legend = MANEUVER_TYPES.filter((ty) => summary[ty]).map((ty) => `
+      <div class="mnv-leg" style="--c:${MANEUVER_COLOR[ty]}">
+        ${icon(ty)}
+        <div class="mnv-leg-txt"><strong>${summary[ty]} ${escapeHtml(t('mnv.' + ty + (summary[ty] > 1 ? '.pl' : '')))}</strong><span>${Math.round(durBy[ty] / dur * 100)}% ${escapeHtml(t('mnv.oftime'))}</span></div>
+      </div>`).join('');
+    const bands = segments.map((s, i) =>
+      `<div class="mnv-seg" data-i="${i}" style="left:${(s.t0 / dur * 100).toFixed(2)}%;width:${((s.t1 - s.t0) / dur * 100).toFixed(2)}%;--c:${MANEUVER_COLOR[s.type]}"></div>`).join('');
+    let axis = '';
+    for (let m = 0; m <= dur; m += 60) axis += `<span class="mnv-tick" style="left:${(m / dur * 100).toFixed(2)}%">${mmss(m)}</span>`;
+    return `
+      <section class="blk">
+        <div class="eyebrow">${escapeHtml(t('mnv.eyebrow'))}</div>
+        <h2>${escapeHtml(t('mnv.title'))}</h2>
+        <p class="sub">${escapeHtml(t('mnv.sub'))}</p>
+        <div class="card">
+          <div class="mnv-legend">${legend}</div>
+          <div class="mnv-track">${bands}<div class="mnv-tip" id="mnvtip" hidden></div></div>
+          <div class="mnv-axis">${axis}</div>
+        </div>
+      </section>`;
+  }
+
+  /** HTML del tooltip de un tramo de maniobra. */
+  _mnvTipHtml(s) {
+    const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
+    const rows = [`<div class="mnv-tip-row"><span>${escapeHtml(t('mnv.dur'))}</span><b>${Math.round(s.t1 - s.t0)} s</b></div>`,
+      `<div class="mnv-tip-row"><span>${escapeHtml(t('mnv.avgspd'))}</span><b>${Math.round(s.avgHs * 3.6)} km/h</b></div>`];
+    if (s.maxRel != null) rows.push(`<div class="mnv-tip-row"><span>${escapeHtml(t('mnv.alt'))}</span><b>${Math.round(s.minRel)}–${Math.round(s.maxRel)} m</b></div>`);
+    if (s.turnDeg) rows.push(`<div class="mnv-tip-row"><span>${escapeHtml(t('mnv.turnacc'))}</span><b>${s.turnDeg}°</b></div>`);
+    return `<div class="mnv-tip-h" style="--c:${MANEUVER_COLOR[s.type]}"><svg viewBox="0 0 24 24" class="mnv-tip-ic" aria-hidden="true"><path d="${MANEUVER_ICON[s.type]}"/></svg>${escapeHtml(t('mnv.' + s.type))} · ${mmss(s.t0)}–${mmss(s.t1)}</div>${rows.join('')}`;
+  }
+
+  /** Cablea el tooltip y el resaltado al pasar por los tramos de la línea de tiempo. */
+  _wireManeuvers() {
+    const track = this.$('.mnv-track'), tip = this.$('#mnvtip');
+    if (!track || !tip || !this._mnv) return;
+    const segs = this.$$('.mnv-seg');
+    const move = (e) => { const r = track.getBoundingClientRect(); tip.style.left = Math.max(0, Math.min(r.width, e.clientX - r.left)) + 'px'; };
+    for (const el of segs) {
+      this.on(el, 'mouseenter', () => { const s = this._mnv.segments[+el.dataset.i]; if (!s) return; tip.innerHTML = this._mnvTipHtml(s); tip.hidden = false; segs.forEach((x) => x.classList.toggle('mnv-dim', x !== el)); });
+      this.on(el, 'mousemove', move);
+      this.on(el, 'mouseleave', () => { tip.hidden = true; segs.forEach((x) => x.classList.remove('mnv-dim')); });
+    }
+  }
+
+  _pilotScoreTpl() {
+    const ps = computePilotScore(this.model);
+    if (!ps) return '';
+    const col = (v) => (v >= 80 ? '#37cf6b' : v >= 60 ? '#5b9dff' : '#ffb43d');
+    const R = 52, C = 2 * Math.PI * R, off = (C * (1 - ps.overall / 100)).toFixed(1);
+    const bars = [['smoothness', ps.aspects.smoothness], ['altitude', ps.aspects.altitude], ['turns', ps.aspects.turns], ['gimbal', ps.aspects.gimbal]].map(([k, v]) =>
+      `<div class="pbar"><span class="pbar-l">${escapeHtml(t('ps.' + k))}</span><div class="pbar-t"><div class="pbar-f" style="width:${v}%;background:${col(v)}"></div></div><span class="pbar-v">${v}</span></div>`).join('');
+    const tips = ps.tips.map((tp) =>
+      `<app-callout ${tp.level === 'warn' ? 'variant="warn"' : 'variant="good"'} title="${escapeHtml(t(tp.level === 'warn' ? 'ps.improve' : 'ps.strong'))}">${escapeHtml(t('ps.tip.' + tp.key + '.' + tp.level))}</app-callout>`).join('');
+    return `
+      <section class="blk">
+        <div class="eyebrow">${escapeHtml(t('ps.eyebrow'))}</div>
+        <h2>${escapeHtml(t('ps.title'))}</h2>
+        <p class="sub">${escapeHtml(t('ps.sub'))}</p>
+        <div class="card">
+          <div class="pscore">
+            <div class="pscore-ring">
+              <svg viewBox="0 0 120 120"><circle class="pr-bg" cx="60" cy="60" r="${R}"/><circle class="pr-fg" cx="60" cy="60" r="${R}" style="stroke:${col(ps.overall)};stroke-dasharray:${C.toFixed(1)};stroke-dashoffset:${off}"/></svg>
+              <div class="pscore-num"><strong>${ps.overall}</strong><span>${escapeHtml(t('ps.of100'))}</span></div>
+            </div>
+            <div class="pscore-bars">${bars}</div>
+          </div>
+          ${tips ? `<div class="pscore-tips">${tips}</div>` : ''}
+        </div>
       </section>`;
   }
 
@@ -2575,6 +2743,17 @@ class FlightReport extends DjiElement {
     const far = this.kps.find((k) => k.key === 'far');
     const flightAz = far ? bearing(this.model.takeoff[0], this.model.takeoff[1], far.lat, far.lon) : null;
     const tile = (v, unit, label, hint) => `<stat-tile value="${escapeHtml(v)}" unit="${unit}" label="${escapeHtml(label)}" hint="${escapeHtml(hint)}"></stat-tile>`;
+    // golden hour del lugar y día + si el vuelo cazó la buena luz
+    const times = sunTimes(start, clat, clon);
+    const hhmm = (min) => min == null ? '—' : `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(Math.round(min % 60)).padStart(2, '0')}`;
+    const g = inGolden(start.getHours() * 60 + start.getMinutes(), times);
+    const ranges = [
+      times.goldenMorning && t('solar.golden.morning', { a: hhmm(times.goldenMorning[0]), b: hhmm(times.goldenMorning[1]) }),
+      times.goldenEvening && t('solar.golden.evening', { a: hhmm(times.goldenEvening[0]), b: hhmm(times.goldenEvening[1]) }),
+    ].filter(Boolean).join(' · ');
+    const next = times.goldenEvening ? hhmm(times.goldenEvening[0]) : (times.goldenMorning ? hhmm(times.goldenMorning[0]) : '—');
+    const body = g ? t('solar.golden.in', { when: t('solar.golden.when.' + g), ranges }) : t('solar.golden.out', { ranges, next });
+    const golden = ranges ? `<app-callout ${g ? 'variant="good"' : ''} title="${escapeHtml(t('solar.golden.t'))}">${escapeHtml(body)}</app-callout>` : '';
     return `
       <section class="blk">
         <div class="eyebrow">${escapeHtml(t('solar.eyebrow'))}</div>
@@ -2590,6 +2769,7 @@ class FlightReport extends DjiElement {
             </div>
           </div>
         </div>
+        ${golden}
       </section>`;
   }
 
@@ -2714,6 +2894,7 @@ class FlightReport extends DjiElement {
     this._setupScrolly();
     this._setupReveal();
     this._setupNav();
+    this._wireManeuvers();
   }
 
   /** El player (barra + miniatura) solo aparece al llegar a la sección del mapa. */
@@ -2796,6 +2977,8 @@ class FlightReport extends DjiElement {
     this._player.video = this._video || null;
     const hl = detectHighlights(this.model);
     this._player.highlights = hl; // momentos destacados en la barra
+    this._player.maneuvers = (this._mnv || detectManeuvers(this.model)).segments; // bandas de maniobra
+    this._player.flightModel = this.model; // sonificación reactiva de la música
     const accent = getComputedStyle(this).getPropertyValue('--color-accent').trim() || '#5b9dff';
     // HUD de telemetría sobre el vídeo (con el color de acento del tema)
     this._player.hud = this._video
@@ -5169,6 +5352,7 @@ __x.default = {
   'hud.music.style.calma': 'Calm',
   'hud.music.style.epico': 'Epic',
   'hud.music.style.cinematico': 'Cinematic',
+  'hud.music.style.flight': 'Flight music',
   'hud.g.speed': 'Speed',
   'hud.g.alt': 'Altitude',
   'hud.g.dist': 'Distance',
@@ -5330,6 +5514,51 @@ __x.default = {
   'fx.bw': 'B&W',
   'fx.vintage': 'Vintage',
   'fx.drama': 'Dramatic',
+  'mnv.eyebrow': 'Maneuvers',
+  'mnv.title': 'How it was flown',
+  'mnv.sub': 'Automatic detection of shot types from the path and the gimbal.',
+  'mnv.orbit': 'Orbit',
+  'mnv.orbit.pl': 'Orbits',
+  'mnv.turn': 'Turn',
+  'mnv.turn.pl': 'Turns',
+  'mnv.climb': 'Climb',
+  'mnv.climb.pl': 'Climbs',
+  'mnv.descent': 'Descent',
+  'mnv.descent.pl': 'Descents',
+  'mnv.cruise': 'Pass',
+  'mnv.cruise.pl': 'Passes',
+  'mnv.hover': 'Hover',
+  'mnv.hover.pl': 'Hovers',
+  'mnv.oftime': 'of the time',
+  'mnv.dur': 'Duration',
+  'mnv.avgspd': 'Avg speed',
+  'mnv.alt': 'Altitude',
+  'mnv.turnacc': 'Turn',
+  'ps.eyebrow': 'Piloting',
+  'ps.title': 'You as a pilot',
+  'ps.sub': 'A smoothness score from the telemetry, with tips to improve.',
+  'ps.of100': 'out of 100',
+  'ps.smoothness': 'Smoothness',
+  'ps.altitude': 'Altitude',
+  'ps.turns': 'Turns',
+  'ps.gimbal': 'Camera',
+  'ps.improve': 'To improve',
+  'ps.strong': 'Strength',
+  'ps.tip.smoothness.warn': 'Ease your accelerations and stops for a more cinematic flight.',
+  'ps.tip.smoothness.good': 'Very fluid flight, no jerks.',
+  'ps.tip.altitude.warn': 'Try to keep altitude steadier while moving.',
+  'ps.tip.altitude.good': 'Excellent altitude control.',
+  'ps.tip.turns.warn': 'Make turns steadier and more progressive, less jerky.',
+  'ps.tip.turns.good': 'Very clean, steady turns.',
+  'ps.tip.gimbal.warn': 'Move the camera more smoothly to avoid jumps.',
+  'ps.tip.gimbal.good': 'Very stable gimbal: smooth footage.',
+  'solar.golden.t': 'Best light for this spot',
+  'solar.golden.morning': 'morning {a}–{b}',
+  'solar.golden.evening': 'evening {a}–{b}',
+  'solar.golden.when.morning': 'morning',
+  'solar.golden.when.evening': 'evening',
+  'solar.golden.in': 'You flew during the {when} golden hour: the light was at its best ({ranges}).',
+  'solar.golden.out': 'Golden hour here: {ranges}. For the most cinematic light, come back around {next}.',
 };
 
 };
@@ -5487,6 +5716,7 @@ __x.default = {
   'hud.music.style.calma': 'Calma',
   'hud.music.style.epico': 'Épico',
   'hud.music.style.cinematico': 'Cinemático',
+  'hud.music.style.flight': 'Música del vuelo',
   'hud.g.speed': 'Velocidad',
   'hud.g.alt': 'Altura',
   'hud.g.dist': 'Distancia',
@@ -5648,6 +5878,51 @@ __x.default = {
   'fx.bw': 'Blanco y negro',
   'fx.vintage': 'Vintage',
   'fx.drama': 'Dramático',
+  'mnv.eyebrow': 'Maniobras',
+  'mnv.title': 'Cómo se voló',
+  'mnv.sub': 'Detección automática de los tipos de plano a partir de la trayectoria y el gimbal.',
+  'mnv.orbit': 'Órbita',
+  'mnv.orbit.pl': 'Órbitas',
+  'mnv.turn': 'Giro',
+  'mnv.turn.pl': 'Giros',
+  'mnv.climb': 'Ascenso',
+  'mnv.climb.pl': 'Ascensos',
+  'mnv.descent': 'Descenso',
+  'mnv.descent.pl': 'Descensos',
+  'mnv.cruise': 'Pasada',
+  'mnv.cruise.pl': 'Pasadas',
+  'mnv.hover': 'Estático',
+  'mnv.hover.pl': 'Estáticos',
+  'mnv.oftime': 'del tiempo',
+  'mnv.dur': 'Duración',
+  'mnv.avgspd': 'Velocidad media',
+  'mnv.alt': 'Altura',
+  'mnv.turnacc': 'Giro',
+  'ps.eyebrow': 'Pilotaje',
+  'ps.title': 'Tu vuelo como piloto',
+  'ps.sub': 'Nota de suavidad del vuelo a partir de la telemetría, con consejos para mejorar.',
+  'ps.of100': 'de 100',
+  'ps.smoothness': 'Suavidad',
+  'ps.altitude': 'Altura',
+  'ps.turns': 'Giros',
+  'ps.gimbal': 'Cámara',
+  'ps.improve': 'A mejorar',
+  'ps.strong': 'Punto fuerte',
+  'ps.tip.smoothness.warn': 'Suaviza las aceleraciones y frenadas para un vuelo más cinematográfico.',
+  'ps.tip.smoothness.good': 'Vuelo muy fluido, sin tirones.',
+  'ps.tip.altitude.warn': 'Intenta mantener la altura más estable en los desplazamientos.',
+  'ps.tip.altitude.good': 'Excelente control de altura.',
+  'ps.tip.turns.warn': 'Haz los giros más constantes y progresivos, menos a tirones.',
+  'ps.tip.turns.good': 'Giros muy limpios y constantes.',
+  'ps.tip.gimbal.warn': 'Mueve la cámara con más suavidad para evitar saltos.',
+  'ps.tip.gimbal.good': 'Gimbal muy estable: imagen suave.',
+  'solar.golden.t': 'La mejor luz para este lugar',
+  'solar.golden.morning': 'mañana {a}–{b}',
+  'solar.golden.evening': 'tarde {a}–{b}',
+  'solar.golden.when.morning': 'de la mañana',
+  'solar.golden.when.evening': 'de la tarde',
+  'solar.golden.in': 'Volaste en la golden hour {when}: la luz estaba en su mejor momento ({ranges}).',
+  'solar.golden.out': 'Golden hour aquí: {ranges}. Para la luz más cinematográfica, vuelve sobre las {next}.',
 };
 
 };
@@ -5957,6 +6232,120 @@ Object.assign(__x, { buildKMZ });
 
 };
 
+__m["js/maneuvers.js"] = function (__x, __req) {
+// Etiquetado automático de maniobras: segmenta la trayectoria del vuelo y
+// clasifica cada tramo (órbita, ascenso, descenso, pasada, estático) según la
+// velocidad, la tasa de giro y la velocidad vertical. Devuelve los tramos y un
+// resumen por tipo.
+
+const { hav } = __req("js/srt.js");
+
+/** Tipos de maniobra y su color (para timeline e informe). */
+const MANEUVER_TYPES = ['orbit', 'turn', 'climb', 'descent', 'cruise', 'hover'];
+const MANEUVER_COLOR = { orbit: '#a06bff', turn: '#ffb43d', climb: '#37cf6b', descent: '#ff5d5d', cruise: '#5b9dff', hover: '#8a93a6' };
+/** Icono (path SVG 24×24, solo trazo) por tipo de maniobra. */
+const MANEUVER_ICON = {
+  orbit: 'M20 12a8 8 0 1 1-3-6.2 M20 4v4h-4',
+  turn: 'M4 13a8 8 0 0 1 13-5 M18 4v4h-4',
+  climb: 'M12 20V6 M6 11l6-6 6 6',
+  descent: 'M12 4v14 M6 13l6 6 6-6',
+  cruise: 'M3 12h15 M13 7l5 5-5 5',
+  hover: 'M9 5v14 M15 5v14',
+};
+
+const bearing = (la1, lo1, la2, lo2) => {
+  const p1 = la1 * Math.PI / 180, p2 = la2 * Math.PI / 180, dl = (lo2 - lo1) * Math.PI / 180;
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+};
+
+/**
+ * @param {object} model modelo del vuelo (series)
+ * @param {{minDur?:number, turnRate?:number, vsTh?:number, hoverSpd?:number, orbitDeg?:number}} [opts]
+ * @returns {{segments:Array<{t0:number,t1:number,type:string,turnDeg?:number}>, summary:Object}}
+ */
+function detectManeuvers(model, opts = {}) {
+  const S = model.series || [];
+  const minDur = opts.minDur ?? 3, turnRate = opts.turnRate ?? 8, vsTh = opts.vsTh ?? 1.2;
+  const hoverSpd = opts.hoverSpd ?? 1.2, orbitDeg = opts.orbitDeg ?? 200;
+  if (S.length < 4) return { segments: [], summary: {} };
+
+  // 1) estado de cada muestra + tasa de giro con signo (°/s)
+  const P = [];
+  for (let i = 0; i < S.length; i++) {
+    const s = S[i], hs = s.hs ?? 0, vs = s.vs ?? 0;
+    let turn = 0;
+    if (i >= 1 && i < S.length - 1 && S[i - 1].lat != null && s.lat != null && S[i + 1].lat != null) {
+      const h1 = bearing(S[i - 1].lat, S[i - 1].lon, s.lat, s.lon);
+      const h2 = bearing(s.lat, s.lon, S[i + 1].lat, S[i + 1].lon);
+      const dt = (S[i + 1].t - S[i - 1].t) / 2; // intervalo entre los centros de los dos tramos
+      if (dt > 0) turn = (((h2 - h1 + 540) % 360) - 180) / dt;
+    }
+    let st;
+    if (hs < hoverSpd) st = 'hover';
+    else if (Math.abs(turn) > turnRate && hs > 1.5) st = 'turn';
+    else if (vs > vsTh) st = 'climb';
+    else if (vs < -vsTh) st = 'descent';
+    else st = 'cruise';
+    P.push({ t: s.t, st, turn });
+  }
+
+  // 2) agrupar muestras consecutivas del mismo estado
+  const raw = [];
+  for (const p of P) {
+    const last = raw[raw.length - 1];
+    if (last && last.st === p.st) { last.t1 = p.t; last.pts.push(p); }
+    else raw.push({ st: p.st, t0: p.t, t1: p.t, pts: [p] });
+  }
+
+  // 3) filtrar por duración y refinar (los giros largos y sostenidos son órbitas)
+  const segments = [];
+  for (const seg of raw) {
+    if (seg.t1 - seg.t0 < minDur) continue;
+    let type = seg.st, turnDeg;
+    if (seg.st === 'turn') {
+      let acc = 0;
+      for (let i = 1; i < seg.pts.length; i++) acc += seg.pts[i].turn * (seg.pts[i].t - seg.pts[i - 1].t);
+      turnDeg = Math.round(Math.abs(acc));
+      type = turnDeg >= orbitDeg ? 'orbit' : 'turn';
+    }
+    segments.push(turnDeg != null ? { t0: seg.t0, t1: seg.t1, type, turnDeg } : { t0: seg.t0, t1: seg.t1, type });
+  }
+
+  // 4) los giros muy leves no son maniobra: pasan a pasada
+  for (const s of segments) if (s.type === 'turn' && (s.turnDeg || 0) < (opts.minTurnDeg ?? 25)) { s.type = 'cruise'; delete s.turnDeg; }
+  // 5) fusionar tramos consecutivos del mismo tipo separados por huecos cortos
+  const merged = [];
+  for (const s of segments) {
+    const last = merged[merged.length - 1];
+    if (last && last.type === s.type && s.t0 - last.t1 <= (opts.mergeGap ?? 4)) { last.t1 = s.t1; if (s.turnDeg) last.turnDeg = (last.turnDeg || 0) + s.turnDeg; }
+    else merged.push({ ...s });
+  }
+
+  // 6) estadísticas por tramo (para los tooltips)
+  for (const seg of merged) {
+    let n = 0, sumHs = 0, minR = Infinity, maxR = -Infinity;
+    for (const s of S) {
+      if (s.t < seg.t0) continue; if (s.t > seg.t1) break;
+      if (s.hs != null) { sumHs += s.hs; n++; }
+      if (s.rel != null) { if (s.rel < minR) minR = s.rel; if (s.rel > maxR) maxR = s.rel; }
+    }
+    seg.avgHs = n ? sumHs / n : 0;
+    seg.minRel = isFinite(minR) ? minR : null;
+    seg.maxRel = isFinite(maxR) ? maxR : null;
+  }
+
+  // 7) resumen por tipo (nº de tramos)
+  const summary = {};
+  for (const s of merged) summary[s.type] = (summary[s.type] || 0) + 1;
+  return { segments: merged, summary };
+}
+
+Object.assign(__x, { MANEUVER_TYPES, MANEUVER_COLOR, MANEUVER_ICON, detectManeuvers });
+
+};
+
 __m["js/mp4-muxer.js"] = function (__x, __req) {
 // Muxer MP4 mínimo, salida progresiva estándar (moov al final): compatible con
 // iOS/QuickTime, a diferencia del MP4 fragmentado que produce MediaRecorder.
@@ -6193,7 +6582,112 @@ async function generateAmbient(sampleRate, duration, style = 'cinematico') {
   return ctx.startRendering();
 }
 
-Object.assign(__x, { STYLES, generateAmbient });
+/**
+ * Sonificación reactiva: música generada a partir de la telemetría del vuelo.
+ * La altura modula el brillo y el tono; la velocidad, la densidad de notas.
+ * @param {number} sampleRate @param {object} model @param {number} duration
+ * @returns {Promise<AudioBuffer>}
+ */
+async function generateFlightMusic(sampleRate, model, duration) {
+  const S = (model.series || []).filter((s) => s.t != null);
+  if (S.length < 4) return generateAmbient(sampleRate, duration, 'cinematico');
+  const dur = Math.max(6, duration);
+  const ctx = new OfflineAudioContext(2, Math.ceil(sampleRate * dur), sampleRate);
+  let rMin = Infinity, rMax = -Infinity, hMax = 1;
+  for (const s of S) { if (s.rel != null) { if (s.rel < rMin) rMin = s.rel; if (s.rel > rMax) rMax = s.rel; } if (s.hs != null && s.hs > hMax) hMax = s.hs; }
+  if (!isFinite(rMin)) { rMin = 0; rMax = 1; } if (rMax <= rMin) rMax = rMin + 1;
+  const at = (t) => { let i = 1; while (i < S.length && S[i].t < t) i++; const a = S[i - 1], b = S[Math.min(i, S.length - 1)]; const sp = (b.t - a.t) || 1, f = Math.max(0, Math.min(1, (t - a.t) / sp)); const L = (k) => (a[k] != null && b[k] != null) ? a[k] + (b[k] - a[k]) * f : (a[k] ?? b[k] ?? 0); return { hs: L('hs'), rel: L('rel') }; };
+
+  const master = ctx.createGain();
+  master.gain.setValueAtTime(0, 0); master.gain.linearRampToValueAtTime(0.85, 2);
+  master.gain.setValueAtTime(0.85, Math.max(2.1, dur - 3)); master.gain.linearRampToValueAtTime(0, dur);
+  master.connect(ctx.destination);
+  const rev = ctx.createConvolver(); rev.buffer = makeImpulse(ctx, 2.6, 2.4); const rg = ctx.createGain(); rg.gain.value = 0.4; master.connect(rev); rev.connect(rg); rg.connect(ctx.destination);
+
+  // pad drone con brillo (cutoff) modulado por la altura
+  const padG = ctx.createGain(); padG.gain.value = 0.12; const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.7; padG.connect(lp); lp.connect(master);
+  for (let t = 0; t < dur; t += 1) { const nr = ((at(t).rel - rMin) / (rMax - rMin)); lp.frequency.setValueAtTime(520 + nr * 2600, t); }
+  [110, 164.81].forEach((f, i) => { const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f; o.detune.value = i ? 6 : -6; o.connect(padG); o.start(0); o.stop(dur); });
+
+  // campanas: tono según altura, cadencia según velocidad (escala pentatónica menor)
+  const scale = [0, 3, 5, 7, 10];
+  let t = 1;
+  while (t < dur - 1) {
+    const { hs, rel } = at(t);
+    const nr = Math.max(0, Math.min(1, (rel - rMin) / (rMax - rMin)));
+    const octave = 2 + Math.round(nr * 2);
+    const semis = scale[(Math.random() * scale.length) | 0] + octave * 12;
+    bell(ctx, master, 220 * 2 ** (semis / 12), t);
+    const speedN = Math.min(1, (hs || 0) / Math.max(4, hMax * 0.7));
+    t += Math.max(0.35, 1.7 - speedN * 1.2);
+  }
+  return ctx.startRendering();
+}
+
+Object.assign(__x, { STYLES, generateAmbient, generateFlightMusic });
+
+};
+
+__m["js/pilot-score.js"] = function (__x, __req) {
+// Puntuación de pilotaje + coaching: analiza la suavidad del vuelo (aceleración,
+// control de altura, giros y estabilidad del gimbal) y devuelve una nota global
+// 0-100 por aspecto, más consejos concretos. Todo heurístico sobre la serie.
+
+const bearing = (la1, lo1, la2, lo2) => {
+  const p1 = la1 * Math.PI / 180, p2 = la2 * Math.PI / 180, dl = (lo2 - lo1) * Math.PI / 180;
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+};
+const clamp = (x) => Math.max(0, Math.min(100, Math.round(x)));
+
+/**
+ * @param {object} model modelo del vuelo (series)
+ * @returns {{overall:number, aspects:{smoothness:number,altitude:number,turns:number,gimbal:number}, tips:Array<{level:'good'|'warn',key:string}>}|null}
+ */
+function computePilotScore(model) {
+  const S = (model.series || []).filter((s) => s.hs != null && s.t != null);
+  if (S.length < 8) return null;
+  const t = S.map((s) => s.t);
+  const sm = (vals, w = 2) => { const o = new Array(vals.length); for (let i = 0; i < vals.length; i++) { let s = 0, n = 0; for (let j = -w; j <= w; j++) { const k = i + j; if (k >= 0 && k < vals.length && vals[k] != null) { s += vals[k]; n++; } } o[i] = n ? s / n : 0; } return o; };
+  const rmsDeriv = (vals) => { let s = 0, n = 0; for (let i = 1; i < vals.length; i++) { const dt = t[i] - t[i - 1]; if (dt > 0) { const d = (vals[i] - vals[i - 1]) / dt; s += d * d; n++; } } return Math.sqrt(s / Math.max(1, n)); };
+
+  // suavizamos las señales GPS antes de derivar (evita penalizar el ruido)
+  const rmsAcc = rmsDeriv(sm(S.map((s) => s.hs ?? 0)));       // aceleración horizontal
+  const rmsVAcc = rmsDeriv(sm(S.map((s) => s.vs ?? 0)));      // aceleración vertical
+  const rmsPitchRate = rmsDeriv(sm(S.map((s) => s.pitch ?? 0))); // velocidad de cabeceo del gimbal
+
+  // suavidad de giro: variabilidad de la tasa de rumbo (con velocidad suficiente)
+  const rate = [];
+  for (let i = 1; i < S.length - 1; i++) {
+    if (S[i - 1].lat != null && S[i].lat != null && S[i + 1].lat != null && (S[i].hs ?? 0) > 1.5) {
+      const h1 = bearing(S[i - 1].lat, S[i - 1].lon, S[i].lat, S[i].lon);
+      const h2 = bearing(S[i].lat, S[i].lon, S[i + 1].lat, S[i + 1].lon);
+      const dt = (S[i + 1].t - S[i - 1].t) / 2;
+      if (dt > 0) rate.push((((h2 - h1 + 540) % 360) - 180) / dt);
+    }
+  }
+  const rateSm = sm(rate);
+  let tj = 0, tn = 0; for (let i = 1; i < rateSm.length; i++) { const d = rateSm[i] - rateSm[i - 1]; tj += d * d; tn++; }
+  const rmsTurnJerk = tn ? Math.sqrt(tj / tn) : 0;
+
+  const smoothness = clamp(100 - rmsAcc * 40);
+  const altitude = clamp(100 - rmsVAcc * 55);
+  const turnsScore = clamp(100 - rmsTurnJerk * 22);
+  const gimbal = clamp(100 - rmsPitchRate * 12);
+  const overall = clamp(smoothness * 0.3 + altitude * 0.25 + turnsScore * 0.25 + gimbal * 0.2);
+  const aspects = { smoothness, altitude, turns: turnsScore, gimbal };
+
+  // coaching: avisar de los aspectos flojos y elogiar el mejor
+  const rank = [['smoothness', smoothness], ['altitude', altitude], ['turns', turnsScore], ['gimbal', gimbal]];
+  const tips = [];
+  for (const [key, v] of rank) if (v < 55) tips.push({ level: 'warn', key });
+  const best = rank.slice().sort((a, b) => b[1] - a[1])[0];
+  if (best[1] >= 82) tips.push({ level: 'good', key: best[0] });
+  return { overall, aspects, tips };
+}
+
+Object.assign(__x, { computePilotScore });
 
 };
 
@@ -6563,6 +7057,45 @@ function parseSRT(txt) {
 }
 
 Object.assign(__x, { hav, parseSRT });
+
+};
+
+__m["js/sun-times.js"] = function (__x, __req) {
+// Horas solares del lugar y día del vuelo: amanecer, atardecer y golden hour
+// (mañana y tarde), a partir de la elevación solar calculada por solar.js.
+// Sirve para decir si el vuelo cazó la buena luz y cuándo volver.
+
+const { solarPosition } = __req("js/solar.js");
+
+/**
+ * @param {Date} date día del vuelo (se usa la fecha; se recorre el día entero)
+ * @param {number} lat @param {number} lon
+ * @returns {{sunrise:number|null, sunset:number|null, goldenMorning:[number,number]|null, goldenEvening:[number,number]|null, noonEl:number}} minutos desde medianoche
+ */
+function sunTimes(date, lat, lon) {
+  const base = new Date(date); base.setHours(0, 0, 0, 0);
+  const el = [];
+  for (let m = 0; m <= 1440; m += 2) el.push({ m, e: solarPosition(new Date(base.getTime() + m * 60000), lat, lon).elevation });
+  const interp = (i, thr) => { const a = el[i - 1], b = el[i]; const f = (thr - a.e) / (b.e - a.e || 1e-9); return a.m + f * (b.m - a.m); };
+  const cross = (thr, up) => { for (let i = 1; i < el.length; i++) { const a = el[i - 1].e, b = el[i].e; if (up && a < thr && b >= thr) return interp(i, thr); if (!up && a >= thr && b < thr) return interp(i, thr); } return null; };
+  const sunrise = cross(0, true), sunset = cross(0, false);
+  const ghMornEnd = cross(6, true), ghEveStart = cross(6, false);
+  const noonEl = Math.max(...el.map((x) => x.e));
+  return {
+    sunrise, sunset, noonEl,
+    goldenMorning: (sunrise != null && ghMornEnd != null && ghMornEnd > sunrise) ? [sunrise, ghMornEnd] : null,
+    goldenEvening: (ghEveStart != null && sunset != null && sunset > ghEveStart) ? [ghEveStart, sunset] : null,
+  };
+}
+
+/** ¿El minuto del día `min` cae en alguna golden hour? Devuelve 'morning'|'evening'|null. */
+function inGolden(min, times) {
+  if (times.goldenMorning && min >= times.goldenMorning[0] && min <= times.goldenMorning[1]) return 'morning';
+  if (times.goldenEvening && min >= times.goldenEvening[0] && min <= times.goldenEvening[1]) return 'evening';
+  return null;
+}
+
+Object.assign(__x, { sunTimes, inGolden });
 
 };
 
