@@ -125,4 +125,54 @@ code { background: var(--color-tile); border: 1px solid var(--color-divider); bo
   .hstats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .hstats stat-tile { min-width: 0; }
 }
+
+/* maniobras: leyenda con iconos + línea de tiempo con eje */
+.mnv-legend { display: flex; flex-wrap: wrap; gap: 16px 26px; margin-bottom: 22px; }
+.mnv-leg { display: flex; align-items: center; gap: 12px; }
+.mnv-ic { width: 34px; height: 34px; padding: 7px; border-radius: 10px; flex: none; box-sizing: border-box;
+  color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent); fill: none; stroke: var(--c); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mnv-leg-txt { display: flex; flex-direction: column; line-height: 1.25; }
+.mnv-leg-txt strong { font-size: 14.5px; font-weight: 700; color: var(--color-text); }
+.mnv-leg-txt span { font-size: 12px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.mnv-track { position: relative; height: 30px; border-radius: 9px; background: color-mix(in srgb, var(--color-text) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-text) 6%, transparent); }
+.mnv-seg { position: absolute; top: 3px; bottom: 3px; margin: 0 1px; border-radius: 6px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--c) 88%, white 12%), var(--c));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.22), 0 1px 3px color-mix(in srgb, var(--c) 40%, transparent); transition: filter .12s; }
+.mnv-seg:hover { filter: brightness(1.16) saturate(1.12); transform: scaleY(1.12); }
+.mnv-seg.mnv-dim { opacity: .32; filter: saturate(.55); }
+/* tooltip del tramo */
+.mnv-tip {
+  position: absolute; bottom: calc(100% + 12px); transform: translateX(-50%); z-index: 6; pointer-events: none;
+  min-width: 180px; padding: 12px 14px; border-radius: 13px; background: var(--color-surface-solid);
+  border: 1px solid var(--color-divider); box-shadow: var(--shadow-lg);
+}
+.mnv-tip[hidden] { display: none; }
+.mnv-tip::after { content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 7px solid transparent; border-top-color: var(--color-surface-solid); }
+.mnv-tip-h { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 14px; color: var(--color-text); margin-bottom: 9px; padding-bottom: 9px; border-bottom: 1px solid color-mix(in srgb, var(--color-divider) 60%, transparent); }
+.mnv-tip-ic { width: 22px; height: 22px; padding: 4px; border-radius: 7px; box-sizing: border-box; flex: none; color: var(--c); background: color-mix(in srgb, var(--c) 18%, transparent); fill: none; stroke: var(--c); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.mnv-tip-row { display: flex; justify-content: space-between; gap: 20px; font-size: 12.5px; padding: 2.5px 0; }
+.mnv-tip-row span { color: var(--color-text-muted); }
+.mnv-tip-row b { color: var(--color-text); font-variant-numeric: tabular-nums; }
+
+/* score de pilotaje: anillo + barras + consejos */
+.pscore { display: flex; align-items: center; gap: 34px; flex-wrap: wrap; }
+.pscore-ring { position: relative; width: 132px; height: 132px; flex: none; }
+.pscore-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.pr-bg { fill: none; stroke: color-mix(in srgb, var(--color-text) 10%, transparent); stroke-width: 10; }
+.pr-fg { fill: none; stroke-width: 10; stroke-linecap: round; }
+.pscore-num { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.pscore-num strong { font-size: 40px; font-weight: 800; color: var(--color-text); line-height: 1; }
+.pscore-num span { font-size: 11px; color: var(--color-text-muted); margin-top: 3px; text-transform: uppercase; letter-spacing: .08em; }
+.pscore-bars { flex: 1; min-width: 260px; display: flex; flex-direction: column; gap: 13px; }
+.pbar { display: grid; grid-template-columns: 84px 1fr 32px; align-items: center; gap: 13px; }
+.pbar-l { font-size: 13.5px; font-weight: 600; color: var(--color-text-muted); }
+.pbar-t { height: 9px; border-radius: 100px; background: color-mix(in srgb, var(--color-text) 9%, transparent); overflow: hidden; }
+.pbar-f { height: 100%; border-radius: 100px; }
+.pbar-v { font-size: 14.5px; font-weight: 700; color: var(--color-text); text-align: right; font-variant-numeric: tabular-nums; }
+.pscore-tips { margin-top: 22px; display: flex; flex-direction: column; gap: 12px; }
+.mnv-axis { position: relative; height: 16px; margin-top: 8px; }
+.mnv-tick { position: absolute; transform: translateX(-50%); font-size: 11px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mnv-tick:first-child { transform: translateX(0); }
+.mnv-tick:last-child { transform: translateX(-100%); }
 `;

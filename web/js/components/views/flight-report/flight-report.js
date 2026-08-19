@@ -20,6 +20,9 @@ import { PlayerClock } from '../../../core/player-clock.js';
 import { reveal } from '../../../core/reveal.js';
 import { createHud } from '../../../hud.js';
 import { detectHighlights } from '../../../highlights.js';
+import { detectManeuvers, MANEUVER_TYPES, MANEUVER_COLOR, MANEUVER_ICON } from '../../../maneuvers.js';
+import { computePilotScore } from '../../../pilot-score.js';
+import { sunTimes, inGolden } from '../../../sun-times.js';
 import { styles } from './flight-report.css.js';
 
 const f = (v, d = 0) => (v == null ? '—' : v.toFixed(d));
@@ -66,6 +69,8 @@ export class FlightReport extends DjiElement {
         ${this._sectionChart('alt', 'c-alt', `<div class="legend"><span><span class="sw" style="background:var(--c-blue)"></span>${t('alt.series')}</span></div>`)}
         ${this._terrainTpl()}
         ${this._dynamicsTpl()}
+        ${this._maneuversTpl()}
+        ${this._pilotScoreTpl()}
         ${this._windTpl()}
         ${this._cameraTpl(cam, r, iso, a)}
         ${this._solarTpl(m)}
@@ -215,6 +220,86 @@ export class FlightReport extends DjiElement {
         <h2>${escapeHtml(t(prefix + '.title'))}</h2>
         <p class="sub">${escapeHtml(t(prefix + '.sub'))}</p>
         <div class="card">${legend}<time-chart id="${id}"></time-chart></div>
+      </section>`;
+  }
+
+  _maneuversTpl() {
+    this._mnv = detectManeuvers(this.model);
+    const { segments, summary } = this._mnv;
+    if (!segments.length) return '';
+    const dur = this.model.meta.dur || 1;
+    const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
+    const durBy = {}; for (const s of segments) durBy[s.type] = (durBy[s.type] || 0) + (s.t1 - s.t0);
+    const icon = (ty) => `<svg viewBox="0 0 24 24" class="mnv-ic" aria-hidden="true"><path d="${MANEUVER_ICON[ty]}"/></svg>`;
+    const legend = MANEUVER_TYPES.filter((ty) => summary[ty]).map((ty) => `
+      <div class="mnv-leg" style="--c:${MANEUVER_COLOR[ty]}">
+        ${icon(ty)}
+        <div class="mnv-leg-txt"><strong>${summary[ty]} ${escapeHtml(t('mnv.' + ty + (summary[ty] > 1 ? '.pl' : '')))}</strong><span>${Math.round(durBy[ty] / dur * 100)}% ${escapeHtml(t('mnv.oftime'))}</span></div>
+      </div>`).join('');
+    const bands = segments.map((s, i) =>
+      `<div class="mnv-seg" data-i="${i}" style="left:${(s.t0 / dur * 100).toFixed(2)}%;width:${((s.t1 - s.t0) / dur * 100).toFixed(2)}%;--c:${MANEUVER_COLOR[s.type]}"></div>`).join('');
+    let axis = '';
+    for (let m = 0; m <= dur; m += 60) axis += `<span class="mnv-tick" style="left:${(m / dur * 100).toFixed(2)}%">${mmss(m)}</span>`;
+    return `
+      <section class="blk">
+        <div class="eyebrow">${escapeHtml(t('mnv.eyebrow'))}</div>
+        <h2>${escapeHtml(t('mnv.title'))}</h2>
+        <p class="sub">${escapeHtml(t('mnv.sub'))}</p>
+        <div class="card">
+          <div class="mnv-legend">${legend}</div>
+          <div class="mnv-track">${bands}<div class="mnv-tip" id="mnvtip" hidden></div></div>
+          <div class="mnv-axis">${axis}</div>
+        </div>
+      </section>`;
+  }
+
+  /** HTML del tooltip de un tramo de maniobra. */
+  _mnvTipHtml(s) {
+    const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
+    const rows = [`<div class="mnv-tip-row"><span>${escapeHtml(t('mnv.dur'))}</span><b>${Math.round(s.t1 - s.t0)} s</b></div>`,
+      `<div class="mnv-tip-row"><span>${escapeHtml(t('mnv.avgspd'))}</span><b>${Math.round(s.avgHs * 3.6)} km/h</b></div>`];
+    if (s.maxRel != null) rows.push(`<div class="mnv-tip-row"><span>${escapeHtml(t('mnv.alt'))}</span><b>${Math.round(s.minRel)}–${Math.round(s.maxRel)} m</b></div>`);
+    if (s.turnDeg) rows.push(`<div class="mnv-tip-row"><span>${escapeHtml(t('mnv.turnacc'))}</span><b>${s.turnDeg}°</b></div>`);
+    return `<div class="mnv-tip-h" style="--c:${MANEUVER_COLOR[s.type]}"><svg viewBox="0 0 24 24" class="mnv-tip-ic" aria-hidden="true"><path d="${MANEUVER_ICON[s.type]}"/></svg>${escapeHtml(t('mnv.' + s.type))} · ${mmss(s.t0)}–${mmss(s.t1)}</div>${rows.join('')}`;
+  }
+
+  /** Cablea el tooltip y el resaltado al pasar por los tramos de la línea de tiempo. */
+  _wireManeuvers() {
+    const track = this.$('.mnv-track'), tip = this.$('#mnvtip');
+    if (!track || !tip || !this._mnv) return;
+    const segs = this.$$('.mnv-seg');
+    const move = (e) => { const r = track.getBoundingClientRect(); tip.style.left = Math.max(0, Math.min(r.width, e.clientX - r.left)) + 'px'; };
+    for (const el of segs) {
+      this.on(el, 'mouseenter', () => { const s = this._mnv.segments[+el.dataset.i]; if (!s) return; tip.innerHTML = this._mnvTipHtml(s); tip.hidden = false; segs.forEach((x) => x.classList.toggle('mnv-dim', x !== el)); });
+      this.on(el, 'mousemove', move);
+      this.on(el, 'mouseleave', () => { tip.hidden = true; segs.forEach((x) => x.classList.remove('mnv-dim')); });
+    }
+  }
+
+  _pilotScoreTpl() {
+    const ps = computePilotScore(this.model);
+    if (!ps) return '';
+    const col = (v) => (v >= 80 ? '#37cf6b' : v >= 60 ? '#5b9dff' : '#ffb43d');
+    const R = 52, C = 2 * Math.PI * R, off = (C * (1 - ps.overall / 100)).toFixed(1);
+    const bars = [['smoothness', ps.aspects.smoothness], ['altitude', ps.aspects.altitude], ['turns', ps.aspects.turns], ['gimbal', ps.aspects.gimbal]].map(([k, v]) =>
+      `<div class="pbar"><span class="pbar-l">${escapeHtml(t('ps.' + k))}</span><div class="pbar-t"><div class="pbar-f" style="width:${v}%;background:${col(v)}"></div></div><span class="pbar-v">${v}</span></div>`).join('');
+    const tips = ps.tips.map((tp) =>
+      `<app-callout ${tp.level === 'warn' ? 'variant="warn"' : 'variant="good"'} title="${escapeHtml(t(tp.level === 'warn' ? 'ps.improve' : 'ps.strong'))}">${escapeHtml(t('ps.tip.' + tp.key + '.' + tp.level))}</app-callout>`).join('');
+    return `
+      <section class="blk">
+        <div class="eyebrow">${escapeHtml(t('ps.eyebrow'))}</div>
+        <h2>${escapeHtml(t('ps.title'))}</h2>
+        <p class="sub">${escapeHtml(t('ps.sub'))}</p>
+        <div class="card">
+          <div class="pscore">
+            <div class="pscore-ring">
+              <svg viewBox="0 0 120 120"><circle class="pr-bg" cx="60" cy="60" r="${R}"/><circle class="pr-fg" cx="60" cy="60" r="${R}" style="stroke:${col(ps.overall)};stroke-dasharray:${C.toFixed(1)};stroke-dashoffset:${off}"/></svg>
+              <div class="pscore-num"><strong>${ps.overall}</strong><span>${escapeHtml(t('ps.of100'))}</span></div>
+            </div>
+            <div class="pscore-bars">${bars}</div>
+          </div>
+          ${tips ? `<div class="pscore-tips">${tips}</div>` : ''}
+        </div>
       </section>`;
   }
 
@@ -386,6 +471,17 @@ export class FlightReport extends DjiElement {
     const far = this.kps.find((k) => k.key === 'far');
     const flightAz = far ? bearing(this.model.takeoff[0], this.model.takeoff[1], far.lat, far.lon) : null;
     const tile = (v, unit, label, hint) => `<stat-tile value="${escapeHtml(v)}" unit="${unit}" label="${escapeHtml(label)}" hint="${escapeHtml(hint)}"></stat-tile>`;
+    // golden hour del lugar y día + si el vuelo cazó la buena luz
+    const times = sunTimes(start, clat, clon);
+    const hhmm = (min) => min == null ? '—' : `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(Math.round(min % 60)).padStart(2, '0')}`;
+    const g = inGolden(start.getHours() * 60 + start.getMinutes(), times);
+    const ranges = [
+      times.goldenMorning && t('solar.golden.morning', { a: hhmm(times.goldenMorning[0]), b: hhmm(times.goldenMorning[1]) }),
+      times.goldenEvening && t('solar.golden.evening', { a: hhmm(times.goldenEvening[0]), b: hhmm(times.goldenEvening[1]) }),
+    ].filter(Boolean).join(' · ');
+    const next = times.goldenEvening ? hhmm(times.goldenEvening[0]) : (times.goldenMorning ? hhmm(times.goldenMorning[0]) : '—');
+    const body = g ? t('solar.golden.in', { when: t('solar.golden.when.' + g), ranges }) : t('solar.golden.out', { ranges, next });
+    const golden = ranges ? `<app-callout ${g ? 'variant="good"' : ''} title="${escapeHtml(t('solar.golden.t'))}">${escapeHtml(body)}</app-callout>` : '';
     return `
       <section class="blk">
         <div class="eyebrow">${escapeHtml(t('solar.eyebrow'))}</div>
@@ -401,6 +497,7 @@ export class FlightReport extends DjiElement {
             </div>
           </div>
         </div>
+        ${golden}
       </section>`;
   }
 
@@ -525,6 +622,7 @@ export class FlightReport extends DjiElement {
     this._setupScrolly();
     this._setupReveal();
     this._setupNav();
+    this._wireManeuvers();
   }
 
   /** El player (barra + miniatura) solo aparece al llegar a la sección del mapa. */
@@ -607,6 +705,8 @@ export class FlightReport extends DjiElement {
     this._player.video = this._video || null;
     const hl = detectHighlights(this.model);
     this._player.highlights = hl; // momentos destacados en la barra
+    this._player.maneuvers = (this._mnv || detectManeuvers(this.model)).segments; // bandas de maniobra
+    this._player.flightModel = this.model; // sonificación reactiva de la música
     const accent = getComputedStyle(this).getPropertyValue('--color-accent').trim() || '#5b9dff';
     // HUD de telemetría sobre el vídeo (con el color de acento del tema)
     this._player.hud = this._video
