@@ -12,6 +12,7 @@ import '../../ui/moment-card/moment-card.js';
 import '../../ui/callout/callout.js';
 import '../../ui/time-chart/time-chart.js';
 import '../../ui/sat-map/sat-map.js';
+import '../../ui/flight-3d/flight-3d.js';
 import '../../ui/export-bar/export-bar.js';
 import '../../ui/image-lightbox/image-lightbox.js';
 import '../../ui/flight-player/flight-player.js';
@@ -66,6 +67,7 @@ export class FlightReport extends DjiElement {
         ${this._resumenTpl(m, r, dur, relmax, hsavg, hsmax, iso)}
         ${this._momentosTpl(a)}
         ${this._routeTpl()}
+        ${this._route3dTpl()}
         ${this._sectionChart('alt', 'c-alt', `<div class="legend"><span><span class="sw" style="background:var(--c-blue)"></span>${t('alt.series')}</span></div>`)}
         ${this._terrainTpl()}
         ${this._dynamicsTpl()}
@@ -211,6 +213,17 @@ export class FlightReport extends DjiElement {
         <div class="scrolly-track"><div class="scrolly-stick">${card}</div></div>
       </section>`;
     return `<section class="blk">${head}${card}</section>`;
+  }
+
+  /** Sección de reconstrucción 3D navegable del vuelo. */
+  _route3dTpl() {
+    return `
+      <section class="blk">
+        <div class="eyebrow">${escapeHtml(t('v3d.eyebrow'))}</div>
+        <h2>${escapeHtml(t('v3d.title'))}</h2>
+        <p class="sub">${escapeHtml(t('v3d.sub'))}</p>
+        <div class="card"><flight-3d id="v3d"></flight-3d></div>
+      </section>`;
   }
 
   _sectionChart(prefix, id, legend) {
@@ -600,6 +613,7 @@ export class FlightReport extends DjiElement {
     this.$('#c-gb').data = { series: S, dur, cfgs: [{ k: 'pitch', color: '--c-green', area: true, fmt: (v) => `${Math.round(v)}°`, label: strip(t('gim.legend')), unit: '°', dec: 0 }] };
 
     this.$('#map').flight = { model: this.model, kps: this.kps };
+    this.$('#v3d').flight = { model: this.model };
     this.$('#exp').flight = { model: this.model, assets: this.assets };
     this._setupTerrain();
 
