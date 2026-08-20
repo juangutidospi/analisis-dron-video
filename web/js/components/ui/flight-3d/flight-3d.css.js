@@ -52,6 +52,7 @@ canvas:active { cursor: grabbing; }
   padding: 6px 11px; border-radius: 100px; background: rgba(12,17,26,.55); backdrop-filter: blur(10px);
 }
 .v3d-legend .grad { width: 60px; height: 7px; border-radius: 100px; background: linear-gradient(90deg, rgb(76,149,255), rgb(255,138,76)); }
+.v3d-legend .line { width: 26px; height: 5px; border-radius: 100px; background: #ff7d1a; box-shadow: 0 0 8px rgba(255,125,26,.6); }
 
 .v3d-hint {
   position: absolute; top: 12px; right: 12px; z-index: 6;
