@@ -129,6 +129,7 @@ export default {
   'v3d.loading': 'Reconstruyendo el terreno en 3D…',
   'v3d.low': 'Bajo',
   'v3d.high': 'Alto',
+  'v3d.path': 'Trayectoria del vuelo',
   'v3d.hint': 'Arrastra para orbitar · rueda para zoom',
   'v3d.flyover': 'Sobrevuelo',
   'v3d.pause': 'Pausa',

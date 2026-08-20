@@ -129,6 +129,7 @@ export default {
   'v3d.loading': 'Rebuilding the terrain in 3D…',
   'v3d.low': 'Low',
   'v3d.high': 'High',
+  'v3d.path': 'Flight path',
   'v3d.hint': 'Drag to orbit · wheel to zoom',
   'v3d.flyover': 'Flyover',
   'v3d.pause': 'Pause',
