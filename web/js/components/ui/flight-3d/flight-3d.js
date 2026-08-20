@@ -247,10 +247,13 @@ export class Flight3D extends DjiElement {
   _placeDrone(time) {
     const THREE = window.THREE, d = this._scene.droneAt(time);
     this._drone.position.set(d.x, d.y, d.z);
-    if (this._droneBody) this._droneBody.rotation.y = -d.heading; // el frente (-Z) mira al rumbo
+    // en hover el rumbo es NaN: mantenemos el último para que no gire de golpe
+    const h = isNaN(d.heading) ? (this._bodyHeading ?? 0) : d.heading;
+    this._bodyHeading = h;
+    if (this._droneBody) this._droneBody.rotation.y = -h; // el frente (-Z) mira al rumbo
     // dirección de la cámara: horizontal por rumbo, inclinada por el pitch del gimbal
     const el = d.pitch; // rad (negativo = mirando abajo)
-    const dir = new THREE.Vector3(Math.cos(el) * Math.sin(d.heading), Math.sin(el), -Math.cos(el) * Math.cos(d.heading));
+    const dir = new THREE.Vector3(Math.cos(el) * Math.sin(h), Math.sin(el), -Math.cos(el) * Math.cos(h));
     this._cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir.normalize());
   }
 
@@ -318,6 +321,7 @@ export class Flight3D extends DjiElement {
   _startFlyover() {
     if (this._time == null || this._time >= this._scene.duration - 0.05) this._time = 0;
     this._playing = true; this._last = performance.now();
+    this._headSmooth = null; this._look = null; // la cámara se coloca limpia al arrancar
     this._setPlayIcon(true);
   }
 
@@ -333,17 +337,24 @@ export class Flight3D extends DjiElement {
     if (this._time >= this._scene.duration) this._stopFlyover();
   }
 
-  /** Cámara persecutoria: detrás y por encima del dron, suavizada. */
+  /** Cámara persecutoria: detrás y por encima del dron, con rumbo suavizado. */
   _chaseCam() {
     const THREE = window.THREE, d = this._scene.droneAt(this._time);
+    // rumbo objetivo; en hover (NaN) mantenemos el último y no giramos
+    const target = isNaN(d.heading) ? (this._headSmooth ?? 0) : d.heading;
+    if (this._headSmooth == null) this._headSmooth = target;
+    else {
+      // interpolación por el arco más corto → giro gradual sin saltos
+      const diff = ((target - this._headSmooth + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+      this._headSmooth += diff * 0.045;
+    }
+    const h = this._headSmooth;
     const back = 90 + this._orbit.r * 0.16, up = 34 + this._orbit.r * 0.05;
-    const want = new THREE.Vector3(
-      d.x - Math.sin(d.heading) * back, d.y + up, d.z + Math.cos(d.heading) * back,
-    );
-    this._cam.position.lerp(want, 0.06);
+    const want = new THREE.Vector3(d.x - Math.sin(h) * back, d.y + up, d.z + Math.cos(h) * back);
+    this._cam.position.lerp(want, 0.05);
     const look = new THREE.Vector3(d.x, d.y, d.z);
     this._look = this._look || look.clone();
-    this._look.lerp(look, 0.1);
+    this._look.lerp(look, 0.08);
     this._cam.lookAt(this._look);
   }
 

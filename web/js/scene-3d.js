@@ -106,14 +106,17 @@ export async function buildScene3D(model, opts = {}) {
   // altura del suelo bajo el despegue (para colocar el track por AGL/rel)
   const takeoffGround = elev ? sampleGrid(elev, grid, b, model.takeoff[0], model.takeoff[1]) : 0;
 
+  // malla de render subdividida (más fina que el DEM) para un relieve suave
+  const rgrid = elev ? Math.min(97, (grid - 1) * 3 + 1) : grid;
   const terrain = {
-    grid, base,
+    grid: rgrid, base,
     elevMin, elevMax,
-    // vértices en metros: {x, y (=elev-base), z, u, v}
+    // vértices en metros: {x, y (=elev-base), z, u, v}. La cota se muestrea del
+    // DEM bilinealmente, así el terreno queda suave aunque el DEM sea más grueso.
     vertex(r, c) {
-      const lat = b.north + (b.south - b.north) * (r / (grid - 1));
-      const lon = b.west + (b.east - b.west) * (c / (grid - 1));
-      const e = elev ? elev[r * grid + c] : 0;
+      const lat = b.north + (b.south - b.north) * (r / (rgrid - 1));
+      const lon = b.west + (b.east - b.west) * (c / (rgrid - 1));
+      const e = elev ? sampleGrid(elev, grid, b, lat, lon) : 0;
       const [u, v] = uv(lat, lon);
       return { x: X(lon), y: e - base, z: Z(lat), u, v };
     },
@@ -128,24 +131,25 @@ export async function buildScene3D(model, opts = {}) {
   const relMax = Math.max(1, ...S.map((s) => s.rel ?? 0));
   const track = S.map((s) => ({ x: X(s.lon), y: worldY(s.rel), z: Z(s.lat), t: s.t, rel: s.rel ?? 0 }));
 
-  // rumbo (heading) por muestra, a partir del desplazamiento
-  const heading = (i) => {
-    const a = S[Math.max(0, i - 1)], c = S[Math.min(S.length - 1, i + 1)];
-    return Math.atan2(X(c.lon) - X(a.lon), -(Z(c.lat) - Z(a.lat))); // rad, 0 = norte
+  // posición interpolada del dron en un instante (m), con pitch y velocidad
+  const posAt = (time) => {
+    let i = 1; while (i < S.length && S[i].t < time) i++;
+    const a = S[i - 1], c = S[Math.min(i, S.length - 1)];
+    const span = (c.t - a.t) || 1, f = Math.max(0, Math.min(1, (time - a.t) / span));
+    const lerp = (k) => (a[k] ?? 0) + ((c[k] ?? 0) - (a[k] ?? 0)) * f;
+    return { x: X(lerp('lon')), y: worldY(lerp('rel')), z: Z(lerp('lat')), pitch: (lerp('pitch') || 0) * Math.PI / 180, hs: lerp('hs') };
   };
 
-  /** Estado del dron interpolado en el instante t. */
+  /**
+   * Estado del dron en el instante t. El rumbo se calcula con una ventana de
+   * ±1.2 s (estable), y es NaN cuando el dron está prácticamente quieto (hover),
+   * para que la cámara mantenga el último rumbo en vez de dar saltos.
+   */
   const droneAt = (t) => {
-    let i = 1; while (i < S.length && S[i].t < t) i++;
-    const a = S[i - 1], c = S[Math.min(i, S.length - 1)];
-    const span = (c.t - a.t) || 1, f = Math.max(0, Math.min(1, (t - a.t) / span));
-    const lerp = (k) => (a[k] ?? 0) + ((c[k] ?? 0) - (a[k] ?? 0)) * f;
-    const lon = lerp('lon'), lat = lerp('lat'), rel = lerp('rel');
-    return {
-      x: X(lon), y: worldY(rel), z: Z(lat),
-      heading: heading(f < 0.5 ? i - 1 : Math.min(S.length - 1, i)),
-      pitch: (lerp('pitch') || 0) * Math.PI / 180,
-    };
+    const p = posAt(t), a = posAt(t - 1.2), c = posAt(t + 1.2);
+    const dxp = c.x - a.x, dzp = c.z - a.z, dist = Math.hypot(dxp, dzp);
+    const heading = dist > 1.5 ? Math.atan2(dxp, -dzp) : NaN;
+    return { x: p.x, y: p.y, z: p.z, pitch: p.pitch, hs: p.hs, heading };
   };
 
   const texture = await buildTexture(tc);
