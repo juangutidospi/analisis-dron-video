@@ -842,10 +842,13 @@ class Flight3D extends DjiElement {
   _placeDrone(time) {
     const THREE = window.THREE, d = this._scene.droneAt(time);
     this._drone.position.set(d.x, d.y, d.z);
-    if (this._droneBody) this._droneBody.rotation.y = -d.heading; // el frente (-Z) mira al rumbo
+    // en hover el rumbo es NaN: mantenemos el último para que no gire de golpe
+    const h = isNaN(d.heading) ? (this._bodyHeading ?? 0) : d.heading;
+    this._bodyHeading = h;
+    if (this._droneBody) this._droneBody.rotation.y = -h; // el frente (-Z) mira al rumbo
     // dirección de la cámara: horizontal por rumbo, inclinada por el pitch del gimbal
     const el = d.pitch; // rad (negativo = mirando abajo)
-    const dir = new THREE.Vector3(Math.cos(el) * Math.sin(d.heading), Math.sin(el), -Math.cos(el) * Math.cos(d.heading));
+    const dir = new THREE.Vector3(Math.cos(el) * Math.sin(h), Math.sin(el), -Math.cos(el) * Math.cos(h));
     this._cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir.normalize());
   }
 
@@ -913,6 +916,7 @@ class Flight3D extends DjiElement {
   _startFlyover() {
     if (this._time == null || this._time >= this._scene.duration - 0.05) this._time = 0;
     this._playing = true; this._last = performance.now();
+    this._headSmooth = null; this._look = null; // la cámara se coloca limpia al arrancar
     this._setPlayIcon(true);
   }
 
@@ -928,17 +932,24 @@ class Flight3D extends DjiElement {
     if (this._time >= this._scene.duration) this._stopFlyover();
   }
 
-  /** Cámara persecutoria: detrás y por encima del dron, suavizada. */
+  /** Cámara persecutoria: detrás y por encima del dron, con rumbo suavizado. */
   _chaseCam() {
     const THREE = window.THREE, d = this._scene.droneAt(this._time);
+    // rumbo objetivo; en hover (NaN) mantenemos el último y no giramos
+    const target = isNaN(d.heading) ? (this._headSmooth ?? 0) : d.heading;
+    if (this._headSmooth == null) this._headSmooth = target;
+    else {
+      // interpolación por el arco más corto → giro gradual sin saltos
+      const diff = ((target - this._headSmooth + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+      this._headSmooth += diff * 0.045;
+    }
+    const h = this._headSmooth;
     const back = 90 + this._orbit.r * 0.16, up = 34 + this._orbit.r * 0.05;
-    const want = new THREE.Vector3(
-      d.x - Math.sin(d.heading) * back, d.y + up, d.z + Math.cos(d.heading) * back,
-    );
-    this._cam.position.lerp(want, 0.06);
+    const want = new THREE.Vector3(d.x - Math.sin(h) * back, d.y + up, d.z + Math.cos(h) * back);
+    this._cam.position.lerp(want, 0.05);
     const look = new THREE.Vector3(d.x, d.y, d.z);
     this._look = this._look || look.clone();
-    this._look.lerp(look, 0.1);
+    this._look.lerp(look, 0.08);
     this._cam.lookAt(this._look);
   }
 
@@ -7465,14 +7476,17 @@ async function buildScene3D(model, opts = {}) {
   // altura del suelo bajo el despegue (para colocar el track por AGL/rel)
   const takeoffGround = elev ? sampleGrid(elev, grid, b, model.takeoff[0], model.takeoff[1]) : 0;
 
+  // malla de render subdividida (más fina que el DEM) para un relieve suave
+  const rgrid = elev ? Math.min(97, (grid - 1) * 3 + 1) : grid;
   const terrain = {
-    grid, base,
+    grid: rgrid, base,
     elevMin, elevMax,
-    // vértices en metros: {x, y (=elev-base), z, u, v}
+    // vértices en metros: {x, y (=elev-base), z, u, v}. La cota se muestrea del
+    // DEM bilinealmente, así el terreno queda suave aunque el DEM sea más grueso.
     vertex(r, c) {
-      const lat = b.north + (b.south - b.north) * (r / (grid - 1));
-      const lon = b.west + (b.east - b.west) * (c / (grid - 1));
-      const e = elev ? elev[r * grid + c] : 0;
+      const lat = b.north + (b.south - b.north) * (r / (rgrid - 1));
+      const lon = b.west + (b.east - b.west) * (c / (rgrid - 1));
+      const e = elev ? sampleGrid(elev, grid, b, lat, lon) : 0;
       const [u, v] = uv(lat, lon);
       return { x: X(lon), y: e - base, z: Z(lat), u, v };
     },
@@ -7487,24 +7501,25 @@ async function buildScene3D(model, opts = {}) {
   const relMax = Math.max(1, ...S.map((s) => s.rel ?? 0));
   const track = S.map((s) => ({ x: X(s.lon), y: worldY(s.rel), z: Z(s.lat), t: s.t, rel: s.rel ?? 0 }));
 
-  // rumbo (heading) por muestra, a partir del desplazamiento
-  const heading = (i) => {
-    const a = S[Math.max(0, i - 1)], c = S[Math.min(S.length - 1, i + 1)];
-    return Math.atan2(X(c.lon) - X(a.lon), -(Z(c.lat) - Z(a.lat))); // rad, 0 = norte
+  // posición interpolada del dron en un instante (m), con pitch y velocidad
+  const posAt = (time) => {
+    let i = 1; while (i < S.length && S[i].t < time) i++;
+    const a = S[i - 1], c = S[Math.min(i, S.length - 1)];
+    const span = (c.t - a.t) || 1, f = Math.max(0, Math.min(1, (time - a.t) / span));
+    const lerp = (k) => (a[k] ?? 0) + ((c[k] ?? 0) - (a[k] ?? 0)) * f;
+    return { x: X(lerp('lon')), y: worldY(lerp('rel')), z: Z(lerp('lat')), pitch: (lerp('pitch') || 0) * Math.PI / 180, hs: lerp('hs') };
   };
 
-  /** Estado del dron interpolado en el instante t. */
+  /**
+   * Estado del dron en el instante t. El rumbo se calcula con una ventana de
+   * ±1.2 s (estable), y es NaN cuando el dron está prácticamente quieto (hover),
+   * para que la cámara mantenga el último rumbo en vez de dar saltos.
+   */
   const droneAt = (t) => {
-    let i = 1; while (i < S.length && S[i].t < t) i++;
-    const a = S[i - 1], c = S[Math.min(i, S.length - 1)];
-    const span = (c.t - a.t) || 1, f = Math.max(0, Math.min(1, (t - a.t) / span));
-    const lerp = (k) => (a[k] ?? 0) + ((c[k] ?? 0) - (a[k] ?? 0)) * f;
-    const lon = lerp('lon'), lat = lerp('lat'), rel = lerp('rel');
-    return {
-      x: X(lon), y: worldY(rel), z: Z(lat),
-      heading: heading(f < 0.5 ? i - 1 : Math.min(S.length - 1, i)),
-      pitch: (lerp('pitch') || 0) * Math.PI / 180,
-    };
+    const p = posAt(t), a = posAt(t - 1.2), c = posAt(t + 1.2);
+    const dxp = c.x - a.x, dzp = c.z - a.z, dist = Math.hypot(dxp, dzp);
+    const heading = dist > 1.5 ? Math.atan2(dxp, -dzp) : NaN;
+    return { x: p.x, y: p.y, z: p.z, pitch: p.pitch, hs: p.hs, heading };
   };
 
   const texture = await buildTexture(tc);
