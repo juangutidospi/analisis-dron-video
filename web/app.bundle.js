@@ -7369,44 +7369,66 @@ Object.assign(__x, { buildMap });
 
 __m["js/scene-3d.js"] = function (__x, __req) {
 // Preparación de la escena 3D del vuelo (agnóstica del motor de render).
-// Proyecta lat/lon a metros locales (ENU), baja el DEM de Open-Meteo para la malla
-// del terreno, compone la textura de satélite (teselas Esri) drapeada sobre el
-// relieve, y expone la posición/rumbo/pitch del dron en cada instante.
+// Proyecta lat/lon a metros locales (ENU), baja el DEM del terreno de teselas
+// Terrarium (terrain-RGB de AWS: sin clave, con CORS y sin límite por minuto),
+// compone la textura de satélite (teselas Esri) drapeada sobre el relieve, y
+// expone la posición/rumbo/pitch del dron en cada instante.
 // La usan tanto la rama de Three.js como la del renderer propio en canvas.
 
 const { tileConfig, projector } = __req("js/geo.js");
 
 const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile';
-const ELEV = 'https://api.open-meteo.com/v1/elevation';
+const TERRARIUM = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium';
 const MPD_LAT = 111320; // metros por grado de latitud
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Elevación (m MSL) de una lista de puntos [lat,lon], en lotes de ≤100 con un
- * pequeño respiro entre peticiones y reintento con backoff ante el 429 de la API.
- * @param {Array<[number,number]>} points @returns {Promise<number[]|null>}
+ * DEM del terreno a partir de teselas Terrarium (terrain-RGB). Compone las
+ * teselas que cubren el bbox en un lienzo, lee los píxeles una vez y devuelve un
+ * muestreador de altura (m) interpolado bilinealmente. La cota se codifica como
+ * h = R*256 + G + B/256 − 32768.
+ * @returns {Promise<{heightAt:(lat:number,lon:number)=>number}|null>}
  */
-async function fetchElevationGrid(points) {
-  const out = [];
-  for (let i = 0; i < points.length; i += 100) {
-    const chunk = points.slice(i, i + 100);
-    const lat = chunk.map((p) => p[0].toFixed(5)).join(',');
-    const lon = chunk.map((p) => p[1].toFixed(5)).join(',');
-    let ok = false;
-    for (let tryN = 0; tryN < 4 && !ok; tryN++) {
-      try {
-        const res = await fetch(`${ELEV}?latitude=${lat}&longitude=${lon}`);
-        if (res.status === 429) { await sleep(1200 * (tryN + 1)); continue; }
-        if (!res.ok) return null;
-        const data = await res.json();
-        if (!Array.isArray(data.elevation) || data.elevation.length !== chunk.length) return null;
-        out.push(...data.elevation); ok = true;
-      } catch { await sleep(500); }
+async function fetchTerrainDEM(b) {
+  const ze = 13; // zoom del DEM: ~1-4 teselas para un vuelo, resolución ~10-30 m
+  const n = 2 ** ze;
+  const lon2px = (lon) => (lon + 180) / 360 * n * 256;
+  const lat2px = (lat) => { const r = lat * Math.PI / 180; return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n * 256; };
+  const x0 = Math.floor(lon2px(b.west) / 256), x1 = Math.floor(lon2px(b.east) / 256);
+  const y0 = Math.floor(lat2px(b.north) / 256), y1 = Math.floor(lat2px(b.south) / 256);
+  const W = (x1 - x0 + 1) * 256, H = (y1 - y0 + 1) * 256;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = 'rgb(128,0,0)'; ctx.fillRect(0, 0, W, H); // 0 m por defecto
+
+  let okCount = 0, total = 0;
+  const jobs = [];
+  for (let yt = y0; yt <= y1; yt++)
+    for (let xt = x0; xt <= x1; xt++) {
+      total++;
+      jobs.push(new Promise((res) => {
+        const img = new Image(); img.crossOrigin = 'anonymous';
+        img.onload = () => { try { ctx.drawImage(img, (xt - x0) * 256, (yt - y0) * 256); okCount++; } catch { /* taint */ } res(); };
+        img.onerror = () => res();
+        img.src = `${TERRARIUM}/${ze}/${xt}/${yt}.png`;
+      }));
     }
-    if (!ok) return null;
-    if (i + 100 < points.length) await sleep(180); // respiro entre lotes
-  }
-  return out.length === points.length ? out : null;
+  await Promise.all(jobs);
+  if (!okCount) return null;
+
+  let data;
+  try { data = ctx.getImageData(0, 0, W, H).data; } catch { return null; } // lienzo contaminado
+  const originX = x0 * 256, originY = y0 * 256;
+  const decode = (px, py) => { const i = (py * W + px) * 4; return data[i] * 256 + data[i + 1] + data[i + 2] / 256 - 32768; };
+  return {
+    heightAt(lat, lon) {
+      const fx = Math.max(0, Math.min(W - 1.001, lon2px(lon) - originX));
+      const fy = Math.max(0, Math.min(H - 1.001, lat2px(lat) - originY));
+      const xa = Math.floor(fx), ya = Math.floor(fy), tx = fx - xa, ty = fy - ya;
+      const top = decode(xa, ya) + (decode(xa + 1, ya) - decode(xa, ya)) * tx;
+      const bot = decode(xa, ya + 1) + (decode(xa + 1, ya + 1) - decode(xa, ya + 1)) * tx;
+      return top + (bot - top) * ty;
+    },
+  };
 }
 
 /** lat/lon de las esquinas del lienzo de teselas (Web Mercator). */
@@ -7446,7 +7468,6 @@ async function buildTexture(tc) {
  * @returns {Promise<object>} datos listos para cualquier motor de render
  */
 async function buildScene3D(model, opts = {}) {
-  const grid = Math.max(16, Math.min(64, opts.grid ?? 28));
   const tc = tileConfig(model.track);
   const { PX, PY } = projector(tc);
   const b = tileBounds(tc);
@@ -7458,39 +7479,35 @@ async function buildScene3D(model, opts = {}) {
   const Z = (lat) => -(lat - lat0) * MPD_LAT;
   const uv = (lat, lon) => [PX(lon) / tc.compW, PY(lat) / tc.compH];
 
-  // malla del terreno: grid×grid puntos sobre el bbox de teselas
-  const pts = [];
-  for (let r = 0; r < grid; r++)
-    for (let c = 0; c < grid; c++) {
-      const lat = b.north + (b.south - b.north) * (r / (grid - 1));
-      const lon = b.west + (b.east - b.west) * (c / (grid - 1));
-      pts.push([lat, lon]);
-    }
-  const elev = await fetchElevationGrid(pts); // metros MSL, o null si falla
+  const dem = await fetchTerrainDEM(b); // muestreador de altura (m), o null si falla
+  const heightAt = (lat, lon) => (dem ? dem.heightAt(lat, lon) : 0);
 
+  // el DEM Terrarium es denso, así que renderizamos una malla fina directamente
+  const rgrid = dem ? Math.max(24, Math.min(120, opts.grid ?? 96)) : 24;
+  const latOf = (r) => b.north + (b.south - b.north) * (r / (rgrid - 1));
+  const lonOf = (c) => b.west + (b.east - b.west) * (c / (rgrid - 1));
+
+  // cotas mín/máx del terreno visible (muestreadas de la malla de render)
   let elevMin = Infinity, elevMax = -Infinity;
-  if (elev) for (const e of elev) { if (e < elevMin) elevMin = e; if (e > elevMax) elevMax = e; }
+  if (dem) for (let r = 0; r < rgrid; r++) for (let c = 0; c < rgrid; c++) {
+    const e = heightAt(latOf(r), lonOf(c)); if (e < elevMin) elevMin = e; if (e > elevMax) elevMax = e;
+  }
   if (!isFinite(elevMin)) { elevMin = 0; elevMax = 0; }
   const base = elevMin; // restamos la cota mínima para mantener números pequeños
 
   // altura del suelo bajo el despegue (para colocar el track por AGL/rel)
-  const takeoffGround = elev ? sampleGrid(elev, grid, b, model.takeoff[0], model.takeoff[1]) : 0;
+  const takeoffGround = heightAt(model.takeoff[0], model.takeoff[1]);
 
-  // malla de render subdividida (más fina que el DEM) para un relieve suave
-  const rgrid = elev ? Math.min(97, (grid - 1) * 3 + 1) : grid;
   const terrain = {
     grid: rgrid, base,
     elevMin, elevMax,
-    // vértices en metros: {x, y (=elev-base), z, u, v}. La cota se muestrea del
-    // DEM bilinealmente, así el terreno queda suave aunque el DEM sea más grueso.
+    // vértices en metros: {x, y (=elev-base), z, u, v}, con la cota del DEM.
     vertex(r, c) {
-      const lat = b.north + (b.south - b.north) * (r / (rgrid - 1));
-      const lon = b.west + (b.east - b.west) * (c / (rgrid - 1));
-      const e = elev ? sampleGrid(elev, grid, b, lat, lon) : 0;
+      const lat = latOf(r), lon = lonOf(c);
       const [u, v] = uv(lat, lon);
-      return { x: X(lon), y: e - base, z: Z(lat), u, v };
+      return { x: X(lon), y: heightAt(lat, lon) - base, z: Z(lat), u, v };
     },
-    hasDEM: !!elev,
+    hasDEM: !!dem,
   };
 
   // altura de mundo del dron (m) para una altura relativa rel
@@ -7534,19 +7551,6 @@ async function buildScene3D(model, opts = {}) {
     takeoffXZ: { x: X(model.takeoff[1]), z: Z(model.takeoff[0]), y: worldY(0) },
     duration: model.meta.dur || (S.length ? S[S.length - 1].t : 0),
   };
-}
-
-/** Interpola bilinealmente un valor de la malla en (lat, lon). */
-function sampleGrid(elev, grid, b, lat, lon) {
-  const fr = (b.north - lat) / (b.north - b.south) * (grid - 1);
-  const fc = (lon - b.west) / (b.east - b.west) * (grid - 1);
-  const r = Math.max(0, Math.min(grid - 1, fr)), c = Math.max(0, Math.min(grid - 1, fc));
-  const r0 = Math.floor(r), c0 = Math.floor(c), r1 = Math.min(grid - 1, r0 + 1), c1 = Math.min(grid - 1, c0 + 1);
-  const tr = r - r0, tcc = c - c0;
-  const g = (rr, cc) => elev[rr * grid + cc];
-  const top = g(r0, c0) + (g(r0, c1) - g(r0, c0)) * tcc;
-  const bot = g(r1, c0) + (g(r1, c1) - g(r1, c0)) * tcc;
-  return top + (bot - top) * tr;
 }
 
 /** Color RGB (0-1) por altura normalizada, azul→naranja (igual que el mapa 2D). */
