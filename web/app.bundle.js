@@ -577,6 +577,7 @@ canvas:active { cursor: grabbing; }
   padding: 6px 11px; border-radius: 100px; background: rgba(12,17,26,.55); backdrop-filter: blur(10px);
 }
 .v3d-legend .grad { width: 60px; height: 7px; border-radius: 100px; background: linear-gradient(90deg, rgb(76,149,255), rgb(255,138,76)); }
+.v3d-legend .line { width: 26px; height: 5px; border-radius: 100px; background: #ff7d1a; box-shadow: 0 0 8px rgba(255,125,26,.6); }
 
 .v3d-hint {
   position: absolute; top: 12px; right: 12px; z-index: 6;
@@ -617,7 +618,7 @@ class Flight3D extends DjiElement {
       <div class="v3d loading" id="wrap">
         <canvas id="cv"></canvas>
         <div class="v3d-loading">${t('v3d.loading')}</div>
-        <div class="v3d-legend"><span>${t('v3d.low')}</span><span class="grad"></span><span>${t('v3d.high')}</span></div>
+        <div class="v3d-legend"><span class="line"></span><span>${t('v3d.path')}</span></div>
         <div class="v3d-hint">${t('v3d.hint')}</div>
         <div class="v3d-bar" hidden>
           <button class="v3d-btn primary" id="play" type="button">
@@ -674,7 +675,7 @@ class Flight3D extends DjiElement {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0d131f);
     const span = Math.max(data.bounds.spanX, Math.abs(data.bounds.spanZ)) || 500;
-    scene.fog = new THREE.Fog(0x0d131f, span * 1.1, span * 3.2);
+    scene.fog = new THREE.Fog(0x0d131f, span * 1.8, span * 6);
     this._three = scene;
 
     const cam = new THREE.PerspectiveCamera(52, 16 / 10, 1, span * 8);
@@ -731,48 +732,50 @@ class Flight3D extends DjiElement {
     return new THREE.Mesh(geo, mat);
   }
 
-  /** Recorrido 3D: tubo coloreado por altura + cortina vertical hasta el suelo. */
+  /** Recorrido 3D estilo Google Earth: línea naranja sólida + cortina rayada al suelo. */
   _buildTrack(data) {
     const THREE = window.THREE;
     const T = data.track;
     const grp = new THREE.Group();
     if (T.length < 2) return grp;
     const span = Math.max(data.bounds.spanX, Math.abs(data.bounds.spanZ)) || 500;
-    const radius = Math.max(3, Math.min(14, span * 0.006));
+    const radius = Math.max(3.5, Math.min(15, span * 0.0065));
     const baseY = data.takeoffXZ.y; // suelo bajo el despegue
+    const ORANGE = 0xff7d1a;
 
-    // 1) cortina bajo el track (percepción de altura)
+    // 1) cortina naranja translúcida bajo el recorrido
     const cv = new THREE.BufferGeometry();
-    const cn = T.length, cpos = new Float32Array(cn * 2 * 3), ccol = new Float32Array(cn * 2 * 3);
+    const cn = T.length, cpos = new Float32Array(cn * 2 * 3);
     for (let i = 0; i < cn; i++) {
-      const p = T[i], [cr, cg, cb] = altColor(p.rel, data.relMax);
+      const p = T[i];
       cpos.set([p.x, p.y, p.z], i * 6); cpos.set([p.x, baseY, p.z], i * 6 + 3);
-      ccol.set([cr, cg, cb], i * 6); ccol.set([cr * 0.4, cg * 0.4, cb * 0.4], i * 6 + 3);
     }
     const cidx = [];
     for (let i = 0; i < cn - 1; i++) { const a = i * 2, b = a + 1, c = a + 2, d = a + 3; cidx.push(a, b, c, c, b, d); }
     cv.setAttribute('position', new THREE.BufferAttribute(cpos, 3));
-    cv.setAttribute('color', new THREE.BufferAttribute(ccol, 3));
     cv.setIndex(cidx);
-    grp.add(new THREE.Mesh(cv, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false })));
+    grp.add(new THREE.Mesh(cv, new THREE.MeshBasicMaterial({ color: ORANGE, transparent: true, opacity: 0.26, side: THREE.DoubleSide, depthWrite: false })));
 
-    // 2) tubo del recorrido coloreado por altura
-    const curve = new THREE.CatmullRomCurve3(T.map((p) => new THREE.Vector3(p.x, p.y, p.z)));
-    const segs = Math.min(700, Math.max(60, T.length * 2));
-    const geo = new THREE.TubeGeometry(curve, segs, radius, 8, false);
-    const rel = T.map((p) => p.rel);
-    const relAt = (u) => { const x = u * (rel.length - 1), i = Math.floor(x), f = x - i; return (rel[i] ?? 0) + ((rel[i + 1] ?? rel[i] ?? 0) - (rel[i] ?? 0)) * f; };
-    const count = geo.attributes.position.count, radial = 9;
-    const colors = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      const u = Math.floor(i / radial) / segs;
-      const [cr, cg, cb] = altColor(relAt(u), data.relMax);
-      colors[i * 3] = cr; colors[i * 3 + 1] = cg; colors[i * 3 + 2] = cb;
+    // 2) rayado: una línea vertical del recorrido al suelo en cada muestra
+    const hn = cn, hpos = new Float32Array(hn * 2 * 3);
+    for (let i = 0; i < hn; i++) {
+      const p = T[i];
+      hpos.set([p.x, p.y, p.z], i * 6); hpos.set([p.x, baseY, p.z], i * 6 + 3);
     }
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    grp.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, emissive: 0xffffff, emissiveIntensity: 0.22 })));
+    const hg = new THREE.BufferGeometry();
+    hg.setAttribute('position', new THREE.BufferAttribute(hpos, 3));
+    grp.add(new THREE.LineSegments(hg, new THREE.LineBasicMaterial({ color: ORANGE, transparent: true, opacity: 0.5, depthWrite: false })));
 
-    // 3) marcador de despegue
+    // 3) línea del recorrido: tubo naranja sólido y brillante (sin depender de la luz)
+    const curve = new THREE.CatmullRomCurve3(T.map((p) => new THREE.Vector3(p.x, p.y, p.z)));
+    const segs = Math.min(800, Math.max(80, T.length * 2));
+    const geo = new THREE.TubeGeometry(curve, segs, radius, 10, false);
+    grp.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: ORANGE })));
+    // halo oscuro fino por debajo para que resalte sobre terreno claro
+    const halo = new THREE.TubeGeometry(curve, segs, radius * 1.5, 10, false);
+    grp.add(new THREE.Mesh(halo, new THREE.MeshBasicMaterial({ color: 0x5a2600, transparent: true, opacity: 0.35, side: THREE.BackSide, depthWrite: false })));
+
+    // 4) marcador de despegue
     const tk = new THREE.Mesh(new THREE.CylinderGeometry(radius * 1.8, radius * 1.8, radius * 0.6, 20),
       new THREE.MeshStandardMaterial({ color: 0x37cf6b, emissive: 0x0e5a2a, emissiveIntensity: 0.6 }));
     tk.position.set(data.takeoffXZ.x, data.takeoffXZ.y, data.takeoffXZ.z);
@@ -5772,6 +5775,7 @@ __x.default = {
   'v3d.loading': 'Rebuilding the terrain in 3D…',
   'v3d.low': 'Low',
   'v3d.high': 'High',
+  'v3d.path': 'Flight path',
   'v3d.hint': 'Drag to orbit · wheel to zoom',
   'v3d.flyover': 'Flyover',
   'v3d.pause': 'Pause',
@@ -6147,6 +6151,7 @@ __x.default = {
   'v3d.loading': 'Reconstruyendo el terreno en 3D…',
   'v3d.low': 'Bajo',
   'v3d.high': 'Alto',
+  'v3d.path': 'Trayectoria del vuelo',
   'v3d.hint': 'Arrastra para orbitar · rueda para zoom',
   'v3d.flyover': 'Sobrevuelo',
   'v3d.pause': 'Pausa',
