@@ -783,15 +783,52 @@ class Flight3D extends DjiElement {
     return grp;
   }
 
-  /** Dron (marcador) + cono de visión de la cámara. */
+  /** Dron: cuadricóptero (cuerpo + brazos + motores + hélices) + cono de visión. */
   _buildDrone(data) {
     const THREE = window.THREE;
     const span = Math.max(data.bounds.spanX, Math.abs(data.bounds.spanZ)) || 500;
     const s = Math.max(14, span * 0.026);
     const grp = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.OctahedronGeometry(s * 0.5),
-      new THREE.MeshStandardMaterial({ color: 0x5b9dff, emissive: 0x1b3a66, emissiveIntensity: 0.7, roughness: 0.4 }));
-    grp.add(body);
+
+    // cuerpo que gira según el rumbo (el frente mira a -Z)
+    const body = new THREE.Group();
+    const matBody = new THREE.MeshStandardMaterial({ color: 0x23272e, metalness: 0.5, roughness: 0.45 });
+    const matArm = new THREE.MeshStandardMaterial({ color: 0x33383f, metalness: 0.4, roughness: 0.55 });
+    const matDark = new THREE.MeshStandardMaterial({ color: 0x111318, metalness: 0.3, roughness: 0.6 });
+    const matRotor = new THREE.MeshStandardMaterial({ color: 0xc7cfdb, metalness: 0.2, roughness: 0.4, transparent: true, opacity: 0.4, side: THREE.DoubleSide });
+
+    // fuselaje central
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(s * 0.5, s * 0.2, s * 0.66), matBody);
+    body.add(hull);
+    // cúpula superior
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(s * 0.24, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), matBody);
+    dome.position.y = s * 0.09; dome.scale.set(1, 0.6, 1.15); body.add(dome);
+    // cámara/gimbal en el morro con lente azul
+    const cam = new THREE.Mesh(new THREE.SphereGeometry(s * 0.13, 14, 12), matDark);
+    cam.position.set(0, -s * 0.12, -s * 0.28); body.add(cam);
+    const lens = new THREE.Mesh(new THREE.CircleGeometry(s * 0.07, 16),
+      new THREE.MeshStandardMaterial({ color: 0x5b9dff, emissive: 0x1b3a66, emissiveIntensity: 0.8 }));
+    lens.position.set(0, -s * 0.13, -s * 0.4); body.add(lens);
+
+    // 4 brazos diagonales con motor y hélice
+    const L = s * 0.62;
+    this._rotors = [];
+    for (const a of [Math.PI / 4, 3 * Math.PI / 4, 5 * Math.PI / 4, 7 * Math.PI / 4]) {
+      const dx = Math.cos(a), dz = Math.sin(a);
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(L, s * 0.07, s * 0.1), matArm);
+      arm.position.set(dx * L / 2, 0, dz * L / 2); arm.rotation.y = -a; body.add(arm);
+      const motor = new THREE.Mesh(new THREE.CylinderGeometry(s * 0.09, s * 0.11, s * 0.16, 14), matDark);
+      motor.position.set(dx * L, s * 0.05, dz * L); body.add(motor);
+      // hélice (2 palas cruzadas, casi transparentes para el efecto de giro)
+      const rotor = new THREE.Group();
+      for (const rot of [0, Math.PI / 2]) {
+        const blade = new THREE.Mesh(new THREE.BoxGeometry(s * 0.62, s * 0.012, s * 0.09), matRotor);
+        blade.rotation.y = rot; rotor.add(blade);
+      }
+      rotor.position.set(dx * L, s * 0.14, dz * L); body.add(rotor); this._rotors.push(rotor);
+    }
+    grp.add(body); this._droneBody = body;
+
     // cono de visión: parte del dron y apunta según rumbo + pitch del gimbal
     const len = s * 3.2, rad = len * Math.tan(28 * Math.PI / 180);
     const coneGeo = new THREE.ConeGeometry(rad, len, 24, 1, true);
@@ -801,10 +838,11 @@ class Flight3D extends DjiElement {
     return grp;
   }
 
-  /** Coloca el dron y orienta su cono en el instante t. */
+  /** Coloca el dron, lo orienta por rumbo y apunta su cono en el instante t. */
   _placeDrone(time) {
     const THREE = window.THREE, d = this._scene.droneAt(time);
     this._drone.position.set(d.x, d.y, d.z);
+    if (this._droneBody) this._droneBody.rotation.y = -d.heading; // el frente (-Z) mira al rumbo
     // dirección de la cámara: horizontal por rumbo, inclinada por el pitch del gimbal
     const el = d.pitch; // rad (negativo = mirando abajo)
     const dir = new THREE.Vector3(Math.cos(el) * Math.sin(d.heading), Math.sin(el), -Math.cos(el) * Math.cos(d.heading));
@@ -834,6 +872,7 @@ class Flight3D extends DjiElement {
     const tick = () => {
       this._raf = requestAnimationFrame(tick);
       if (this._playing) this._advanceFlyover();
+      if (this._rotors) for (const r of this._rotors) r.rotation.y += 0.9; // hélices girando
       this._renderer.render(this._three, this._cam);
     };
     this._raf = requestAnimationFrame(tick);
