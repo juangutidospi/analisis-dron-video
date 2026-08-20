@@ -522,6 +522,433 @@ Object.assign(__x, { ExportBar });
 
 };
 
+__m["js/components/ui/flight-3d/flight-3d.css.js"] = function (__x, __req) {
+const { css } = __req("js/core/css.js");
+
+const styles = css`
+:host { display: block; }
+.v3d {
+  position: relative; width: 100%; aspect-ratio: 16 / 10; border-radius: 16px; overflow: hidden;
+  background: radial-gradient(120% 120% at 50% 0%, #1b2740 0%, #0d131f 70%);
+  border: 1px solid var(--color-divider);
+}
+canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+canvas:active { cursor: grabbing; }
+
+/* estado de carga */
+.v3d.loading::after {
+  content: ""; position: absolute; inset: 0; z-index: 4;
+  background: linear-gradient(100deg, #131c2c 30%, #1c2840 50%, #131c2c 70%);
+  background-size: 220% 100%; animation: shimmer 1.3s ease-in-out infinite;
+}
+.v3d-loading {
+  position: absolute; inset: 0; z-index: 5; display: grid; place-items: center;
+  color: #aeb8cc; font-size: 13px; text-align: center; padding: 0 24px; pointer-events: none;
+}
+.v3d:not(.loading) .v3d-loading { display: none; }
+@keyframes shimmer { 0% { background-position: 130% 0; } 100% { background-position: -130% 0; } }
+
+/* controles */
+.v3d-bar {
+  position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 6;
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: 100px;
+  background: rgba(12,17,26,.62); backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,.1);
+}
+.v3d-btn {
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  height: 34px; padding: 0 14px; border-radius: 100px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08);
+  color: #eef2f8; font: inherit; font-size: 13px; font-weight: 600;
+  transition: background .12s, border-color .12s;
+}
+.v3d-btn:hover { background: rgba(255,255,255,.16); }
+.v3d-btn.primary { background: var(--color-accent); border-color: transparent; color: #fff; }
+.v3d-btn svg { width: 15px; height: 15px; }
+.v3d-prog { flex: 1; height: 6px; border-radius: 100px; background: rgba(255,255,255,.16); position: relative; cursor: pointer; }
+.v3d-prog-f { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 100px; background: linear-gradient(90deg, var(--color-accent), var(--color-violet)); }
+.v3d-time { flex: none; font-size: 12px; color: #c9d2e2; font-variant-numeric: tabular-nums; min-width: 76px; text-align: right; }
+
+/* leyenda de altura */
+.v3d-legend {
+  position: absolute; top: 12px; left: 12px; z-index: 6;
+  display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: #dbe2ee;
+  padding: 6px 11px; border-radius: 100px; background: rgba(12,17,26,.55); backdrop-filter: blur(10px);
+}
+.v3d-legend .grad { width: 60px; height: 7px; border-radius: 100px; background: linear-gradient(90deg, rgb(76,149,255), rgb(255,138,76)); }
+
+.v3d-hint {
+  position: absolute; top: 12px; right: 12px; z-index: 6;
+  font-size: 11px; color: #aeb8cc; padding: 6px 11px; border-radius: 100px;
+  background: rgba(12,17,26,.5); backdrop-filter: blur(10px);
+}
+.v3d-fallback { position: absolute; inset: 0; display: grid; place-items: center; color: #aeb8cc; font-size: 13px; text-align: center; padding: 0 28px; }
+@media (prefers-reduced-motion: reduce) { .v3d.loading::after { animation: none; } }
+`;
+
+Object.assign(__x, { styles });
+
+};
+
+__m["js/components/ui/flight-3d/flight-3d.js"] = function (__x, __req) {
+const { DjiElement } = __req("js/core/DjiElement.js");
+const { t } = __req("js/i18n/index.js");
+const { buildScene3D, altColor } = __req("js/scene-3d.js");
+const { styles } = __req("js/components/ui/flight-3d/flight-3d.css.js");
+
+const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+
+/**
+ * Reconstrucción 3D navegable del vuelo (Three.js): terreno con relieve real
+ * texturizado por satélite, recorrido coloreado por altura, dron con su cono de
+ * visión y sobrevuelo cinematográfico. Recibe los datos por propiedad:
+ *   el.flight = { model }
+ */
+class Flight3D extends DjiElement {
+  static styles = [styles];
+
+  /** @param {{model:object}} v */
+  set flight(v) { this._flight = v; if (this.isConnected) this._paint(); }
+  get flight() { return this._flight; }
+
+  render() {
+    this.shadowRoot.innerHTML = `
+      <div class="v3d loading" id="wrap">
+        <canvas id="cv"></canvas>
+        <div class="v3d-loading">${t('v3d.loading')}</div>
+        <div class="v3d-legend"><span>${t('v3d.low')}</span><span class="grad"></span><span>${t('v3d.high')}</span></div>
+        <div class="v3d-hint">${t('v3d.hint')}</div>
+        <div class="v3d-bar" hidden>
+          <button class="v3d-btn primary" id="play" type="button">
+            <svg viewBox="0 0 24 24" fill="currentColor" id="playic"><path d="M8 5v14l11-7z"/></svg>${t('v3d.flyover')}
+          </button>
+          <div class="v3d-prog" id="prog"><div class="v3d-prog-f" id="progf"></div></div>
+          <span class="v3d-time" id="time">0:00 / 0:00</span>
+          <button class="v3d-btn" id="reset" type="button" title="${t('v3d.reset')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 4v4h4"/></svg>
+          </button>
+        </div>
+      </div>`;
+  }
+
+  afterRender() {
+    if (!this._flight) return;
+    this._teardown();
+    const THREE = window.THREE;
+    if (!THREE || !this._webglOk()) { this._fallback(); return; }
+    // construcción perezosa: solo al acercarse a la pantalla (baja el DEM y las teselas)
+    if ('IntersectionObserver' in window) {
+      this._io = new IntersectionObserver((es) => {
+        if (es.some((e) => e.isIntersecting)) { this._io.disconnect(); this._io = null; this._build(); }
+      }, { rootMargin: '400px' });
+      this._io.observe(this);
+    } else this._build();
+  }
+
+  _build() {
+    const token = (this._token = Symbol('build'));
+    buildScene3D(this._flight.model).then((scene) => {
+      if (token !== this._token || !this.isConnected) return;
+      this._scene = scene;
+      this._initThree(scene);
+      this.$('#wrap').classList.remove('loading');
+      this.$('.v3d-bar').hidden = false;
+      this._wireControls();
+    }).catch((err) => { console.error('[flight-3d]', err); this._fallback(); });
+  }
+
+  disconnectedCallback() { super.disconnectedCallback(); this._teardown(); }
+
+  /* ---------- montaje de la escena ---------- */
+
+  /** Construye escena, cámara, luces, terreno, track y dron con Three.js. */
+  _initThree(data) {
+    const THREE = window.THREE;
+    const canvas = this.$('#cv');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this._renderer = renderer;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0d131f);
+    const span = Math.max(data.bounds.spanX, Math.abs(data.bounds.spanZ)) || 500;
+    scene.fog = new THREE.Fog(0x0d131f, span * 1.1, span * 3.2);
+    this._three = scene;
+
+    const cam = new THREE.PerspectiveCamera(52, 16 / 10, 1, span * 8);
+    this._cam = cam;
+
+    // luces: cielo/suelo + sol direccional
+    scene.add(new THREE.HemisphereLight(0xbcd3ff, 0x3a3326, 0.9));
+    const sun = new THREE.DirectionalLight(0xfff2d6, 1.15);
+    sun.position.set(span * 0.6, span * 0.9, span * 0.4);
+    scene.add(sun);
+
+    scene.add(this._buildTerrain(data));
+    scene.add(this._buildTrack(data));
+    this._drone = this._buildDrone(data);
+    scene.add(this._drone);
+    this._placeDrone(0);
+
+    // órbita: objetivo en el centro del terreno, a media altura
+    this._target = new THREE.Vector3(0, (data.terrain.elevMax - data.terrain.elevMin) / 2, 0);
+    this._orbit = { r: span * 1.15, theta: -Math.PI * 0.7, phi: 1.2, min: span * 0.25, max: span * 4 };
+    this._applyOrbit();
+
+    this._resize();
+    this._ro = new ResizeObserver(() => this._resize());
+    this._ro.observe(this.$('#wrap'));
+    this._loop();
+  }
+
+  /** Malla del terreno (grid) desplazada por el DEM y texturizada con satélite. */
+  _buildTerrain(data) {
+    const THREE = window.THREE;
+    const g = data.terrain.grid, geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(g * g * 3), uvs = new Float32Array(g * g * 2);
+    for (let r = 0; r < g; r++)
+      for (let c = 0; c < g; c++) {
+        const v = data.terrain.vertex(r, c), k = r * g + c;
+        pos[k * 3] = v.x; pos[k * 3 + 1] = v.y; pos[k * 3 + 2] = v.z;
+        uvs[k * 2] = v.u; uvs[k * 2 + 1] = 1 - v.v; // V invertida (textura top-down)
+      }
+    const idx = [];
+    for (let r = 0; r < g - 1; r++)
+      for (let c = 0; c < g - 1; c++) {
+        const a = r * g + c, b = a + 1, d = a + g, e = d + 1;
+        idx.push(a, d, b, b, d, e);
+      }
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const tex = new THREE.CanvasTexture(data.texture);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.96, metalness: 0 });
+    if (!data.terrain.hasDEM) mat.wireframe = false;
+    return new THREE.Mesh(geo, mat);
+  }
+
+  /** Recorrido 3D: tubo coloreado por altura + cortina vertical hasta el suelo. */
+  _buildTrack(data) {
+    const THREE = window.THREE;
+    const T = data.track;
+    const grp = new THREE.Group();
+    if (T.length < 2) return grp;
+    const span = Math.max(data.bounds.spanX, Math.abs(data.bounds.spanZ)) || 500;
+    const radius = Math.max(3, Math.min(14, span * 0.006));
+    const baseY = data.takeoffXZ.y; // suelo bajo el despegue
+
+    // 1) cortina bajo el track (percepción de altura)
+    const cv = new THREE.BufferGeometry();
+    const cn = T.length, cpos = new Float32Array(cn * 2 * 3), ccol = new Float32Array(cn * 2 * 3);
+    for (let i = 0; i < cn; i++) {
+      const p = T[i], [cr, cg, cb] = altColor(p.rel, data.relMax);
+      cpos.set([p.x, p.y, p.z], i * 6); cpos.set([p.x, baseY, p.z], i * 6 + 3);
+      ccol.set([cr, cg, cb], i * 6); ccol.set([cr * 0.4, cg * 0.4, cb * 0.4], i * 6 + 3);
+    }
+    const cidx = [];
+    for (let i = 0; i < cn - 1; i++) { const a = i * 2, b = a + 1, c = a + 2, d = a + 3; cidx.push(a, b, c, c, b, d); }
+    cv.setAttribute('position', new THREE.BufferAttribute(cpos, 3));
+    cv.setAttribute('color', new THREE.BufferAttribute(ccol, 3));
+    cv.setIndex(cidx);
+    grp.add(new THREE.Mesh(cv, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false })));
+
+    // 2) tubo del recorrido coloreado por altura
+    const curve = new THREE.CatmullRomCurve3(T.map((p) => new THREE.Vector3(p.x, p.y, p.z)));
+    const segs = Math.min(700, Math.max(60, T.length * 2));
+    const geo = new THREE.TubeGeometry(curve, segs, radius, 8, false);
+    const rel = T.map((p) => p.rel);
+    const relAt = (u) => { const x = u * (rel.length - 1), i = Math.floor(x), f = x - i; return (rel[i] ?? 0) + ((rel[i + 1] ?? rel[i] ?? 0) - (rel[i] ?? 0)) * f; };
+    const count = geo.attributes.position.count, radial = 9;
+    const colors = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const u = Math.floor(i / radial) / segs;
+      const [cr, cg, cb] = altColor(relAt(u), data.relMax);
+      colors[i * 3] = cr; colors[i * 3 + 1] = cg; colors[i * 3 + 2] = cb;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    grp.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, emissive: 0xffffff, emissiveIntensity: 0.22 })));
+
+    // 3) marcador de despegue
+    const tk = new THREE.Mesh(new THREE.CylinderGeometry(radius * 1.8, radius * 1.8, radius * 0.6, 20),
+      new THREE.MeshStandardMaterial({ color: 0x37cf6b, emissive: 0x0e5a2a, emissiveIntensity: 0.6 }));
+    tk.position.set(data.takeoffXZ.x, data.takeoffXZ.y, data.takeoffXZ.z);
+    grp.add(tk);
+    return grp;
+  }
+
+  /** Dron (marcador) + cono de visión de la cámara. */
+  _buildDrone(data) {
+    const THREE = window.THREE;
+    const span = Math.max(data.bounds.spanX, Math.abs(data.bounds.spanZ)) || 500;
+    const s = Math.max(14, span * 0.026);
+    const grp = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.OctahedronGeometry(s * 0.5),
+      new THREE.MeshStandardMaterial({ color: 0x5b9dff, emissive: 0x1b3a66, emissiveIntensity: 0.7, roughness: 0.4 }));
+    grp.add(body);
+    // cono de visión: parte del dron y apunta según rumbo + pitch del gimbal
+    const len = s * 3.2, rad = len * Math.tan(28 * Math.PI / 180);
+    const coneGeo = new THREE.ConeGeometry(rad, len, 24, 1, true);
+    coneGeo.translate(0, -len / 2, 0); // vértice en el origen, se abre hacia -Y
+    const cone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({ color: 0x8ec5ff, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }));
+    this._cone = cone; grp.add(cone);
+    return grp;
+  }
+
+  /** Coloca el dron y orienta su cono en el instante t. */
+  _placeDrone(time) {
+    const THREE = window.THREE, d = this._scene.droneAt(time);
+    this._drone.position.set(d.x, d.y, d.z);
+    // dirección de la cámara: horizontal por rumbo, inclinada por el pitch del gimbal
+    const el = d.pitch; // rad (negativo = mirando abajo)
+    const dir = new THREE.Vector3(Math.cos(el) * Math.sin(d.heading), Math.sin(el), -Math.cos(el) * Math.cos(d.heading));
+    this._cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir.normalize());
+  }
+
+  /* ---------- órbita y bucle ---------- */
+
+  _applyOrbit() {
+    const o = this._orbit, tp = this._target;
+    this._cam.position.set(
+      tp.x + o.r * Math.sin(o.phi) * Math.cos(o.theta),
+      tp.y + o.r * Math.cos(o.phi),
+      tp.z + o.r * Math.sin(o.phi) * Math.sin(o.theta),
+    );
+    this._cam.lookAt(tp);
+  }
+
+  _resize() {
+    const wrap = this.$('#wrap'); if (!wrap || !this._renderer) return;
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    this._renderer.setSize(w, h, false);
+    this._cam.aspect = w / h; this._cam.updateProjectionMatrix();
+  }
+
+  _loop() {
+    const tick = () => {
+      this._raf = requestAnimationFrame(tick);
+      if (this._playing) this._advanceFlyover();
+      this._renderer.render(this._three, this._cam);
+    };
+    this._raf = requestAnimationFrame(tick);
+  }
+
+  /* ---------- controles ---------- */
+
+  _wireControls() {
+    const canvas = this.$('#cv');
+    let drag = null;
+    this.on(canvas, 'pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); });
+    this.on(canvas, 'pointermove', (e) => {
+      if (!drag) return;
+      const o = this._orbit;
+      o.theta += (e.clientX - drag.x) * 0.006;
+      o.phi = Math.max(0.18, Math.min(1.48, o.phi - (e.clientY - drag.y) * 0.005));
+      drag = { x: e.clientX, y: e.clientY };
+      if (!this._playing) this._applyOrbit();
+    });
+    const stop = () => { drag = null; };
+    this.on(canvas, 'pointerup', stop); this.on(canvas, 'pointercancel', stop);
+    this.on(canvas, 'wheel', (e) => {
+      e.preventDefault();
+      const o = this._orbit;
+      o.r = Math.max(o.min, Math.min(o.max, o.r * (1 + Math.sign(e.deltaY) * 0.09)));
+      if (!this._playing) this._applyOrbit();
+    }, { passive: false });
+
+    this.on(this.$('#play'), 'click', () => this._toggleFlyover());
+    this.on(this.$('#reset'), 'click', () => { this._stopFlyover(); this._orbit.theta = -Math.PI * 0.7; this._orbit.phi = 1.2; this._applyOrbit(); });
+    this.on(this.$('#prog'), 'pointerdown', (e) => this._seek(e));
+
+    this._updateTime(0);
+  }
+
+  _toggleFlyover() { this._playing ? this._stopFlyover(true) : this._startFlyover(); }
+
+  _startFlyover() {
+    if (this._time == null || this._time >= this._scene.duration - 0.05) this._time = 0;
+    this._playing = true; this._last = performance.now();
+    this._setPlayIcon(true);
+  }
+
+  _stopFlyover() { this._playing = false; this._setPlayIcon(false); }
+
+  /** Avanza el sobrevuelo: mueve el dron y encadena la cámara detrás. */
+  _advanceFlyover() {
+    const now = performance.now(), dt = Math.min(0.05, (now - this._last) / 1000); this._last = now;
+    this._time = Math.min(this._scene.duration, (this._time || 0) + dt);
+    this._placeDrone(this._time);
+    this._chaseCam();
+    this._updateTime(this._time);
+    if (this._time >= this._scene.duration) this._stopFlyover();
+  }
+
+  /** Cámara persecutoria: detrás y por encima del dron, suavizada. */
+  _chaseCam() {
+    const THREE = window.THREE, d = this._scene.droneAt(this._time);
+    const back = 90 + this._orbit.r * 0.16, up = 34 + this._orbit.r * 0.05;
+    const want = new THREE.Vector3(
+      d.x - Math.sin(d.heading) * back, d.y + up, d.z + Math.cos(d.heading) * back,
+    );
+    this._cam.position.lerp(want, 0.06);
+    const look = new THREE.Vector3(d.x, d.y, d.z);
+    this._look = this._look || look.clone();
+    this._look.lerp(look, 0.1);
+    this._cam.lookAt(this._look);
+  }
+
+  _seek(e) {
+    const r = this.$('#prog').getBoundingClientRect();
+    const p = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    this._time = p * this._scene.duration;
+    this._placeDrone(this._time); this._updateTime(this._time);
+    if (!this._playing) { this._applyOrbit(); this._look = null; }
+  }
+
+  _updateTime(time) {
+    const p = this._scene.duration ? time / this._scene.duration : 0;
+    this.$('#progf').style.width = (p * 100) + '%';
+    this.$('#time').textContent = `${mmss(time)} / ${mmss(this._scene.duration)}`;
+  }
+
+  _setPlayIcon(playing) {
+    const ic = this.$('#playic');
+    ic.innerHTML = playing ? '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>' : '<path d="M8 5v14l11-7z"/>';
+    this.$('#play').lastChild.textContent = playing ? t('v3d.pause') : t('v3d.flyover');
+  }
+
+  /* ---------- utilidades ---------- */
+
+  _webglOk() {
+    try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2') || c.getContext('webgl')); }
+    catch { return false; }
+  }
+
+  _fallback() {
+    this.$('#wrap')?.classList.remove('loading');
+    const wrap = this.$('#wrap');
+    if (wrap) wrap.innerHTML = `<div class="v3d-fallback">${t('v3d.unsupported')}</div>`;
+  }
+
+  _teardown() {
+    if (this._raf) cancelAnimationFrame(this._raf); this._raf = null;
+    this._playing = false;
+    this._io?.disconnect(); this._io = null;
+    this._ro?.disconnect(); this._ro = null;
+    if (this._renderer) { this._renderer.dispose(); this._renderer = null; }
+    this._three = null; this._scene = null; this._time = null; this._look = null;
+  }
+}
+
+customElements.define('flight-3d', Flight3D);
+
+Object.assign(__x, { Flight3D });
+
+};
+
 __m["js/components/ui/flight-player/flight-player.css.js"] = function (__x, __req) {
 const { css } = __req("js/core/css.js");
 
@@ -2284,6 +2711,7 @@ __req("js/components/ui/moment-card/moment-card.js");
 __req("js/components/ui/callout/callout.js");
 __req("js/components/ui/time-chart/time-chart.js");
 __req("js/components/ui/sat-map/sat-map.js");
+__req("js/components/ui/flight-3d/flight-3d.js");
 __req("js/components/ui/export-bar/export-bar.js");
 __req("js/components/ui/image-lightbox/image-lightbox.js");
 __req("js/components/ui/flight-player/flight-player.js");
@@ -2338,6 +2766,7 @@ class FlightReport extends DjiElement {
         ${this._resumenTpl(m, r, dur, relmax, hsavg, hsmax, iso)}
         ${this._momentosTpl(a)}
         ${this._routeTpl()}
+        ${this._route3dTpl()}
         ${this._sectionChart('alt', 'c-alt', `<div class="legend"><span><span class="sw" style="background:var(--c-blue)"></span>${t('alt.series')}</span></div>`)}
         ${this._terrainTpl()}
         ${this._dynamicsTpl()}
@@ -2483,6 +2912,17 @@ class FlightReport extends DjiElement {
         <div class="scrolly-track"><div class="scrolly-stick">${card}</div></div>
       </section>`;
     return `<section class="blk">${head}${card}</section>`;
+  }
+
+  /** Sección de reconstrucción 3D navegable del vuelo. */
+  _route3dTpl() {
+    return `
+      <section class="blk">
+        <div class="eyebrow">${escapeHtml(t('v3d.eyebrow'))}</div>
+        <h2>${escapeHtml(t('v3d.title'))}</h2>
+        <p class="sub">${escapeHtml(t('v3d.sub'))}</p>
+        <div class="card"><flight-3d id="v3d"></flight-3d></div>
+      </section>`;
   }
 
   _sectionChart(prefix, id, legend) {
@@ -2872,6 +3312,7 @@ class FlightReport extends DjiElement {
     this.$('#c-gb').data = { series: S, dur, cfgs: [{ k: 'pitch', color: '--c-green', area: true, fmt: (v) => `${Math.round(v)}°`, label: strip(t('gim.legend')), unit: '°', dec: 0 }] };
 
     this.$('#map').flight = { model: this.model, kps: this.kps };
+    this.$('#v3d').flight = { model: this.model };
     this.$('#exp').flight = { model: this.model, assets: this.assets };
     this._setupTerrain();
 
@@ -5325,6 +5766,17 @@ __x.default = {
   'route.note': 'Satellite imagery: Esri World Imagery · track reconstructed from the flight GPS',
   'route.scrolly': 'Scroll to fly the route · or press ▶',
   'map.loading': 'Loading satellite imagery…',
+  'v3d.eyebrow': 'Flight in 3D',
+  'v3d.title': 'Navigable 3D reconstruction',
+  'v3d.sub': 'The route over the real terrain, with satellite imagery draped on top. Drag to orbit, wheel to zoom, or press Flyover.',
+  'v3d.loading': 'Rebuilding the terrain in 3D…',
+  'v3d.low': 'Low',
+  'v3d.high': 'High',
+  'v3d.hint': 'Drag to orbit · wheel to zoom',
+  'v3d.flyover': 'Flyover',
+  'v3d.pause': 'Pause',
+  'v3d.reset': 'Reset view',
+  'v3d.unsupported': 'Your browser does not support the 3D view (WebGL).',
   'player.play': 'Play the flight',
   'player.pause': 'Pause',
   'player.seek': 'Seek in the flight',
@@ -5689,6 +6141,17 @@ __x.default = {
   'route.note': 'Imagen de satélite: Esri World Imagery · trazado reconstruido con el GPS del vuelo',
   'route.scrolly': 'Desplázate para volar el recorrido · o pulsa ▶',
   'map.loading': 'Cargando imagen de satélite…',
+  'v3d.eyebrow': 'Vuelo en 3D',
+  'v3d.title': 'Reconstrucción 3D navegable',
+  'v3d.sub': 'El recorrido sobre el terreno real, con imagen de satélite drapeada. Arrastra para orbitar, rueda para acercar, o pulsa Sobrevuelo.',
+  'v3d.loading': 'Reconstruyendo el terreno en 3D…',
+  'v3d.low': 'Bajo',
+  'v3d.high': 'Alto',
+  'v3d.hint': 'Arrastra para orbitar · rueda para zoom',
+  'v3d.flyover': 'Sobrevuelo',
+  'v3d.pause': 'Pausa',
+  'v3d.reset': 'Reiniciar la vista',
+  'v3d.unsupported': 'Tu navegador no admite la vista 3D (WebGL).',
   'player.play': 'Reproducir el vuelo',
   'player.pause': 'Pausa',
   'player.seek': 'Buscar en el vuelo',
@@ -6846,6 +7309,195 @@ function buildMap(model, kps, loadingText = '') {
 const mmss = (t) => { t = Math.round(t); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
 
 Object.assign(__x, { buildMap });
+
+};
+
+__m["js/scene-3d.js"] = function (__x, __req) {
+// Preparación de la escena 3D del vuelo (agnóstica del motor de render).
+// Proyecta lat/lon a metros locales (ENU), baja el DEM de Open-Meteo para la malla
+// del terreno, compone la textura de satélite (teselas Esri) drapeada sobre el
+// relieve, y expone la posición/rumbo/pitch del dron en cada instante.
+// La usan tanto la rama de Three.js como la del renderer propio en canvas.
+
+const { tileConfig, projector } = __req("js/geo.js");
+
+const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile';
+const ELEV = 'https://api.open-meteo.com/v1/elevation';
+const MPD_LAT = 111320; // metros por grado de latitud
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Elevación (m MSL) de una lista de puntos [lat,lon], en lotes de ≤100 con un
+ * pequeño respiro entre peticiones y reintento con backoff ante el 429 de la API.
+ * @param {Array<[number,number]>} points @returns {Promise<number[]|null>}
+ */
+async function fetchElevationGrid(points) {
+  const out = [];
+  for (let i = 0; i < points.length; i += 100) {
+    const chunk = points.slice(i, i + 100);
+    const lat = chunk.map((p) => p[0].toFixed(5)).join(',');
+    const lon = chunk.map((p) => p[1].toFixed(5)).join(',');
+    let ok = false;
+    for (let tryN = 0; tryN < 4 && !ok; tryN++) {
+      try {
+        const res = await fetch(`${ELEV}?latitude=${lat}&longitude=${lon}`);
+        if (res.status === 429) { await sleep(1200 * (tryN + 1)); continue; }
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (!Array.isArray(data.elevation) || data.elevation.length !== chunk.length) return null;
+        out.push(...data.elevation); ok = true;
+      } catch { await sleep(500); }
+    }
+    if (!ok) return null;
+    if (i + 100 < points.length) await sleep(180); // respiro entre lotes
+  }
+  return out.length === points.length ? out : null;
+}
+
+/** lat/lon de las esquinas del lienzo de teselas (Web Mercator). */
+function tileBounds(tc) {
+  const n = 2 ** tc.z;
+  const lon = (x) => x / n * 360 - 180;
+  const lat = (y) => Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180 / Math.PI;
+  return { west: lon(tc.x0), east: lon(tc.x1 + 1), north: lat(tc.y0), south: lat(tc.y1 + 1) };
+}
+
+/** Compone las teselas Esri del encuadre en un <canvas> (para drapear como textura). */
+async function buildTexture(tc) {
+  const cv = document.createElement('canvas');
+  cv.width = tc.compW; cv.height = tc.compH;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#243447'; ctx.fillRect(0, 0, cv.width, cv.height);
+  const jobs = [];
+  for (let ri = 0, y = tc.y0; y <= tc.y1; y++, ri++)
+    for (let ci = 0, x = tc.x0; x <= tc.x1; x++, ci++) {
+      const dx = ci * 256, dy = ri * 256;
+      jobs.push(new Promise((res) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => { try { ctx.drawImage(img, dx, dy, 256, 256); } catch { /* taint */ } res(); };
+        img.onerror = () => res();
+        img.src = `${ESRI}/${tc.z}/${y}/${x}`;
+      }));
+    }
+  await Promise.all(jobs);
+  return cv;
+}
+
+/**
+ * Prepara todos los datos de la escena 3D del vuelo.
+ * @param {object} model modelo del vuelo
+ * @param {{grid?:number}} [opts] grid = nº de vértices por lado de la malla del terreno
+ * @returns {Promise<object>} datos listos para cualquier motor de render
+ */
+async function buildScene3D(model, opts = {}) {
+  const grid = Math.max(16, Math.min(64, opts.grid ?? 28));
+  const tc = tileConfig(model.track);
+  const { PX, PY } = projector(tc);
+  const b = tileBounds(tc);
+
+  // origen ENU en el centro del vuelo; x=este (m), z=norte→-Z (m)
+  const [lat0, lon0] = model.center;
+  const mpdLon = MPD_LAT * Math.cos(lat0 * Math.PI / 180);
+  const X = (lon) => (lon - lon0) * mpdLon;
+  const Z = (lat) => -(lat - lat0) * MPD_LAT;
+  const uv = (lat, lon) => [PX(lon) / tc.compW, PY(lat) / tc.compH];
+
+  // malla del terreno: grid×grid puntos sobre el bbox de teselas
+  const pts = [];
+  for (let r = 0; r < grid; r++)
+    for (let c = 0; c < grid; c++) {
+      const lat = b.north + (b.south - b.north) * (r / (grid - 1));
+      const lon = b.west + (b.east - b.west) * (c / (grid - 1));
+      pts.push([lat, lon]);
+    }
+  const elev = await fetchElevationGrid(pts); // metros MSL, o null si falla
+
+  let elevMin = Infinity, elevMax = -Infinity;
+  if (elev) for (const e of elev) { if (e < elevMin) elevMin = e; if (e > elevMax) elevMax = e; }
+  if (!isFinite(elevMin)) { elevMin = 0; elevMax = 0; }
+  const base = elevMin; // restamos la cota mínima para mantener números pequeños
+
+  // altura del suelo bajo el despegue (para colocar el track por AGL/rel)
+  const takeoffGround = elev ? sampleGrid(elev, grid, b, model.takeoff[0], model.takeoff[1]) : 0;
+
+  const terrain = {
+    grid, base,
+    elevMin, elevMax,
+    // vértices en metros: {x, y (=elev-base), z, u, v}
+    vertex(r, c) {
+      const lat = b.north + (b.south - b.north) * (r / (grid - 1));
+      const lon = b.west + (b.east - b.west) * (c / (grid - 1));
+      const e = elev ? elev[r * grid + c] : 0;
+      const [u, v] = uv(lat, lon);
+      return { x: X(lon), y: e - base, z: Z(lat), u, v };
+    },
+    hasDEM: !!elev,
+  };
+
+  // altura de mundo del dron (m) para una altura relativa rel
+  const worldY = (rel) => (takeoffGround - base) + (rel ?? 0);
+
+  // track 3D coloreado por altura
+  const S = model.series.filter((s) => s.lat != null && s.t != null);
+  const relMax = Math.max(1, ...S.map((s) => s.rel ?? 0));
+  const track = S.map((s) => ({ x: X(s.lon), y: worldY(s.rel), z: Z(s.lat), t: s.t, rel: s.rel ?? 0 }));
+
+  // rumbo (heading) por muestra, a partir del desplazamiento
+  const heading = (i) => {
+    const a = S[Math.max(0, i - 1)], c = S[Math.min(S.length - 1, i + 1)];
+    return Math.atan2(X(c.lon) - X(a.lon), -(Z(c.lat) - Z(a.lat))); // rad, 0 = norte
+  };
+
+  /** Estado del dron interpolado en el instante t. */
+  const droneAt = (t) => {
+    let i = 1; while (i < S.length && S[i].t < t) i++;
+    const a = S[i - 1], c = S[Math.min(i, S.length - 1)];
+    const span = (c.t - a.t) || 1, f = Math.max(0, Math.min(1, (t - a.t) / span));
+    const lerp = (k) => (a[k] ?? 0) + ((c[k] ?? 0) - (a[k] ?? 0)) * f;
+    const lon = lerp('lon'), lat = lerp('lat'), rel = lerp('rel');
+    return {
+      x: X(lon), y: worldY(rel), z: Z(lat),
+      heading: heading(f < 0.5 ? i - 1 : Math.min(S.length - 1, i)),
+      pitch: (lerp('pitch') || 0) * Math.PI / 180,
+    };
+  };
+
+  const texture = await buildTexture(tc);
+
+  return {
+    // extensión del terreno en metros (para encuadrar la cámara)
+    bounds: {
+      x0: X(b.west), x1: X(b.east), z0: Z(b.north), z1: Z(b.south),
+      spanX: X(b.east) - X(b.west), spanZ: Z(b.south) - Z(b.north),
+    },
+    terrain, texture, track, droneAt, relMax,
+    takeoffXZ: { x: X(model.takeoff[1]), z: Z(model.takeoff[0]), y: worldY(0) },
+    duration: model.meta.dur || (S.length ? S[S.length - 1].t : 0),
+  };
+}
+
+/** Interpola bilinealmente un valor de la malla en (lat, lon). */
+function sampleGrid(elev, grid, b, lat, lon) {
+  const fr = (b.north - lat) / (b.north - b.south) * (grid - 1);
+  const fc = (lon - b.west) / (b.east - b.west) * (grid - 1);
+  const r = Math.max(0, Math.min(grid - 1, fr)), c = Math.max(0, Math.min(grid - 1, fc));
+  const r0 = Math.floor(r), c0 = Math.floor(c), r1 = Math.min(grid - 1, r0 + 1), c1 = Math.min(grid - 1, c0 + 1);
+  const tr = r - r0, tcc = c - c0;
+  const g = (rr, cc) => elev[rr * grid + cc];
+  const top = g(r0, c0) + (g(r0, c1) - g(r0, c0)) * tcc;
+  const bot = g(r1, c0) + (g(r1, c1) - g(r1, c0)) * tcc;
+  return top + (bot - top) * tr;
+}
+
+/** Color RGB (0-1) por altura normalizada, azul→naranja (igual que el mapa 2D). */
+function altColor(rel, relMax) {
+  const t = Math.max(0, Math.min(1, (rel || 0) / relMax));
+  const a = [76 / 255, 149 / 255, 1], d = [1, 138 / 255, 76 / 255];
+  return [a[0] + (d[0] - a[0]) * t, a[1] + (d[1] - a[1]) * t, a[2] + (d[2] - a[2]) * t];
+}
+
+Object.assign(__x, { buildScene3D, altColor });
 
 };
 
