@@ -45,6 +45,10 @@ export class Flight3D extends DjiElement {
           <div class="v3d-prog" id="prog"><div class="v3d-prog-f" id="progf"></div></div>
           <span class="v3d-time" id="time">0:00 / 0:00</span>
           <button class="v3d-btn" id="speed" type="button" title="${t('v3d.speed')}">1×</button>
+          <button class="v3d-btn on" id="cine" type="button" title="${t('v3d.cine')}">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h3l1 2H5l-1-2zm5 0h3l1 2h-3l-1-2zm5 0h3l1 2h-3l-1-2zM3 8h18v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8z"/></svg>
+            <span>${t('v3d.cine.short')}</span>
+          </button>
           <button class="v3d-btn" id="reset" type="button" title="${t('v3d.reset')}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 4v4h4"/></svg>
           </button>
@@ -114,8 +118,11 @@ export class Flight3D extends DjiElement {
     scene.add(this._buildTerrain(data));
     scene.add(this._buildSkirt(data)); // faldón: bloque de tierra, no lámina flotante
     scene.add(this._buildTrack(data));
+    scene.add(this._buildLabels(data)); // rótulos 3D de los hitos
     this._drone = this._buildDrone(data);
     scene.add(this._drone);
+    this._shadow = this._buildShadow();
+    scene.add(this._shadow);
     this._trail = this._buildTrail();
     scene.add(this._trail);
     this._placeDrone(0);
@@ -485,6 +492,96 @@ export class Flight3D extends DjiElement {
     for (const m of [R.curtain, R.hatch, R.tube, R.halo]) m.geometry.setDrawRange(0, Infinity);
   }
 
+  /** Etiqueta flotante elegante (pastilla fina translúcida con sombra) que mira a
+   *  la cámara. */
+  _labelSprite(text) {
+    const THREE = window.THREE, dpr = 3, fs = 23, padX = 15, padY = 7, mg = 11, dotW = 15;
+    const font = `600 ${fs}px -apple-system, system-ui, sans-serif`;
+    const meas = document.createElement('canvas').getContext('2d');
+    meas.font = font; meas.letterSpacing = '0.2px';
+    const tw = meas.measureText(text).width;
+    const pw = Math.ceil(tw + padX * 2 + dotW), ph = fs + padY * 2;
+    const w = pw + mg * 2, h = ph + mg * 2;
+    const c = document.createElement('canvas'); c.width = w * dpr; c.height = h * dpr;
+    const x = c.getContext('2d'); x.scale(dpr, dpr);
+    const r = ph / 2;
+    const pill = () => { x.beginPath(); x.moveTo(mg + r, mg); x.arcTo(mg + pw, mg, mg + pw, mg + ph, r); x.arcTo(mg + pw, mg + ph, mg, mg + ph, r); x.arcTo(mg, mg + ph, mg, mg, r); x.arcTo(mg, mg, mg + pw, mg, r); x.closePath(); };
+    x.save(); x.shadowColor = 'rgba(0,0,0,0.5)'; x.shadowBlur = 11; x.shadowOffsetY = 3;
+    pill(); x.fillStyle = 'rgba(11,15,22,0.82)'; x.fill(); x.restore();
+    pill(); x.lineWidth = 1; x.strokeStyle = 'rgba(255,255,255,0.13)'; x.stroke();
+    x.beginPath(); x.arc(mg + padX - 1, mg + ph / 2, 3.4, 0, 7); x.fillStyle = '#ff8a3d'; x.fill();
+    x.font = font; x.letterSpacing = '0.2px'; x.fillStyle = 'rgba(255,255,255,0.94)'; x.textBaseline = 'middle';
+    x.fillText(text, mg + padX + dotW - 3, mg + ph / 2 + 1);
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.minFilter = THREE.LinearFilter;
+    // sizeAttenuation false → tamaño constante en pantalla (no gigante al acercarse)
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false, sizeAttenuation: false }));
+    sp.userData.ar = w / h; sp.renderOrder = 10;
+    return sp;
+  }
+
+  /** Marcador fino (aro delgado con centro) de tamaño constante en pantalla. */
+  _dotSprite() {
+    const THREE = window.THREE, c = document.createElement('canvas'); c.width = c.height = 64;
+    const x = c.getContext('2d');
+    x.strokeStyle = '#ff7d1a'; x.lineWidth = 4; x.beginPath(); x.arc(32, 32, 20, 0, 7); x.stroke();
+    x.fillStyle = '#ff7d1a'; x.beginPath(); x.arc(32, 32, 6, 0, 7); x.fill();
+    const tex = new THREE.CanvasTexture(c); tex.minFilter = THREE.LinearFilter;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false, sizeAttenuation: false }));
+    sp.renderOrder = 8; return sp;
+  }
+
+  /** Rótulos 3D en los hitos del vuelo (despegue, punto más alto, más rápido…). */
+  _buildLabels(data) {
+    const THREE = window.THREE, grp = new THREE.Group(), s = this._span;
+    this._labelItems = [];
+    if (!data.keypoints) return grp;
+    for (const kp of data.keypoints) {
+      const up = s * 0.06;
+      const sp = this._labelSprite(t('kp.' + kp.key));
+      sp.position.set(kp.x, kp.y + up, kp.z);
+      const hh = 0.05; sp.scale.set(hh * sp.userData.ar, hh, 1); // tamaño constante en pantalla
+      grp.add(sp);
+      const lg = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(kp.x, kp.y, kp.z), new THREE.Vector3(kp.x, kp.y + up, kp.z)]);
+      const line = new THREE.Line(lg, new THREE.LineBasicMaterial({ color: 0xff7d1a, transparent: true, opacity: 0.45, depthTest: false }));
+      grp.add(line);
+      const dot = this._dotSprite(); // marcador fino de tamaño constante
+      dot.position.set(kp.x, kp.y, kp.z); dot.scale.set(0.016, 0.016, 1); grp.add(dot);
+      this._labelItems.push({ sprite: sp, line });
+    }
+    return grp;
+  }
+
+  /** Oculta los rótulos que se solapan en pantalla (prioriza los cercanos a la cámara). */
+  _declutterLabels() {
+    const items = this._labelItems; if (!items || !items.length) return;
+    const cam = this._cam, thx = 0.17, thy = 0.075;
+    const arr = items.map((it) => {
+      const p = it.sprite.position.clone(), d = p.distanceTo(cam.position);
+      const ndc = p.project(cam);
+      return { it, x: ndc.x, y: ndc.y, front: ndc.z < 1, d };
+    }).sort((a, b) => a.d - b.d);
+    const shown = [];
+    for (const a of arr) {
+      let hide = !a.front;
+      if (!hide) for (const sn of shown) if (Math.abs(a.x - sn.x) < thx && Math.abs(a.y - sn.y) < thy) { hide = true; break; }
+      a.it.sprite.visible = !hide; a.it.line.visible = !hide;
+      if (!hide) shown.push(a);
+    }
+  }
+
+  /** Sombra blanda del dron proyectada en el suelo (mancha oscura difusa). */
+  _buildShadow() {
+    const THREE = window.THREE;
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const x = c.getContext('2d'), g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, 'rgba(0,0,0,0.85)'); g.addColorStop(0.55, 'rgba(0,0,0,0.4)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    x.fillStyle = g; x.fillRect(0, 0, 64, 64);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, opacity: 0.5, depthWrite: false }));
+    m.rotation.x = -Math.PI / 2; // plano horizontal, sobre el terreno
+    return m;
+  }
+
   /** Dron modelado como el DJI Neo 2: cuerpo gris, 4 conductos con hélice,
    *  cámara/gimbal frontal y antenas en V. Materiales con emissive para que se
    *  vea (no una silueta negra) aunque la luz de la escena sea baja. */
@@ -492,8 +589,10 @@ export class Flight3D extends DjiElement {
     const THREE = window.THREE;
     const span = Math.max(data.bounds.spanX, Math.abs(data.bounds.spanZ)) || 500;
     const s = Math.max(9, span * 0.012); // marcador exagerado, pero sin pasarse
+    this._droneS = s;
     const grp = new THREE.Group();
     const body = new THREE.Group(); // gira según el rumbo (el frente mira a -Z)
+    body.rotation.order = 'YXZ'; // rumbo → cabeceo → alabeo (como un avión)
 
     const matBody = new THREE.MeshStandardMaterial({ color: 0x9aa0a8, metalness: 0.55, roughness: 0.42, emissive: 0x2f333a, emissiveIntensity: 0.6 });
     const matDark = new THREE.MeshStandardMaterial({ color: 0x3a3e45, metalness: 0.5, roughness: 0.55, emissive: 0x181a1e, emissiveIntensity: 0.55 });
@@ -551,6 +650,16 @@ export class Flight3D extends DjiElement {
       ant.rotation.z = ux * 0.32; ant.rotation.x = -0.28; body.add(ant);
     }
 
+    // luces de navegación: verdes delante, rojas detrás (parpadean en el bucle)
+    this._leds = [];
+    const ledGeo = new THREE.SphereGeometry(s * 0.05, 8, 8);
+    for (const [lx, lz, col] of [[-0.5, -0.5, 0x39ff88], [0.5, -0.5, 0x39ff88], [-0.5, 0.5, 0xff3355], [0.5, 0.5, 0xff3355]]) {
+      const mat = new THREE.MeshBasicMaterial({ color: col });
+      const led = new THREE.Mesh(ledGeo, mat);
+      led.position.set(lx * dx, s * 0.12, lz * dz); body.add(led);
+      this._leds.push({ mesh: led, color: new THREE.Color(col), rear: lz > 0 });
+    }
+
     grp.add(body); this._droneBody = body;
 
     // cono de visión: parte del dron y apunta según rumbo + pitch del gimbal
@@ -569,7 +678,28 @@ export class Flight3D extends DjiElement {
     // en hover el rumbo es NaN: mantenemos el último para que no gire de golpe
     const h = isNaN(d.heading) ? (this._bodyHeading ?? 0) : d.heading;
     this._bodyHeading = h;
-    if (this._droneBody) this._droneBody.rotation.y = -h; // el frente (-Z) mira al rumbo
+    if (this._droneBody) {
+      this._droneBody.rotation.y = -h; // el frente (-Z) mira al rumbo
+      // alabeo: se inclina hacia el interior de la curva según la tasa de giro
+      const h1 = this._scene.droneAt(time - 0.6).heading, h2 = this._scene.droneAt(time + 0.6).heading;
+      let roll = 0;
+      if (!isNaN(h1) && !isNaN(h2)) {
+        const dh = ((h2 - h1 + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+        roll = Math.max(-0.5, Math.min(0.5, dh * 1.6));
+      }
+      this._roll = (this._roll ?? 0) + (roll - (this._roll ?? 0)) * 0.15; // suavizado
+      this._droneBody.rotation.z = this._roll;
+      this._droneBody.rotation.x = Math.max(-0.25, Math.min(0.25, -(d.hs || 0) * 0.012)); // morro abajo al avanzar
+    }
+    // sombra proyectada en el suelo bajo el dron
+    if (this._shadow) {
+      const gy = d.gy != null ? d.gy : this._scene.takeoffXZ.y;
+      const agl = Math.max(0, d.y - gy), base = (this._droneS || 12) * 2.1;
+      const sz = base + agl * 0.35; // crece y se difumina con la altura, pero sin desaparecer
+      this._shadow.position.set(d.x, gy + 0.6, d.z);
+      this._shadow.scale.set(sz, sz, 1);
+      this._shadow.material.opacity = Math.max(0.16, 0.45 - agl * 0.0007);
+    }
     // dirección de la cámara: horizontal por rumbo, inclinada por el pitch del gimbal
     const el = d.pitch; // rad (negativo = mirando abajo)
     const dir = new THREE.Vector3(Math.cos(el) * Math.sin(h), Math.sin(el), -Math.cos(el) * Math.cos(h));
@@ -609,6 +739,12 @@ export class Flight3D extends DjiElement {
       if (this._introT0 != null) this._stepIntro();
       else if (this._playing) this._advanceFlyover();
       if (this._rotors) for (const r of this._rotors) r.rotation.y += 0.9; // hélices girando
+      if (this._leds) { // parpadeo de las luces de navegación
+        const t = performance.now() * 0.006;
+        const rear = Math.sin(t) > 0.1 ? 1 : 0.12, front = Math.sin(t * 0.7 + 1) > -0.3 ? 1 : 0.25;
+        for (const l of this._leds) l.mesh.material.color.copy(l.color).multiplyScalar(l.rear ? rear : front);
+      }
+      if (this._three === this._localScene) this._declutterLabels(); // rótulos sin solaparse
       this._renderer.render(this._three, this._cam);
     };
     this._raf = requestAnimationFrame(tick);
@@ -621,6 +757,7 @@ export class Flight3D extends DjiElement {
     let drag = null;
     this.on(canvas, 'pointerdown', (e) => {
       if (this._introT0 != null) { this._endIntro(); return; } // la 1ª pulsación salta la intro
+      if (this._playing && this._cineMode) this._toggleCine(); // tomar control manual de la cámara
       drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId);
     });
     this.on(canvas, 'pointermove', (e) => {
@@ -645,8 +782,11 @@ export class Flight3D extends DjiElement {
     this.on(this.$('#reset'), 'click', () => { this._stopFlyover(); this._orbit.theta = -Math.PI * 0.7; this._orbit.phi = 1.2; this._applyOrbit(); });
     this.on(this.$('#prog'), 'pointerdown', (e) => this._seek(e));
     this.on(this.$('#speed'), 'click', () => this._cycleSpeed());
+    this.on(this.$('#cine'), 'click', () => this._toggleCine());
     this.on(this.$('#startBtn'), 'click', () => this._runIntro());
 
+    this._cineMode = this._cineMode !== false; // por defecto activado
+    this.$('#cine').classList.toggle('on', this._cineMode);
     this._speed = this._speed || 1;
     this.$('#speed').textContent = this._speed + '×';
     this.$('#speed').classList.toggle('on', this._speed !== 1);
@@ -661,6 +801,55 @@ export class Flight3D extends DjiElement {
     this.$('#speed').classList.toggle('on', this._speed !== 1);
   }
 
+  /** Activa/desactiva el director de cámara automático (modo cine). */
+  _toggleCine() {
+    this._cineMode = !this._cineMode;
+    this.$('#cine').classList.toggle('on', this._cineMode);
+    this._director = null; this._look = null;
+  }
+
+  /** Elige el siguiente plano cinematográfico (planos suaves, sin extremos). */
+  _nextShot() {
+    const shots = ['chase', 'orbit', 'high', 'side', 'reveal'];
+    const prev = this._director && this._director.shot;
+    let sh; do { sh = shots[(Math.random() * shots.length) | 0]; } while (sh === prev);
+    this._director = { shot: sh, t0: performance.now(), dur: 5500 + Math.random() * 3000, dir: Math.random() < 0.5 ? -1 : 1, a0: Math.random() * Math.PI * 2 };
+  }
+
+  /** Mueve la cámara hacia `want` con inercia y un tope por frame (sin saltos). */
+  _easeCamTo(want) {
+    const target = this._cam.position.clone().lerp(want, 0.04);
+    const delta = target.sub(this._cam.position);
+    const maxMove = this._span * 0.045; // tope de desplazamiento por fotograma
+    if (delta.length() > maxMove) delta.setLength(maxMove);
+    this._cam.position.add(delta);
+  }
+
+  /** Cámara cinematográfica: encadena planos (persecución, órbita, grúa suave,
+   *  lateral, revelado) siguiendo al dron, con inercia y ligero temblor. */
+  _cineCam() {
+    const THREE = window.THREE, d = this._scene.droneAt(this._time);
+    const target = isNaN(d.heading) ? (this._cHead ?? 0) : d.heading;
+    if (this._cHead == null) this._cHead = target;
+    else { const diff = ((target - this._cHead + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI; this._cHead += diff * 0.035; }
+    const h = this._cHead;
+    if (!this._director || performance.now() - this._director.t0 > this._director.dur) this._nextShot();
+    const D = this._director, te = (performance.now() - D.t0) / 1000;
+    const Rb = this._span * 0.24, up = new THREE.Vector3(0, 1, 0);
+    const fwd = new THREE.Vector3(Math.sin(h), 0, -Math.cos(h));
+    const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
+    const dp = new THREE.Vector3(d.x, d.y, d.z);
+    let want;
+    if (D.shot === 'chase') want = dp.clone().addScaledVector(fwd, -Rb * 1.15).addScaledVector(up, Rb * 0.42);
+    else if (D.shot === 'orbit') { const a = D.a0 + te * 0.28 * D.dir; want = dp.clone().addScaledVector(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)), Rb * 1.2).addScaledVector(up, Rb * 0.5); }
+    else if (D.shot === 'high') want = dp.clone().addScaledVector(up, Rb).addScaledVector(fwd, -Rb * 0.6);
+    else if (D.shot === 'side') want = dp.clone().addScaledVector(right, Rb * 1.15 * D.dir).addScaledVector(up, Rb * 0.42).addScaledVector(fwd, Rb * 0.15);
+    else want = dp.clone().addScaledVector(fwd, Rb * (1.25 - te * 0.05)).addScaledVector(up, Rb * 0.35); // reveal (dolly suave)
+    this._easeCamTo(want);
+    this._look = this._look || dp.clone(); this._look.lerp(dp, 0.09);
+    this._cam.lookAt(this._look);
+  }
+
   _toggleFlyover() { this._playing ? this._stopFlyover(true) : this._startFlyover(); }
 
   _startFlyover() {
@@ -670,6 +859,7 @@ export class Flight3D extends DjiElement {
     // intro cinematográfica: arranca amplio y la cámara se acerca al dron sola
     this._orbit.r = this._orbit.max * 0.3; this._orbit.phi = 1.0;
     this._chaseTargetR = this._orbit.max * 0.055; this._introStart = performance.now();
+    this._director = null; this._cHead = null; // reinicia el director de cámara
     this.$('#hud').hidden = false;
     if (this._trail) this._trail.visible = true;
     this._setPlayIcon(true);
@@ -690,7 +880,7 @@ export class Flight3D extends DjiElement {
     this._placeDrone(this._time);
     this._updateTrail(this._time);
     this._revealTrack(this._time);
-    this._chaseCam();
+    if (this._cineMode && !this._introStart) this._cineCam(); else this._chaseCam();
     this._updateTime(this._time);
     if (this._time >= this._scene.duration) this._stopFlyover();
   }
