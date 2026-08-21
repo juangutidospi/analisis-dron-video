@@ -31,6 +31,7 @@ canvas:active { cursor: grabbing; }
   background: rgba(12,17,26,.62); backdrop-filter: blur(12px);
   border: 1px solid rgba(255,255,255,.1);
 }
+.v3d-bar[hidden] { display: none; } /* el atributo hidden debe ganar a display:flex */
 .v3d-btn {
   flex: none; display: inline-flex; align-items: center; gap: 6px;
   height: 34px; padding: 0 14px; border-radius: 100px; cursor: pointer;
@@ -40,6 +41,8 @@ canvas:active { cursor: grabbing; }
 }
 .v3d-btn:hover { background: rgba(255,255,255,.16); }
 .v3d-btn.primary { background: var(--color-accent); border-color: transparent; color: #fff; }
+.v3d-btn.on { background: var(--color-accent); border-color: transparent; color: #fff; }
+#speed { min-width: 40px; font-variant-numeric: tabular-nums; }
 .v3d-btn svg { width: 15px; height: 15px; }
 .v3d-prog { flex: 1; height: 6px; border-radius: 100px; background: rgba(255,255,255,.16); position: relative; cursor: pointer; }
 .v3d-prog-f { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 100px; background: linear-gradient(90deg, var(--color-accent), var(--color-violet)); }
@@ -59,6 +62,53 @@ canvas:active { cursor: grabbing; }
   font-size: 11px; color: #aeb8cc; padding: 6px 11px; border-radius: 100px;
   background: rgba(12,17,26,.5); backdrop-filter: blur(10px);
 }
+
+/* pantalla de inicio: el globo queda de póster hasta que el usuario pulsa */
+.v3d-start {
+  position: absolute; inset: 0; z-index: 8; display: grid; place-items: center;
+  background: radial-gradient(circle at 50% 40%, rgba(5,7,14,.15), rgba(5,7,14,.55));
+}
+.v3d-start[hidden] { display: none; }
+.v3d-start-btn {
+  display: inline-flex; align-items: center; gap: 11px; cursor: pointer;
+  padding: 14px 26px 14px 22px; border-radius: 100px; font: inherit; font-size: 16px; font-weight: 700;
+  color: #fff; border: 1px solid rgba(255,255,255,.25);
+  background: color-mix(in srgb, var(--color-accent) 88%, #000); box-shadow: 0 10px 34px rgba(0,0,0,.45);
+  transition: transform .14s, box-shadow .14s;
+}
+.v3d-start-btn:hover { transform: translateY(-2px) scale(1.02); box-shadow: 0 16px 42px rgba(0,0,0,.5); }
+.v3d-start-btn svg { width: 20px; height: 20px; }
+
+/* destello de transición de la intro (globo → escena local) */
+.v3d-flash {
+  position: absolute; inset: 0; z-index: 7; pointer-events: none; border-radius: 16px;
+  background: radial-gradient(circle at 50% 48%, rgba(226,232,242,.85), rgba(150,168,196,.75));
+  opacity: 0; transition: opacity .3s ease;
+}
+.v3d-flash.on { opacity: 1; }
+
+/* viñeta cinematográfica */
+.v3d-vignette {
+  position: absolute; inset: 0; z-index: 5; pointer-events: none; border-radius: 16px;
+  box-shadow: inset 0 0 120px 10px rgba(0,0,0,.55), inset 0 0 40px rgba(0,0,0,.35);
+}
+
+/* HUD de telemetría durante el sobrevuelo */
+.v3d-hud {
+  position: absolute; top: 46px; right: 12px; z-index: 6;
+  display: flex; flex-direction: column; gap: 7px;
+  opacity: 0; transform: translateX(8px); transition: opacity .35s, transform .35s;
+}
+.v3d-hud:not([hidden]) { opacity: 1; transform: none; }
+.hud-item {
+  display: grid; grid-template-columns: auto auto; align-items: baseline; gap: 0 5px;
+  min-width: 108px; padding: 8px 12px; border-radius: 12px;
+  background: rgba(12,17,26,.52); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,.1);
+}
+.hud-v { font-size: 22px; font-weight: 800; color: #fff; font-variant-numeric: tabular-nums; text-align: right; }
+.hud-u { font-size: 11px; color: #aeb8cc; font-weight: 600; }
+.hud-l { grid-column: 1 / -1; font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; color: #8794ab; margin-top: 2px; }
+@media (max-width: 640px) { .v3d-hud { display: none; } }
 .v3d-fallback { position: absolute; inset: 0; display: grid; place-items: center; color: #aeb8cc; font-size: 13px; text-align: center; padding: 0 28px; }
 @media (prefers-reduced-motion: reduce) { .v3d.loading::after { animation: none; } }
 `;
