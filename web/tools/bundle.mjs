@@ -8,6 +8,7 @@
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = root;
@@ -88,4 +89,13 @@ ${parts.join('\n\n')}
 `;
 
 await writeFile(join(WEB, 'app.bundle.js'), bundle);
-console.log(`app.bundle.js · ${files.length} módulos · ${(bundle.length / 1024).toFixed(0)} KB`);
+
+// Cache-busting: sella index.html con la versión del bundle (hash del contenido)
+// para que el navegador no sirva una versión antigua cacheada tras regenerar.
+const ver = createHash('sha1').update(bundle).digest('hex').slice(0, 8);
+const idx = join(WEB, 'index.html');
+const html = await readFile(idx, 'utf8');
+const stamped = html.replace(/src="app\.bundle\.js(?:\?v=[^"]*)?"/, `src="app.bundle.js?v=${ver}"`);
+if (stamped !== html) await writeFile(idx, stamped);
+
+console.log(`app.bundle.js · ${files.length} módulos · ${(bundle.length / 1024).toFixed(0)} KB · v=${ver}`);
