@@ -5,7 +5,7 @@
 // expone la posición/rumbo/pitch del dron en cada instante.
 // La usan tanto la rama de Three.js como la del renderer propio en canvas.
 
-import { projector } from './geo.js';
+import { projector, keypoints } from './geo.js';
 import { solarPosition, lightPhase } from './solar.js';
 
 const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile';
@@ -252,7 +252,8 @@ export async function buildScene3D(model, opts = {}) {
     const a = S[i - 1], c = S[Math.min(i, S.length - 1)];
     const span = (c.t - a.t) || 1, f = Math.max(0, Math.min(1, (time - a.t) / span));
     const lerp = (k) => (a[k] ?? 0) + ((c[k] ?? 0) - (a[k] ?? 0)) * f;
-    return { x: X(lerp('lon')), y: worldY(lerp('rel')), z: Z(lerp('lat')), pitch: (lerp('pitch') || 0) * Math.PI / 180, hs: lerp('hs'), vs: lerp('vs'), rel: lerp('rel') };
+    const lat = lerp('lat'), lon = lerp('lon');
+    return { x: X(lon), y: worldY(lerp('rel')), z: Z(lat), pitch: (lerp('pitch') || 0) * Math.PI / 180, hs: lerp('hs'), vs: lerp('vs'), rel: lerp('rel'), gy: groundY(lat, lon) };
   };
 
   /**
@@ -264,7 +265,7 @@ export async function buildScene3D(model, opts = {}) {
     const p = posAt(t), a = posAt(t - 1.2), c = posAt(t + 1.2);
     const dxp = c.x - a.x, dzp = c.z - a.z, dist = Math.hypot(dxp, dzp);
     const heading = dist > 1.5 ? Math.atan2(dxp, -dzp) : NaN;
-    return { x: p.x, y: p.y, z: p.z, pitch: p.pitch, hs: p.hs, vs: p.vs, rel: p.rel, heading };
+    return { x: p.x, y: p.y, z: p.z, pitch: p.pitch, hs: p.hs, vs: p.vs, rel: p.rel, gy: p.gy, heading };
   };
 
   // posición real del sol para el instante y lugar del vuelo (cielo, luz, sombras)
@@ -289,6 +290,7 @@ export async function buildScene3D(model, opts = {}) {
       spanX: X(b.east) - X(b.west), spanZ: Z(b.south) - Z(b.north),
     },
     terrain, texture, water, track, droneAt, relMax, sun,
+    keypoints: keypoints(model).map((k) => ({ key: k.key, t: k.t, x: X(k.lon), y: worldY(k.x.rel ?? 0), z: Z(k.lat) })),
     takeoffXZ: { x: X(model.takeoff[1]), z: Z(model.takeoff[0]), y: worldY(0) },
     duration: model.meta.dur || (S.length ? S[S.length - 1].t : 0),
   };
