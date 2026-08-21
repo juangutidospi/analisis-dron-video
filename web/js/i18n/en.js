@@ -135,6 +135,8 @@ export default {
   'v3d.pause': 'Pause',
   'v3d.reset': 'Reset view',
   'v3d.speed': 'Playback speed',
+  'v3d.cine': 'Cinematic mode: auto camera with shots. Drag to take control.',
+  'v3d.cine.short': 'Cine',
   'v3d.start': 'Start 3D flight',
   'v3d.hud.alt': 'Altitude',
   'v3d.hud.spd': 'Speed',

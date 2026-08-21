@@ -135,6 +135,8 @@ export default {
   'v3d.pause': 'Pausa',
   'v3d.reset': 'Reiniciar la vista',
   'v3d.speed': 'Velocidad de reproducción',
+  'v3d.cine': 'Modo cine: cámara automática con planos. Arrastra para tomar el control.',
+  'v3d.cine.short': 'Cine',
   'v3d.start': 'Iniciar vuelo 3D',
   'v3d.hud.alt': 'Altura',
   'v3d.hud.spd': 'Velocidad',
