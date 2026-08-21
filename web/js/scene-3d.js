@@ -63,11 +63,11 @@ async function fetchTerrainDEM(b) {
 }
 
 /**
- * Encuadre de teselas para el 3D: expande el bbox del vuelo por `factor` (3× por
+ * Encuadre de teselas para el 3D: expande el bbox del vuelo por `factor` (4× por
  * defecto) para mostrar más contexto alrededor, y elige el zoom para no pasar de
  * un presupuesto de teselas. Devuelve la misma forma que geo.tileConfig.
  */
-function wideConfig(track, factor = 3) {
+function wideConfig(track, factor = 4) {
   const T = track.filter((p) => p[0] != null);
   const lats = T.map((p) => p[0]), lons = T.map((p) => p[1]);
   let la0 = Math.min(...lats), la1 = Math.max(...lats), lo0 = Math.min(...lons), lo1 = Math.max(...lons);
@@ -182,13 +182,112 @@ function buildWaterMask(texCanvas) {
 }
 
 /**
+ * Expande un bbox alrededor de su centro por `mult`, acotando la semianchura
+ * resultante entre `minKm` y `maxKm` por lado. Sirve para consultar el horizonte
+ * (pueblos/cimas del entorno), que suele ser mucho más ancho que el vuelo.
+ */
+function expandBox(b, mult, minKm, maxKm) {
+  const cLat = (b.north + b.south) / 2, cLon = (b.east + b.west) / 2;
+  const kmLat = 110.6, kmLon = 110.6 * Math.cos(cLat * Math.PI / 180);
+  const clamp = (h, km) => Math.min(maxKm / km, Math.max(minKm / km, h));
+  const hLat = clamp((b.north - b.south) / 2 * mult, kmLat);
+  const hLon = clamp((b.east - b.west) / 2 * mult, kmLon);
+  return { south: cLat - hLat, north: cLat + hLat, west: cLon - hLon, east: cLon + hLon };
+}
+
+/**
+ * Puntos de interés del horizonte desde OpenStreetMap (Overpass): cimas
+ * (natural=peak, con su cota), núcleos de población (place=city/town/village/
+ * hamlet) y masas de agua (embalses, lagos, ríos). Sirven para rotular lo que se
+ * ve alrededor del vuelo, en un radio bastante mayor que el terreno (los pueblos
+ * vecinos quedan a varios km). Consulta con un tiempo máximo y devuelve [] ante
+ * cualquier fallo (Overpass caído, CORS, timeout). Prioriza ciudades > pueblos >
+ * aldeas, embalses/lagos > ríos, y cimas por altitud; limita el total.
+ * @param {{west:number,east:number,north:number,south:number}} b bbox de consulta
+ * @returns {Promise<Array<{lat:number,lon:number,name:string,kind:'peak'|'town'|'water',ele:number|null,rank:number}>>}
+ */
+/**
+ * Lanza una consulta Overpass probando el servidor principal y un espejo, con un
+ * tiempo máximo. Devuelve el array de elementos, o null si ningún endpoint
+ * respondió a tiempo.
+ */
+async function fetchOverpass(query, timeoutMs) {
+  const endpoints = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+  for (const url of endpoints) {
+    try {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), timeoutMs);
+      const res = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(query), signal: ctrl.signal });
+      clearTimeout(to);
+      if (!res.ok) continue;
+      return (await res.json()).elements || [];
+    } catch { /* siguiente espejo */ }
+  }
+  return null;
+}
+
+async function fetchHorizonPOIs(b) {
+  const bbox = `${b.south},${b.west},${b.north},${b.east}`;
+  // Dos consultas independientes en paralelo: cimas/núcleos (nodos, rápida) y
+  // masas de agua (vías/relaciones, con `out center`). Se separan a propósito:
+  // el agua puede ser lenta o fallar (p.ej. la relación de un río largo) y no
+  // debe arrastrar consigo a los pueblos/cimas. NO pedimos relaciones de río
+  // (waterway) porque cargar la geometría entera de un río de cientos de km
+  // dispara el tiempo de respuesta; las vías dan un centro más cercano y útil.
+  const qLand = `[out:json][timeout:20];(` +
+    `node["natural"="peak"]["name"](${bbox});` +
+    `node["place"~"^(city|town|village|hamlet)$"]["name"](${bbox});` +
+    `);out qt 200;`;
+  const qWater = `[out:json][timeout:20];(` +
+    `way["natural"="water"]["name"](${bbox});` +
+    `relation["natural"="water"]["name"](${bbox});` +
+    `way["landuse"="reservoir"]["name"](${bbox});` +
+    `relation["landuse"="reservoir"]["name"](${bbox});` +
+    `way["waterway"="river"]["name"](${bbox});` +
+    `);out center 200;`;
+  const [land, water] = await Promise.all([fetchOverpass(qLand, 12000), fetchOverpass(qWater, 12000)]);
+  const els = [...(land || []), ...(water || [])];
+  if (!els.length) return [];
+
+  // rango de importancia: ciudad > pueblo > aldea; agua: embalse/lago > río;
+  // cima por altitud. Se deduplica por nombre quedándose con el rango más alto.
+  const PLACE = { city: 6, town: 5, village: 4, hamlet: 3 };
+  const peaks = [], places = [], waters = [];
+  const seenWater = new Map(); // nombre → índice en waters (dedup de ríos troceados)
+  for (const e of els) {
+    const tg = e.tags || {}, name = tg.name;
+    const lat = e.lat ?? e.center?.lat, lon = e.lon ?? e.center?.lon;
+    if (!name || lat == null || lon == null) continue;
+    if (tg.natural === 'peak') {
+      const ele = Number.parseFloat(tg.ele);
+      peaks.push({ lat, lon, name, kind: 'peak', ele: Number.isFinite(ele) ? ele : null, rank: Number.isFinite(ele) ? ele : 0 });
+    } else if (tg.place in PLACE) {
+      places.push({ lat, lon, name, kind: 'town', ele: null, rank: PLACE[tg.place] * 1000 });
+    } else if (tg.natural === 'water' || tg.landuse === 'reservoir' || tg.waterway === 'river') {
+      const river = tg.waterway === 'river' && tg.natural !== 'water';
+      const rank = river ? 2500 : 5500; // embalses/lagos destacan; ríos algo menos
+      const key = name.split(' - ')[0].trim().toLowerCase(); // "Río Duero - Rio Douro" ≡ "Río Duero"
+      const prev = seenWater.get(key);
+      if (prev == null) { seenWater.set(key, waters.length); waters.push({ lat, lon, name, kind: 'water', ele: null, rank }); }
+      else if (rank > waters[prev].rank) waters[prev] = { lat, lon, name, kind: 'water', ele: null, rank };
+    }
+  }
+  peaks.sort((a, c) => c.rank - a.rank);
+  places.sort((a, c) => c.rank - a.rank);
+  waters.sort((a, c) => c.rank - a.rank);
+  // conserva los más importantes de cada tipo (el declutter en pantalla recorta
+  // el resto por solapamiento)
+  return [...places.slice(0, 18), ...waters.slice(0, 10), ...peaks.slice(0, 16)];
+}
+
+/**
  * Prepara todos los datos de la escena 3D del vuelo.
  * @param {object} model modelo del vuelo
  * @param {{grid?:number}} [opts] grid = nº de vértices por lado de la malla del terreno
  * @returns {Promise<object>} datos listos para cualquier motor de render
  */
 export async function buildScene3D(model, opts = {}) {
-  const tc = wideConfig(model.track, opts.extent ?? 3); // mapa ampliado a 3× el vuelo
+  const tc = wideConfig(model.track, opts.extent ?? 4); // mapa ampliado a 4× el vuelo
   const { PX, PY } = projector(tc);
   const b = tileBounds(tc);
 
@@ -281,9 +380,32 @@ export async function buildScene3D(model, opts = {}) {
   const water = buildWaterMask(texture); // máscara de agua (o null)
   const world = await buildWorldTexture(4); // globo de la intro (más nítido)
 
+  // rótulos del horizonte (cimas/pueblos de OSM): consulta un radio bastante
+  // mayor que el terreno (los pueblos vecinos quedan a varios km) y coloca cada
+  // rótulo en su dirección real. La cima usa su cota real; el resto (y lo que
+  // cae fuera del terreno) usa la altura del DEM, que se satura al borde. Va en
+  // segundo plano para no retrasar la escena; el componente los añade al resolver.
+  const poiBox = expandBox(b, 4, 4, 12); // 4× el terreno, entre 4 y 12 km por lado
+  const poisReady = fetchHorizonPOIs(poiBox)
+    .then((raw) => raw.map((p) => {
+      let lat = p.lat, lon = p.lon;
+      // el centroide (`out center`) de ríos/embalses grandes cae lejísimos de la
+      // parte visible; lo acotamos al terreno para colocar el rótulo sobre el mapa
+      if (p.kind === 'water') {
+        lat = Math.max(b.south, Math.min(b.north, lat));
+        lon = Math.max(b.west, Math.min(b.east, lon));
+      }
+      return {
+        name: p.name, kind: p.kind, ele: p.ele, rank: p.rank,
+        x: X(lon), z: Z(lat),
+        y: (p.kind === 'peak' && p.ele != null) ? (p.ele - base) * VE : groundY(lat, lon),
+      };
+    }))
+    .catch(() => []);
+
   return {
     center: [lat0, lon0],
-    world,
+    world, poisReady,
     // extensión del terreno en metros (para encuadrar la cámara)
     bounds: {
       x0: X(b.west), x1: X(b.east), z0: Z(b.north), z1: Z(b.south),

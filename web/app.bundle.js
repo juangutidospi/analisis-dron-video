@@ -723,6 +723,11 @@ class Flight3D extends DjiElement {
       this._initThree(scene);
       this.$('#wrap').classList.remove('loading');
       this._wireControls(); // la barra aparece tras la intro (o si no hay globo)
+      // rótulos del horizonte: entran cuando Overpass responde (no bloquean la escena)
+      scene.poisReady?.then((pois) => {
+        if (token !== this._token || !this.isConnected) return;
+        this._buildHorizonLabels(pois);
+      }).catch(() => {});
     }).catch((err) => { console.error('[flight-3d]', err); this._fallback(); });
   }
 
@@ -760,7 +765,8 @@ class Flight3D extends DjiElement {
     sun.position.set(sd.x * span, sd.y * span, sd.z * span);
     scene.add(sun);
 
-    scene.add(this._buildTerrain(data));
+    this._terrainMesh = this._buildTerrain(data);
+    scene.add(this._terrainMesh);
     scene.add(this._buildSkirt(data)); // faldón: bloque de tierra, no lámina flotante
     scene.add(this._buildTrack(data));
     scene.add(this._buildLabels(data)); // rótulos 3D de los hitos
@@ -775,6 +781,7 @@ class Flight3D extends DjiElement {
     // órbita: objetivo en el centro del terreno, a media altura
     this._target = new THREE.Vector3(0, data.terrain.midY ?? 0, 0);
     this._orbit = { r: span * 1.15, theta: -Math.PI * 0.7, phi: 1.2, min: span * 0.05, max: span * 4 };
+    this._home = { target: this._target.clone(), r: this._orbit.r, theta: this._orbit.theta, phi: this._orbit.phi };
     this._applyOrbit();
 
     this._localScene = scene; // escena del vuelo (el globo de la intro es aparte)
@@ -1191,9 +1198,62 @@ class Flight3D extends DjiElement {
       grp.add(line);
       const dot = this._dotSprite(); // marcador fino de tamaño constante
       dot.position.set(kp.x, kp.y, kp.z); dot.scale.set(0.016, 0.016, 1); grp.add(dot);
-      this._labelItems.push({ sprite: sp, line });
+      this._labelItems.push({ sprite: sp, line, prio: 0 }); // los hitos ganan al horizonte
     }
     return grp;
+  }
+
+  /** Pastilla del horizonte (cima, pueblo o masa de agua de OSM): más tenue y
+   *  fría que la de los hitos, con un icono según el tipo. */
+  _horizonSprite(text, kind) {
+    const THREE = window.THREE, dpr = 3, fs = 19, padX = 13, padY = 6, mg = 10, icoW = 15;
+    const accent = kind === 'peak' ? '#8fe0bd' : kind === 'water' ? '#69c8f5' : '#98c2ff';
+    const font = `500 ${fs}px -apple-system, system-ui, sans-serif`;
+    const meas = document.createElement('canvas').getContext('2d');
+    meas.font = font; meas.letterSpacing = '0.2px';
+    const tw = meas.measureText(text).width;
+    const pw = Math.ceil(tw + padX * 2 + icoW), ph = fs + padY * 2;
+    const w = pw + mg * 2, h = ph + mg * 2;
+    const c = document.createElement('canvas'); c.width = w * dpr; c.height = h * dpr;
+    const x = c.getContext('2d'); x.scale(dpr, dpr);
+    const r = ph / 2;
+    const pill = () => { x.beginPath(); x.moveTo(mg + r, mg); x.arcTo(mg + pw, mg, mg + pw, mg + ph, r); x.arcTo(mg + pw, mg + ph, mg, mg + ph, r); x.arcTo(mg, mg + ph, mg, mg, r); x.arcTo(mg, mg, mg + pw, mg, r); x.closePath(); };
+    x.save(); x.shadowColor = 'rgba(0,0,0,0.45)'; x.shadowBlur = 9; x.shadowOffsetY = 2;
+    pill(); x.fillStyle = 'rgba(10,14,20,0.7)'; x.fill(); x.restore();
+    pill(); x.lineWidth = 1; x.strokeStyle = 'rgba(255,255,255,0.1)'; x.stroke();
+    // icono: triángulo (cima), onda (agua) o aro (pueblo)
+    const cx = mg + padX - 2, cy = mg + ph / 2;
+    x.fillStyle = accent; x.strokeStyle = accent;
+    if (kind === 'peak') { x.beginPath(); x.moveTo(cx, cy - 4.5); x.lineTo(cx + 4.5, cy + 4); x.lineTo(cx - 4.5, cy + 4); x.closePath(); x.fill(); }
+    else if (kind === 'water') {
+      x.lineWidth = 1.6; x.lineCap = 'round';
+      for (const dy of [-3, 1]) { x.beginPath(); x.moveTo(cx - 4.5, cy + dy); x.quadraticCurveTo(cx - 1.5, cy + dy - 2.4, cx, cy + dy); x.quadraticCurveTo(cx + 1.5, cy + dy + 2.4, cx + 4.5, cy + dy); x.stroke(); }
+    } else { x.lineWidth = 1.8; x.beginPath(); x.arc(cx, cy, 3.4, 0, 7); x.stroke(); x.beginPath(); x.arc(cx, cy, 1.1, 0, 7); x.fill(); }
+    x.font = font; x.letterSpacing = '0.2px'; x.fillStyle = 'rgba(255,255,255,0.86)'; x.textBaseline = 'middle';
+    x.fillText(text, mg + padX + icoW - 4, mg + ph / 2 + 1);
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.minFilter = THREE.LinearFilter;
+    // fog:false → legible aunque el POI esté lejos, en la bruma del horizonte
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.94, depthWrite: false, depthTest: false, fog: false, sizeAttenuation: false }));
+    sp.userData.ar = w / h; sp.renderOrder = 9;
+    return sp;
+  }
+
+  /** Rótulos del horizonte (cimas con su cota, pueblos y masas de agua del
+   *  entorno). Flotan en la dirección real del lugar, sin línea guía (muchos caen
+   *  lejos del terreno). Se construyen de forma perezosa cuando Overpass responde. */
+  _buildHorizonLabels(pois) {
+    if (!pois || !pois.length || !this._localScene) return;
+    const grp = new window.THREE.Group(), up = this._span * 0.02;
+    for (const p of pois) {
+      const text = p.kind === 'peak' && p.ele ? `${p.name} · ${Math.round(p.ele)} m` : p.name;
+      const sp = this._horizonSprite(text, p.kind);
+      sp.position.set(p.x, p.y + up, p.z);
+      const hh = 0.04; sp.scale.set(hh * sp.userData.ar, hh, 1);
+      grp.add(sp);
+      this._labelItems.push({ sprite: sp, prio: 1 });
+    }
+    this._localScene.add(grp);
+    this._horizonGroup = grp;
   }
 
   /** Oculta los rótulos que se solapan en pantalla (prioriza los cercanos a la cámara). */
@@ -1203,13 +1263,13 @@ class Flight3D extends DjiElement {
     const arr = items.map((it) => {
       const p = it.sprite.position.clone(), d = p.distanceTo(cam.position);
       const ndc = p.project(cam);
-      return { it, x: ndc.x, y: ndc.y, front: ndc.z < 1, d };
-    }).sort((a, b) => a.d - b.d);
+      return { it, x: ndc.x, y: ndc.y, front: ndc.z < 1, d, prio: it.prio || 0 };
+    }).sort((a, b) => (a.prio - b.prio) || (a.d - b.d)); // hitos primero; luego más cercano
     const shown = [];
     for (const a of arr) {
       let hide = !a.front;
       if (!hide) for (const sn of shown) if (Math.abs(a.x - sn.x) < thx && Math.abs(a.y - sn.y) < thy) { hide = true; break; }
-      a.it.sprite.visible = !hide; a.it.line.visible = !hide;
+      a.it.sprite.visible = !hide; if (a.it.line) a.it.line.visible = !hide;
       if (!hide) shown.push(a);
     }
   }
@@ -1371,6 +1431,28 @@ class Flight3D extends DjiElement {
     this._cam.lookAt(tp);
   }
 
+  /** Punto del mundo bajo el cursor: lanza un rayo desde la cámara al terreno; si
+   *  no lo toca (cielo/horizonte), cae a un plano horizontal a la altura del
+   *  pivote. Devuelve un THREE.Vector3 o null. */
+  _pointUnderCursor(e) {
+    const THREE = window.THREE, canvas = this.$('#cv'); if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    const ray = (this._ray || (this._ray = new THREE.Raycaster()));
+    ray.setFromCamera(ndc, this._cam);
+    if (this._terrainMesh) {
+      const hit = ray.intersectObject(this._terrainMesh, false)[0];
+      if (hit) return hit.point;
+    }
+    // sin terreno bajo el cursor: intersecta el plano horizontal del pivote
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -this._target.y);
+    const p = new THREE.Vector3();
+    return ray.ray.intersectPlane(plane, p) ? p : null;
+  }
+
   _resize() {
     const wrap = this.$('#wrap'); if (!wrap || !this._renderer) return;
     const w = wrap.clientWidth, h = wrap.clientHeight;
@@ -1418,13 +1500,29 @@ class Flight3D extends DjiElement {
     this.on(canvas, 'wheel', (e) => {
       e.preventDefault();
       if (this._introT0 != null) this._endIntro();
-      const o = this._orbit;
+      const o = this._orbit, oldR = o.r;
       o.r = Math.max(o.min, Math.min(o.max, o.r * (1 + Math.sign(e.deltaY) * 0.09)));
+      // zoom hacia el cursor: desplaza el pivote hacia el punto bajo el ratón en
+      // la misma proporción que se acorta la distancia, así ese punto se mantiene
+      // bajo el cursor mientras se acerca (en vez de ir siempre hacia el dron)
+      const f = o.r / oldR;
+      if (f !== 1 && !this._playing) {
+        const hit = this._pointUnderCursor(e);
+        if (hit) {
+          const tp = this._target.lerp(hit, 1 - f), s = this._span; // acota el pivote al entorno del terreno
+          tp.x = Math.max(-s, Math.min(s, tp.x)); tp.z = Math.max(-s, Math.min(s, tp.z)); tp.y = Math.max(0, Math.min(s * 0.5, tp.y));
+        }
+      }
       if (!this._playing) this._applyOrbit();
     }, { passive: false });
 
     this.on(this.$('#play'), 'click', () => { if (this._introT0 != null) this._endIntro(); this._toggleFlyover(); });
-    this.on(this.$('#reset'), 'click', () => { this._stopFlyover(); this._orbit.theta = -Math.PI * 0.7; this._orbit.phi = 1.2; this._applyOrbit(); });
+    this.on(this.$('#reset'), 'click', () => {
+      this._stopFlyover(); const h = this._home;
+      if (h) { this._target.copy(h.target); this._orbit.r = h.r; this._orbit.theta = h.theta; this._orbit.phi = h.phi; }
+      else { this._orbit.theta = -Math.PI * 0.7; this._orbit.phi = 1.2; }
+      this._applyOrbit();
+    });
     this.on(this.$('#prog'), 'pointerdown', (e) => this._seek(e));
     this.on(this.$('#speed'), 'click', () => this._cycleSpeed());
     this.on(this.$('#cine'), 'click', () => this._toggleCine());
@@ -1595,6 +1693,7 @@ class Flight3D extends DjiElement {
     this._introT0 = null; this._introPlayed = false; this._globe = null;
     if (this._renderer) { this._renderer.dispose(); this._renderer = null; }
     this._three = null; this._localScene = null; this._scene = null; this._time = null; this._look = null;
+    this._labelItems = null; this._horizonGroup = null; this._terrainMesh = null; this._ray = null; this._home = null;
   }
 }
 
@@ -8049,11 +8148,11 @@ async function fetchTerrainDEM(b) {
 }
 
 /**
- * Encuadre de teselas para el 3D: expande el bbox del vuelo por `factor` (3× por
+ * Encuadre de teselas para el 3D: expande el bbox del vuelo por `factor` (4× por
  * defecto) para mostrar más contexto alrededor, y elige el zoom para no pasar de
  * un presupuesto de teselas. Devuelve la misma forma que geo.tileConfig.
  */
-function wideConfig(track, factor = 3) {
+function wideConfig(track, factor = 4) {
   const T = track.filter((p) => p[0] != null);
   const lats = T.map((p) => p[0]), lons = T.map((p) => p[1]);
   let la0 = Math.min(...lats), la1 = Math.max(...lats), lo0 = Math.min(...lons), lo1 = Math.max(...lons);
@@ -8168,13 +8267,112 @@ function buildWaterMask(texCanvas) {
 }
 
 /**
+ * Expande un bbox alrededor de su centro por `mult`, acotando la semianchura
+ * resultante entre `minKm` y `maxKm` por lado. Sirve para consultar el horizonte
+ * (pueblos/cimas del entorno), que suele ser mucho más ancho que el vuelo.
+ */
+function expandBox(b, mult, minKm, maxKm) {
+  const cLat = (b.north + b.south) / 2, cLon = (b.east + b.west) / 2;
+  const kmLat = 110.6, kmLon = 110.6 * Math.cos(cLat * Math.PI / 180);
+  const clamp = (h, km) => Math.min(maxKm / km, Math.max(minKm / km, h));
+  const hLat = clamp((b.north - b.south) / 2 * mult, kmLat);
+  const hLon = clamp((b.east - b.west) / 2 * mult, kmLon);
+  return { south: cLat - hLat, north: cLat + hLat, west: cLon - hLon, east: cLon + hLon };
+}
+
+/**
+ * Puntos de interés del horizonte desde OpenStreetMap (Overpass): cimas
+ * (natural=peak, con su cota), núcleos de población (place=city/town/village/
+ * hamlet) y masas de agua (embalses, lagos, ríos). Sirven para rotular lo que se
+ * ve alrededor del vuelo, en un radio bastante mayor que el terreno (los pueblos
+ * vecinos quedan a varios km). Consulta con un tiempo máximo y devuelve [] ante
+ * cualquier fallo (Overpass caído, CORS, timeout). Prioriza ciudades > pueblos >
+ * aldeas, embalses/lagos > ríos, y cimas por altitud; limita el total.
+ * @param {{west:number,east:number,north:number,south:number}} b bbox de consulta
+ * @returns {Promise<Array<{lat:number,lon:number,name:string,kind:'peak'|'town'|'water',ele:number|null,rank:number}>>}
+ */
+/**
+ * Lanza una consulta Overpass probando el servidor principal y un espejo, con un
+ * tiempo máximo. Devuelve el array de elementos, o null si ningún endpoint
+ * respondió a tiempo.
+ */
+async function fetchOverpass(query, timeoutMs) {
+  const endpoints = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+  for (const url of endpoints) {
+    try {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), timeoutMs);
+      const res = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(query), signal: ctrl.signal });
+      clearTimeout(to);
+      if (!res.ok) continue;
+      return (await res.json()).elements || [];
+    } catch { /* siguiente espejo */ }
+  }
+  return null;
+}
+
+async function fetchHorizonPOIs(b) {
+  const bbox = `${b.south},${b.west},${b.north},${b.east}`;
+  // Dos consultas independientes en paralelo: cimas/núcleos (nodos, rápida) y
+  // masas de agua (vías/relaciones, con `out center`). Se separan a propósito:
+  // el agua puede ser lenta o fallar (p.ej. la relación de un río largo) y no
+  // debe arrastrar consigo a los pueblos/cimas. NO pedimos relaciones de río
+  // (waterway) porque cargar la geometría entera de un río de cientos de km
+  // dispara el tiempo de respuesta; las vías dan un centro más cercano y útil.
+  const qLand = `[out:json][timeout:20];(` +
+    `node["natural"="peak"]["name"](${bbox});` +
+    `node["place"~"^(city|town|village|hamlet)$"]["name"](${bbox});` +
+    `);out qt 200;`;
+  const qWater = `[out:json][timeout:20];(` +
+    `way["natural"="water"]["name"](${bbox});` +
+    `relation["natural"="water"]["name"](${bbox});` +
+    `way["landuse"="reservoir"]["name"](${bbox});` +
+    `relation["landuse"="reservoir"]["name"](${bbox});` +
+    `way["waterway"="river"]["name"](${bbox});` +
+    `);out center 200;`;
+  const [land, water] = await Promise.all([fetchOverpass(qLand, 12000), fetchOverpass(qWater, 12000)]);
+  const els = [...(land || []), ...(water || [])];
+  if (!els.length) return [];
+
+  // rango de importancia: ciudad > pueblo > aldea; agua: embalse/lago > río;
+  // cima por altitud. Se deduplica por nombre quedándose con el rango más alto.
+  const PLACE = { city: 6, town: 5, village: 4, hamlet: 3 };
+  const peaks = [], places = [], waters = [];
+  const seenWater = new Map(); // nombre → índice en waters (dedup de ríos troceados)
+  for (const e of els) {
+    const tg = e.tags || {}, name = tg.name;
+    const lat = e.lat ?? e.center?.lat, lon = e.lon ?? e.center?.lon;
+    if (!name || lat == null || lon == null) continue;
+    if (tg.natural === 'peak') {
+      const ele = Number.parseFloat(tg.ele);
+      peaks.push({ lat, lon, name, kind: 'peak', ele: Number.isFinite(ele) ? ele : null, rank: Number.isFinite(ele) ? ele : 0 });
+    } else if (tg.place in PLACE) {
+      places.push({ lat, lon, name, kind: 'town', ele: null, rank: PLACE[tg.place] * 1000 });
+    } else if (tg.natural === 'water' || tg.landuse === 'reservoir' || tg.waterway === 'river') {
+      const river = tg.waterway === 'river' && tg.natural !== 'water';
+      const rank = river ? 2500 : 5500; // embalses/lagos destacan; ríos algo menos
+      const key = name.split(' - ')[0].trim().toLowerCase(); // "Río Duero - Rio Douro" ≡ "Río Duero"
+      const prev = seenWater.get(key);
+      if (prev == null) { seenWater.set(key, waters.length); waters.push({ lat, lon, name, kind: 'water', ele: null, rank }); }
+      else if (rank > waters[prev].rank) waters[prev] = { lat, lon, name, kind: 'water', ele: null, rank };
+    }
+  }
+  peaks.sort((a, c) => c.rank - a.rank);
+  places.sort((a, c) => c.rank - a.rank);
+  waters.sort((a, c) => c.rank - a.rank);
+  // conserva los más importantes de cada tipo (el declutter en pantalla recorta
+  // el resto por solapamiento)
+  return [...places.slice(0, 18), ...waters.slice(0, 10), ...peaks.slice(0, 16)];
+}
+
+/**
  * Prepara todos los datos de la escena 3D del vuelo.
  * @param {object} model modelo del vuelo
  * @param {{grid?:number}} [opts] grid = nº de vértices por lado de la malla del terreno
  * @returns {Promise<object>} datos listos para cualquier motor de render
  */
 async function buildScene3D(model, opts = {}) {
-  const tc = wideConfig(model.track, opts.extent ?? 3); // mapa ampliado a 3× el vuelo
+  const tc = wideConfig(model.track, opts.extent ?? 4); // mapa ampliado a 4× el vuelo
   const { PX, PY } = projector(tc);
   const b = tileBounds(tc);
 
@@ -8267,9 +8465,32 @@ async function buildScene3D(model, opts = {}) {
   const water = buildWaterMask(texture); // máscara de agua (o null)
   const world = await buildWorldTexture(4); // globo de la intro (más nítido)
 
+  // rótulos del horizonte (cimas/pueblos de OSM): consulta un radio bastante
+  // mayor que el terreno (los pueblos vecinos quedan a varios km) y coloca cada
+  // rótulo en su dirección real. La cima usa su cota real; el resto (y lo que
+  // cae fuera del terreno) usa la altura del DEM, que se satura al borde. Va en
+  // segundo plano para no retrasar la escena; el componente los añade al resolver.
+  const poiBox = expandBox(b, 4, 4, 12); // 4× el terreno, entre 4 y 12 km por lado
+  const poisReady = fetchHorizonPOIs(poiBox)
+    .then((raw) => raw.map((p) => {
+      let lat = p.lat, lon = p.lon;
+      // el centroide (`out center`) de ríos/embalses grandes cae lejísimos de la
+      // parte visible; lo acotamos al terreno para colocar el rótulo sobre el mapa
+      if (p.kind === 'water') {
+        lat = Math.max(b.south, Math.min(b.north, lat));
+        lon = Math.max(b.west, Math.min(b.east, lon));
+      }
+      return {
+        name: p.name, kind: p.kind, ele: p.ele, rank: p.rank,
+        x: X(lon), z: Z(lat),
+        y: (p.kind === 'peak' && p.ele != null) ? (p.ele - base) * VE : groundY(lat, lon),
+      };
+    }))
+    .catch(() => []);
+
   return {
     center: [lat0, lon0],
-    world,
+    world, poisReady,
     // extensión del terreno en metros (para encuadrar la cámara)
     bounds: {
       x0: X(b.west), x1: X(b.east), z0: Z(b.north), z1: Z(b.south),

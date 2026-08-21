@@ -78,6 +78,11 @@ export class Flight3D extends DjiElement {
       this._initThree(scene);
       this.$('#wrap').classList.remove('loading');
       this._wireControls(); // la barra aparece tras la intro (o si no hay globo)
+      // rótulos del horizonte: entran cuando Overpass responde (no bloquean la escena)
+      scene.poisReady?.then((pois) => {
+        if (token !== this._token || !this.isConnected) return;
+        this._buildHorizonLabels(pois);
+      }).catch(() => {});
     }).catch((err) => { console.error('[flight-3d]', err); this._fallback(); });
   }
 
@@ -115,7 +120,8 @@ export class Flight3D extends DjiElement {
     sun.position.set(sd.x * span, sd.y * span, sd.z * span);
     scene.add(sun);
 
-    scene.add(this._buildTerrain(data));
+    this._terrainMesh = this._buildTerrain(data);
+    scene.add(this._terrainMesh);
     scene.add(this._buildSkirt(data)); // faldón: bloque de tierra, no lámina flotante
     scene.add(this._buildTrack(data));
     scene.add(this._buildLabels(data)); // rótulos 3D de los hitos
@@ -130,6 +136,7 @@ export class Flight3D extends DjiElement {
     // órbita: objetivo en el centro del terreno, a media altura
     this._target = new THREE.Vector3(0, data.terrain.midY ?? 0, 0);
     this._orbit = { r: span * 1.15, theta: -Math.PI * 0.7, phi: 1.2, min: span * 0.05, max: span * 4 };
+    this._home = { target: this._target.clone(), r: this._orbit.r, theta: this._orbit.theta, phi: this._orbit.phi };
     this._applyOrbit();
 
     this._localScene = scene; // escena del vuelo (el globo de la intro es aparte)
@@ -546,9 +553,62 @@ export class Flight3D extends DjiElement {
       grp.add(line);
       const dot = this._dotSprite(); // marcador fino de tamaño constante
       dot.position.set(kp.x, kp.y, kp.z); dot.scale.set(0.016, 0.016, 1); grp.add(dot);
-      this._labelItems.push({ sprite: sp, line });
+      this._labelItems.push({ sprite: sp, line, prio: 0 }); // los hitos ganan al horizonte
     }
     return grp;
+  }
+
+  /** Pastilla del horizonte (cima, pueblo o masa de agua de OSM): más tenue y
+   *  fría que la de los hitos, con un icono según el tipo. */
+  _horizonSprite(text, kind) {
+    const THREE = window.THREE, dpr = 3, fs = 19, padX = 13, padY = 6, mg = 10, icoW = 15;
+    const accent = kind === 'peak' ? '#8fe0bd' : kind === 'water' ? '#69c8f5' : '#98c2ff';
+    const font = `500 ${fs}px -apple-system, system-ui, sans-serif`;
+    const meas = document.createElement('canvas').getContext('2d');
+    meas.font = font; meas.letterSpacing = '0.2px';
+    const tw = meas.measureText(text).width;
+    const pw = Math.ceil(tw + padX * 2 + icoW), ph = fs + padY * 2;
+    const w = pw + mg * 2, h = ph + mg * 2;
+    const c = document.createElement('canvas'); c.width = w * dpr; c.height = h * dpr;
+    const x = c.getContext('2d'); x.scale(dpr, dpr);
+    const r = ph / 2;
+    const pill = () => { x.beginPath(); x.moveTo(mg + r, mg); x.arcTo(mg + pw, mg, mg + pw, mg + ph, r); x.arcTo(mg + pw, mg + ph, mg, mg + ph, r); x.arcTo(mg, mg + ph, mg, mg, r); x.arcTo(mg, mg, mg + pw, mg, r); x.closePath(); };
+    x.save(); x.shadowColor = 'rgba(0,0,0,0.45)'; x.shadowBlur = 9; x.shadowOffsetY = 2;
+    pill(); x.fillStyle = 'rgba(10,14,20,0.7)'; x.fill(); x.restore();
+    pill(); x.lineWidth = 1; x.strokeStyle = 'rgba(255,255,255,0.1)'; x.stroke();
+    // icono: triángulo (cima), onda (agua) o aro (pueblo)
+    const cx = mg + padX - 2, cy = mg + ph / 2;
+    x.fillStyle = accent; x.strokeStyle = accent;
+    if (kind === 'peak') { x.beginPath(); x.moveTo(cx, cy - 4.5); x.lineTo(cx + 4.5, cy + 4); x.lineTo(cx - 4.5, cy + 4); x.closePath(); x.fill(); }
+    else if (kind === 'water') {
+      x.lineWidth = 1.6; x.lineCap = 'round';
+      for (const dy of [-3, 1]) { x.beginPath(); x.moveTo(cx - 4.5, cy + dy); x.quadraticCurveTo(cx - 1.5, cy + dy - 2.4, cx, cy + dy); x.quadraticCurveTo(cx + 1.5, cy + dy + 2.4, cx + 4.5, cy + dy); x.stroke(); }
+    } else { x.lineWidth = 1.8; x.beginPath(); x.arc(cx, cy, 3.4, 0, 7); x.stroke(); x.beginPath(); x.arc(cx, cy, 1.1, 0, 7); x.fill(); }
+    x.font = font; x.letterSpacing = '0.2px'; x.fillStyle = 'rgba(255,255,255,0.86)'; x.textBaseline = 'middle';
+    x.fillText(text, mg + padX + icoW - 4, mg + ph / 2 + 1);
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.minFilter = THREE.LinearFilter;
+    // fog:false → legible aunque el POI esté lejos, en la bruma del horizonte
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.94, depthWrite: false, depthTest: false, fog: false, sizeAttenuation: false }));
+    sp.userData.ar = w / h; sp.renderOrder = 9;
+    return sp;
+  }
+
+  /** Rótulos del horizonte (cimas con su cota, pueblos y masas de agua del
+   *  entorno). Flotan en la dirección real del lugar, sin línea guía (muchos caen
+   *  lejos del terreno). Se construyen de forma perezosa cuando Overpass responde. */
+  _buildHorizonLabels(pois) {
+    if (!pois || !pois.length || !this._localScene) return;
+    const grp = new window.THREE.Group(), up = this._span * 0.02;
+    for (const p of pois) {
+      const text = p.kind === 'peak' && p.ele ? `${p.name} · ${Math.round(p.ele)} m` : p.name;
+      const sp = this._horizonSprite(text, p.kind);
+      sp.position.set(p.x, p.y + up, p.z);
+      const hh = 0.04; sp.scale.set(hh * sp.userData.ar, hh, 1);
+      grp.add(sp);
+      this._labelItems.push({ sprite: sp, prio: 1 });
+    }
+    this._localScene.add(grp);
+    this._horizonGroup = grp;
   }
 
   /** Oculta los rótulos que se solapan en pantalla (prioriza los cercanos a la cámara). */
@@ -558,13 +618,13 @@ export class Flight3D extends DjiElement {
     const arr = items.map((it) => {
       const p = it.sprite.position.clone(), d = p.distanceTo(cam.position);
       const ndc = p.project(cam);
-      return { it, x: ndc.x, y: ndc.y, front: ndc.z < 1, d };
-    }).sort((a, b) => a.d - b.d);
+      return { it, x: ndc.x, y: ndc.y, front: ndc.z < 1, d, prio: it.prio || 0 };
+    }).sort((a, b) => (a.prio - b.prio) || (a.d - b.d)); // hitos primero; luego más cercano
     const shown = [];
     for (const a of arr) {
       let hide = !a.front;
       if (!hide) for (const sn of shown) if (Math.abs(a.x - sn.x) < thx && Math.abs(a.y - sn.y) < thy) { hide = true; break; }
-      a.it.sprite.visible = !hide; a.it.line.visible = !hide;
+      a.it.sprite.visible = !hide; if (a.it.line) a.it.line.visible = !hide;
       if (!hide) shown.push(a);
     }
   }
@@ -726,6 +786,28 @@ export class Flight3D extends DjiElement {
     this._cam.lookAt(tp);
   }
 
+  /** Punto del mundo bajo el cursor: lanza un rayo desde la cámara al terreno; si
+   *  no lo toca (cielo/horizonte), cae a un plano horizontal a la altura del
+   *  pivote. Devuelve un THREE.Vector3 o null. */
+  _pointUnderCursor(e) {
+    const THREE = window.THREE, canvas = this.$('#cv'); if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    const ray = (this._ray || (this._ray = new THREE.Raycaster()));
+    ray.setFromCamera(ndc, this._cam);
+    if (this._terrainMesh) {
+      const hit = ray.intersectObject(this._terrainMesh, false)[0];
+      if (hit) return hit.point;
+    }
+    // sin terreno bajo el cursor: intersecta el plano horizontal del pivote
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -this._target.y);
+    const p = new THREE.Vector3();
+    return ray.ray.intersectPlane(plane, p) ? p : null;
+  }
+
   _resize() {
     const wrap = this.$('#wrap'); if (!wrap || !this._renderer) return;
     const w = wrap.clientWidth, h = wrap.clientHeight;
@@ -773,13 +855,29 @@ export class Flight3D extends DjiElement {
     this.on(canvas, 'wheel', (e) => {
       e.preventDefault();
       if (this._introT0 != null) this._endIntro();
-      const o = this._orbit;
+      const o = this._orbit, oldR = o.r;
       o.r = Math.max(o.min, Math.min(o.max, o.r * (1 + Math.sign(e.deltaY) * 0.09)));
+      // zoom hacia el cursor: desplaza el pivote hacia el punto bajo el ratón en
+      // la misma proporción que se acorta la distancia, así ese punto se mantiene
+      // bajo el cursor mientras se acerca (en vez de ir siempre hacia el dron)
+      const f = o.r / oldR;
+      if (f !== 1 && !this._playing) {
+        const hit = this._pointUnderCursor(e);
+        if (hit) {
+          const tp = this._target.lerp(hit, 1 - f), s = this._span; // acota el pivote al entorno del terreno
+          tp.x = Math.max(-s, Math.min(s, tp.x)); tp.z = Math.max(-s, Math.min(s, tp.z)); tp.y = Math.max(0, Math.min(s * 0.5, tp.y));
+        }
+      }
       if (!this._playing) this._applyOrbit();
     }, { passive: false });
 
     this.on(this.$('#play'), 'click', () => { if (this._introT0 != null) this._endIntro(); this._toggleFlyover(); });
-    this.on(this.$('#reset'), 'click', () => { this._stopFlyover(); this._orbit.theta = -Math.PI * 0.7; this._orbit.phi = 1.2; this._applyOrbit(); });
+    this.on(this.$('#reset'), 'click', () => {
+      this._stopFlyover(); const h = this._home;
+      if (h) { this._target.copy(h.target); this._orbit.r = h.r; this._orbit.theta = h.theta; this._orbit.phi = h.phi; }
+      else { this._orbit.theta = -Math.PI * 0.7; this._orbit.phi = 1.2; }
+      this._applyOrbit();
+    });
     this.on(this.$('#prog'), 'pointerdown', (e) => this._seek(e));
     this.on(this.$('#speed'), 'click', () => this._cycleSpeed());
     this.on(this.$('#cine'), 'click', () => this._toggleCine());
@@ -950,6 +1048,7 @@ export class Flight3D extends DjiElement {
     this._introT0 = null; this._introPlayed = false; this._globe = null;
     if (this._renderer) { this._renderer.dispose(); this._renderer = null; }
     this._three = null; this._localScene = null; this._scene = null; this._time = null; this._look = null;
+    this._labelItems = null; this._horizonGroup = null; this._terrainMesh = null; this._ray = null; this._home = null;
   }
 }
 
