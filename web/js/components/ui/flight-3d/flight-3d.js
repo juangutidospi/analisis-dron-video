@@ -460,15 +460,14 @@ export class Flight3D extends DjiElement {
     const hatch = new THREE.LineSegments(hg, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending }));
     grp.add(hatch);
 
-    // 3) CINTA superior: tubo naranja brillante + halo aditivo (bloom)
-    const curve = new THREE.CatmullRomCurve3(T.map((p) => new THREE.Vector3(p.x, p.y, p.z)));
-    const segs = Math.min(900, Math.max(90, T.length * 2)), radial = 10;
-    const tubeGeo = new THREE.TubeGeometry(curve, segs, radius, radial, false);
-    const tube = new THREE.Mesh(tubeGeo, new THREE.MeshBasicMaterial({ color: 0xffa24d }));
-    grp.add(tube);
-    const haloGeo = new THREE.TubeGeometry(curve, segs, radius * 2.6, radial, false);
-    const halo = new THREE.Mesh(haloGeo, new THREE.MeshBasicMaterial({ color: 0xff7d1a, transparent: true, opacity: 0.32, depthWrite: false, blending: THREE.AdditiveBlending }));
-    grp.add(halo);
+    // 3) LÍNEA superior fina que marca el recorrido (sustituye al "tubo" grueso
+    //    naranja + halo, que tapaba el top de la cortina)
+    const lpos = new Float32Array(cn * 3);
+    for (let i = 0; i < cn; i++) { const p = T[i]; lpos.set([p.x, p.y, p.z], i * 3); }
+    const lg = new THREE.BufferGeometry();
+    lg.setAttribute('position', new THREE.BufferAttribute(lpos, 3));
+    const line = new THREE.Line(lg, new THREE.LineBasicMaterial({ color: 0xffb060, transparent: true, opacity: 0.95, depthWrite: false }));
+    grp.add(line);
 
     // 4) marcador de despegue (aro luminoso)
     const tk = new THREE.Mesh(new THREE.CylinderGeometry(radius * 1.8, radius * 1.8, radius * 0.6, 24),
@@ -477,7 +476,7 @@ export class Flight3D extends DjiElement {
     grp.add(tk);
 
     // datos para el revelado progresivo durante el sobrevuelo
-    this._trackReveal = { curtain, hatch, tube, halo, cn, segs, radial, times: T.map((p) => p.t) };
+    this._trackReveal = { curtain, hatch, line, cn, times: T.map((p) => p.t) };
     return grp;
   }
 
@@ -485,18 +484,15 @@ export class Flight3D extends DjiElement {
   _revealTrack(time) {
     const R = this._trackReveal; if (!R) return;
     let k = 1; while (k < R.times.length && R.times[k] <= time) k++;
-    const f = Math.max(0.002, Math.min(1, k / (R.times.length - 1)));
     R.curtain.geometry.setDrawRange(0, Math.max(0, k - 1) * 6);
     R.hatch.geometry.setDrawRange(0, k * 2);
-    const tc = Math.max(6, Math.floor(R.segs * f) * R.radial * 6);
-    R.tube.geometry.setDrawRange(0, tc);
-    R.halo.geometry.setDrawRange(0, tc);
+    R.line.geometry.setDrawRange(0, k);
   }
 
   /** Muestra el recorrido completo (fuera de la reproducción). */
   _revealTrackFull() {
     const R = this._trackReveal; if (!R) return;
-    for (const m of [R.curtain, R.hatch, R.tube, R.halo]) m.geometry.setDrawRange(0, Infinity);
+    for (const m of [R.curtain, R.hatch, R.line]) m.geometry.setDrawRange(0, Infinity);
   }
 
   /** Etiqueta flotante elegante (pastilla fina translúcida con sombra) que mira a
