@@ -10,6 +10,10 @@ export const styles = css`
 canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
 canvas:active { cursor: grabbing; }
 
+/* pantalla completa: el contenedor llena la pantalla (sin aspect-ratio ni bordes) */
+.v3d:fullscreen { width: 100%; height: 100%; aspect-ratio: auto; border-radius: 0; border: none; }
+.v3d:fullscreen canvas { height: 100%; }
+
 /* estado de carga */
 .v3d.loading::after {
   content: ""; position: absolute; inset: 0; z-index: 4;
@@ -26,7 +30,7 @@ canvas:active { cursor: grabbing; }
 /* controles */
 .v3d-bar {
   position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 6;
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; row-gap: 8px;
   padding: 9px 12px; border-radius: 100px;
   background: rgba(12,17,26,.62); backdrop-filter: blur(12px);
   border: 1px solid rgba(255,255,255,.1);
@@ -82,6 +86,16 @@ canvas:active { cursor: grabbing; }
 .v3d-export-t.err { color: #ff8f8f; }
 .v3d-export-bar { width: 220px; height: 7px; border-radius: 100px; background: rgba(255,255,255,.12); overflow: hidden; }
 .v3d-export-f { height: 100%; width: 0; background: var(--color-accent); transition: width .15s ease; }
+
+/* cartel de ayuda del modo vuelo libre */
+.v3d-free-hint {
+  position: absolute; left: 50%; bottom: 62px; transform: translateX(-50%); z-index: 7;
+  padding: 7px 14px; border-radius: 100px; white-space: nowrap;
+  background: rgba(12,17,26,.72); backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,.12); color: #eef2f8; font-size: 12px; font-weight: 500;
+}
+.v3d-free-hint[hidden] { display: none; }
+@media (max-width: 720px) { .v3d-free-hint { white-space: normal; max-width: 90%; text-align: center; } }
 .v3d-prog { flex: 1; height: 6px; border-radius: 100px; background: rgba(255,255,255,.16); position: relative; cursor: pointer; }
 .v3d-prog-f { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 100px; background: linear-gradient(90deg, var(--color-accent), var(--color-violet)); }
 .v3d-time { flex: none; font-size: 12px; color: #c9d2e2; font-variant-numeric: tabular-nums; min-width: 76px; text-align: right; }
