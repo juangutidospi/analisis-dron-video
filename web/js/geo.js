@@ -8,7 +8,10 @@ const kmh = (x) => x.hs != null ? x.hs * 3.6 : null;
 
 /** Calcula los 8 hitos del vuelo (mismo orden y criterios que common.py). */
 export function keypoints(d) {
-  const S = d.series, tk = d.takeoff;
+  // solo muestras con GPS válido: así el despegue/aterrizaje y el punto más lejano
+  // se sitúan sobre coordenadas reales (nunca en los frames previos al fix GPS).
+  const S = d.series.filter(x => x.lat != null), tk = d.takeoff;
+  if (!S.length) return [];
   for (const x of S) x.far = hav(tk[0], tk[1], x.lat, x.lon);
   const by = (fn) => S.reduce((a, b) => fn(b) > fn(a) ? b : a);
   const alto = by(x => x.rel);

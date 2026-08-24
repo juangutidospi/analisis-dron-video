@@ -21,9 +21,15 @@ export async function reverseGeocode(lat, lon) {
   }
 }
 
-/** Extrae las primeras coordenadas (lat, lon) del texto de un .SRT. */
+/** Extrae las primeras coordenadas (lat, lon) con GPS válido del texto de un .SRT.
+ *  Salta el sentinela `0.000000, 0.000000` que DJI escribe antes del fix GPS
+ *  (si no, el nombre del lugar se geocodifica en el golfo de Guinea). */
 export function firstCoords(srtText) {
-  const la = srtText.match(/latitude:\s*([-\d.]+)/);
-  const lo = srtText.match(/longitude:\s*([-\d.]+)/);
-  return la && lo ? [parseFloat(la[1]), parseFloat(lo[1])] : null;
+  const re = /latitude:\s*(-?[\d.]+)\]\s*\[longitude:\s*(-?[\d.]+)/g;
+  let m;
+  while ((m = re.exec(srtText)) !== null) {
+    const la = parseFloat(m[1]), lo = parseFloat(m[2]);
+    if (la !== 0 || lo !== 0) return [la, lo];
+  }
+  return null;
 }
