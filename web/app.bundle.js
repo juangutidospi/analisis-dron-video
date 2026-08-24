@@ -1253,9 +1253,10 @@ class Flight3D extends DjiElement {
   _buildLabels(data) {
     const THREE = window.THREE, grp = new THREE.Group(), s = this._span;
     this._labelItems = [];
+    this._kpMarks = []; // posición/instante de cada hito (para saltar la cámara al hacer click)
     if (!data.keypoints) return grp;
     for (const kp of data.keypoints) {
-      const up = s * 0.06;
+      const up = s * 0.03; // línea guía más corta: los rótulos no flotan tan alto
       const sp = this._labelSprite(t('kp.' + kp.key));
       sp.position.set(kp.x, kp.y + up, kp.z);
       const hh = 0.05; sp.scale.set(hh * sp.userData.ar, hh, 1); // tamaño constante en pantalla
@@ -1266,6 +1267,7 @@ class Flight3D extends DjiElement {
       const dot = this._dotSprite(); // marcador fino de tamaño constante
       dot.position.set(kp.x, kp.y, kp.z); dot.scale.set(0.016, 0.016, 1); grp.add(dot);
       this._labelItems.push({ sprite: sp, line, prio: 0 }); // los hitos ganan al horizonte
+      this._kpMarks.push({ x: kp.x, y: kp.y, z: kp.z, t: kp.t, key: kp.key, sprite: sp });
     }
     return grp;
   }
@@ -1538,6 +1540,51 @@ class Flight3D extends DjiElement {
     return ray.ray.intersectPlane(plane, p) ? p : null;
   }
 
+  /** Click limpio: si cae cerca de un hito (su punto o su rótulo), lleva la cámara
+   *  a ese hito. Umbral en píxeles, probando el marcador y la píldora. */
+  _clickKeypoint(e) {
+    const marks = this._kpMarks; if (!marks || !marks.length || !this._cam || this._three !== this._localScene) return;
+    const canvas = this.$('#cv'), rect = canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    const v = new window.THREE.Vector3();
+    let best = null, bestD = 42; // umbral (px)
+    for (const m of marks) {
+      for (const q of [[m.x, m.y, m.z], [m.sprite.position.x, m.sprite.position.y, m.sprite.position.z]]) {
+        v.set(q[0], q[1], q[2]).project(this._cam);
+        if (v.z > 1) continue; // detrás de la cámara
+        const sx = (v.x * 0.5 + 0.5) * rect.width, sy = (-v.y * 0.5 + 0.5) * rect.height;
+        const d = Math.hypot(sx - px, sy - py);
+        if (d < bestD) { bestD = d; best = m; }
+      }
+    }
+    if (best) this._focusKeypoint(best);
+  }
+
+  /** Coloca el dron en el instante del hito y acerca la cámara a él con una
+   *  transición suave (tween que avanza el bucle). */
+  _focusKeypoint(mark) {
+    if (this._playing) this._stopFlyover();
+    this._time = mark.t; this._placeDrone(mark.t); this._updateTime(mark.t); this._revealTrackFull(); this._look = null;
+    const o = this._orbit;
+    this._camTween = {
+      t0: performance.now(), dur: 850,
+      fromT: this._target.clone(), toT: new window.THREE.Vector3(mark.x, mark.y, mark.z),
+      fromR: o.r, toR: Math.max(o.min, this._span * 0.22),
+      fromPhi: o.phi, toPhi: Math.min(1.15, Math.max(0.7, o.phi)),
+    };
+  }
+
+  /** Avanza el tween de cámara hacia el hito (ease-in-out). */
+  _stepCamTween() {
+    const T = this._camTween, p = Math.min(1, (performance.now() - T.t0) / T.dur), e = p * p * (3 - 2 * p);
+    this._target.lerpVectors(T.fromT, T.toT, e);
+    const o = this._orbit;
+    o.r = T.fromR + (T.toR - T.fromR) * e;
+    o.phi = T.fromPhi + (T.toPhi - T.fromPhi) * e;
+    this._applyOrbit();
+    if (p >= 1) this._camTween = null;
+  }
+
   _resize() {
     const wrap = this.$('#wrap'); if (!wrap || !this._renderer) return;
     const w = wrap.clientWidth, h = wrap.clientHeight;
@@ -1568,6 +1615,7 @@ class Flight3D extends DjiElement {
       if (this._exporting) return; // durante la exportación conduce _exportVideo
       if (this._introT0 != null) this._stepIntro();
       else if (this._playing) this._advanceFlyover();
+      else if (this._camTween) this._stepCamTween(); // vuelo de cámara al hito pulsado
       this._animate();
       this._renderer.render(this._three, this._cam);
     };
@@ -1578,25 +1626,32 @@ class Flight3D extends DjiElement {
 
   _wireControls() {
     const canvas = this.$('#cv');
-    let drag = null;
+    let drag = null, down = null;
     this.on(canvas, 'pointerdown', (e) => {
       if (this._introT0 != null) { this._endIntro(); return; } // la 1ª pulsación salta la intro
       if (this._playing && this._cineMode) this._toggleCine(); // tomar control manual de la cámara
-      drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId);
+      drag = { x: e.clientX, y: e.clientY }; down = { x: e.clientX, y: e.clientY, moved: false };
+      canvas.setPointerCapture(e.pointerId);
     });
     this.on(canvas, 'pointermove', (e) => {
       if (!drag) return;
+      if (down && (Math.abs(e.clientX - down.x) > 4 || Math.abs(e.clientY - down.y) > 4)) { down.moved = true; this._camTween = null; }
       const o = this._orbit;
       o.theta += (e.clientX - drag.x) * 0.006;
       o.phi = Math.max(0.18, Math.min(1.48, o.phi - (e.clientY - drag.y) * 0.005));
       drag = { x: e.clientX, y: e.clientY };
       if (!this._playing) this._applyOrbit();
     });
-    const stop = () => { drag = null; };
-    this.on(canvas, 'pointerup', stop); this.on(canvas, 'pointercancel', stop);
+    this.on(canvas, 'pointerup', (e) => {
+      // click limpio (sin arrastrar) sobre un hito → lleva la cámara a ese hito
+      if (down && !down.moved) this._clickKeypoint(e);
+      drag = null; down = null;
+    });
+    this.on(canvas, 'pointercancel', () => { drag = null; down = null; });
     this.on(canvas, 'wheel', (e) => {
       e.preventDefault();
       if (this._introT0 != null) this._endIntro();
+      this._camTween = null; // el zoom manual cancela el vuelo a un hito
       const o = this._orbit, oldR = o.r;
       o.r = Math.max(o.min, Math.min(o.max, o.r * (1 + Math.sign(e.deltaY) * 0.09)));
       // zoom hacia el cursor: desplaza el pivote hacia el punto bajo el ratón en
@@ -1727,7 +1782,7 @@ class Flight3D extends DjiElement {
 
   _startFlyover() {
     if (this._time == null || this._time >= this._scene.duration - 0.05) this._time = 0;
-    this._playing = true; this._last = this._now();
+    this._playing = true; this._last = this._now(); this._camTween = null;
     this._look = null;
     // intro cinematográfica: arranca amplio y la cámara se acerca al dron sola
     this._orbit.r = this._orbit.max * 0.3; this._orbit.phi = 1.0;
@@ -1924,7 +1979,7 @@ class Flight3D extends DjiElement {
     this._introT0 = null; this._introPlayed = false; this._globe = null;
     if (this._renderer) { this._renderer.dispose(); this._renderer = null; }
     this._three = null; this._localScene = null; this._scene = null; this._time = null; this._look = null;
-    this._labelItems = null; this._terrainMesh = null; this._ray = null; this._home = null;
+    this._labelItems = null; this._terrainMesh = null; this._ray = null; this._home = null; this._kpMarks = null; this._camTween = null;
     this._trackGroup = null; this._kpGroup = null; this._horizonPlacesGroup = null; this._horizonWaterGroup = null;
   }
 }
