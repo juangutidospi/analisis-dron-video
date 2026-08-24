@@ -573,13 +573,18 @@ canvas:active { cursor: grabbing; }
 .v3d-btn.on { background: var(--color-accent); border-color: transparent; color: #fff; }
 #speed { min-width: 40px; font-variant-numeric: tabular-nums; }
 .v3d-btn svg { width: 15px; height: 15px; }
-#settings, #export, #reset { padding: 0 10px; }
+#settings, #export, #reset, #fs { padding: 0 10px; }
+.v3d-btn[hidden] { display: none; }
+.v3d-sep { flex: none; width: 1px; align-self: stretch; margin: 2px 1px; background: rgba(255,255,255,.14); }
+#fs .fs-in { display: none; }
+#fs.on .fs-out { display: none; }
+#fs.on .fs-in { display: block; }
 
 /* panel de ajustes (capas del render) */
 .v3d-opts {
-  position: absolute; right: 12px; bottom: 64px; z-index: 7;
+  position: absolute; right: 12px; bottom: 64px; z-index: 10;
   min-width: 200px; padding: 10px 12px; border-radius: 14px;
-  background: rgba(12,17,26,.82); backdrop-filter: blur(14px);
+  background: rgba(12,17,26,.95); backdrop-filter: blur(14px);
   border: 1px solid rgba(255,255,255,.12); box-shadow: 0 10px 30px rgba(0,0,0,.4);
   display: flex; flex-direction: column; gap: 2px;
 }
@@ -594,6 +599,21 @@ canvas:active { cursor: grabbing; }
 }
 .v3d-opts label:hover { background: rgba(255,255,255,.07); }
 .v3d-opts input { width: 15px; height: 15px; accent-color: var(--color-accent); cursor: pointer; }
+
+/* selector de tamaño del dron (segmentado de 3 opciones, apilado bajo su etiqueta) */
+.v3d-size {
+  display: flex; flex-direction: column; gap: 7px;
+  margin: 6px 2px 2px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.1);
+}
+.v3d-size-l { color: #eef2f8; font-size: 13px; padding-left: 4px; }
+.v3d-seg { display: flex; width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,.16); }
+.v3d-seg button {
+  flex: 1; appearance: none; border: 0; cursor: pointer; padding: 6px 4px; font-size: 12px; font-weight: 600;
+  background: rgba(255,255,255,.05); color: #cdd5e0; border-left: 1px solid rgba(255,255,255,.12);
+}
+.v3d-seg button:first-child { border-left: 0; }
+.v3d-seg button:hover { background: rgba(255,255,255,.12); }
+.v3d-seg button.on { background: var(--color-accent); color: #fff; }
 
 /* overlay de progreso de la exportación de vídeo */
 .v3d-export {
@@ -611,6 +631,8 @@ canvas:active { cursor: grabbing; }
 .v3d-export-t.err { color: #ff8f8f; }
 .v3d-export-bar { width: 220px; height: 7px; border-radius: 100px; background: rgba(255,255,255,.12); overflow: hidden; }
 .v3d-export-f { height: 100%; width: 0; background: var(--color-accent); transition: width .15s ease; }
+.v3d-export-est { color: rgba(238,242,248,.6); font-size: 12px; font-variant-numeric: tabular-nums; }
+.v3d-export-est:empty { display: none; }
 
 /* cartel de ayuda del modo vuelo libre */
 .v3d-free-hint {
@@ -698,7 +720,7 @@ __m["js/components/ui/flight-3d/flight-3d.js"] = function (__x, __req) {
 const { DjiElement } = __req("js/core/DjiElement.js");
 const { t } = __req("js/i18n/index.js");
 const { buildScene3D, altColor } = __req("js/scene-3d.js");
-const { createMp4Recorder, canExportVideo } = __req("js/flyover-export.js");
+const { createMp4Recorder, createMp4StreamRecorder, canExportVideo } = __req("js/flyover-export.js");
 const { downloadBlob } = __req("js/exports.js");
 const { styles } = __req("js/components/ui/flight-3d/flight-3d.css.js");
 
@@ -715,6 +737,10 @@ class Flight3D extends DjiElement {
 
   /** Capas visibles del render (las controla el panel de ajustes). */
   _show = { track: true, kp: true, places: true, water: true, hud: true };
+
+  /** Escala del marcador del dron (y su sombra), elegible en el panel de ajustes:
+   *  1 = grande (original), 0.75 = intermedio, 0.5 = mitad. */
+  _droneScale = 0.75;
 
   /** Estado del modo vuelo libre (WASD + ratón). null u {on:false} = desactivado. */
   _free = null;
@@ -757,6 +783,14 @@ class Flight3D extends DjiElement {
           <label><input type="checkbox" data-k="places" checked><span>${t('v3d.opt.places')}</span></label>
           <label><input type="checkbox" data-k="water" checked><span>${t('v3d.opt.water')}</span></label>
           <label><input type="checkbox" data-k="hud" checked><span>${t('v3d.opt.hud')}</span></label>
+          <div class="v3d-size">
+            <span class="v3d-size-l">${t('v3d.opt.size')}</span>
+            <div class="v3d-seg" id="dsize">
+              <button type="button" data-sz="1">${t('v3d.size.l')}</button>
+              <button type="button" data-sz="0.75">${t('v3d.size.m')}</button>
+              <button type="button" data-sz="0.5">${t('v3d.size.s')}</button>
+            </div>
+          </div>
         </div>
         <div class="v3d-bar" hidden>
           <button class="v3d-btn primary" id="play" type="button">
@@ -769,7 +803,8 @@ class Flight3D extends DjiElement {
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h3l1 2H5l-1-2zm5 0h3l1 2h-3l-1-2zm5 0h3l1 2h-3l-1-2zM3 8h18v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8z"/></svg>
             <span>${t('v3d.cine.short')}</span>
           </button>
-          <button class="v3d-btn" id="flyspeed" type="button" title="${t('v3d.flyspeed')}">${t('v3d.flyspeed.med')}</button>
+          <span class="v3d-sep"></span>
+          <button class="v3d-btn" id="flyspeed" type="button" title="${t('v3d.flyspeed')}" hidden>${t('v3d.flyspeed.slow')}</button>
           <button class="v3d-btn" id="free" type="button" title="${t('v3d.free')}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l3 3-3 3-3-3 3-3zm0 12l3 3-3 3-3-3 3-3zM3 12l3-3 3 3-3 3-3-3zm12 0l3-3 3 3-3 3-3-3z"/></svg>
             <span>${t('v3d.free.short')}</span>
@@ -778,6 +813,7 @@ class Flight3D extends DjiElement {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2.2"/><circle cx="5.5" cy="5.5" r="2.6"/><circle cx="18.5" cy="5.5" r="2.6"/><circle cx="5.5" cy="18.5" r="2.6"/><circle cx="18.5" cy="18.5" r="2.6"/><path d="M7 7l3.4 3.4M17 7l-3.4 3.4M7 17l3.4-3.4M17 17l-3.4-3.4"/></svg>
             <span>${t('v3d.pilot.short')}</span>
           </button>
+          <span class="v3d-sep"></span>
           <button class="v3d-btn" id="reset" type="button" title="${t('v3d.reset')}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 4v4h4"/></svg>
           </button>
@@ -788,13 +824,15 @@ class Flight3D extends DjiElement {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M8 11l4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
           </button>
           <button class="v3d-btn" id="fs" type="button" title="${t('v3d.fullscreen')}" aria-label="${t('v3d.fullscreen')}">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+            <svg class="fs-out" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+            <svg class="fs-in" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
           </button>
         </div>
         <div class="v3d-export" id="exp" hidden>
           <div class="v3d-export-box">
             <div class="v3d-export-t" id="expT">${t('v3d.export.running')} 0%</div>
             <div class="v3d-export-bar"><div class="v3d-export-f" id="expF"></div></div>
+            <div class="v3d-export-est" id="expEst"></div>
             <button class="v3d-btn" id="expCancel" type="button">${t('v3d.export.cancel')}</button>
           </div>
         </div>
@@ -880,6 +918,7 @@ class Flight3D extends DjiElement {
     const sd = data.sun.dir;
     sun.position.set(sd.x * span, sd.y * span, sd.z * span);
     scene.add(sun);
+    this._sunDir = { x: sd.x, y: sd.y, z: sd.z }; // para desplazar la sombra hacia donde cae la luz
 
     this._terrainMesh = this._buildTerrain(data);
     scene.add(this._terrainMesh);
@@ -908,6 +947,15 @@ class Flight3D extends DjiElement {
     this._ro.observe(this.$('#wrap'));
     this._setupIntro(data); // deja el globo de póster con el botón de inicio
     this._loop();
+    // ahorro: pausa el bucle de render cuando el visor no está en pantalla
+    if ('IntersectionObserver' in window) {
+      this._visIO = new IntersectionObserver((es) => {
+        const vis = es.some((e) => e.isIntersecting);
+        if (vis && !this._raf && !this._exporting) this._loop();
+        else if (!vis && this._raf && !this._exporting) { cancelAnimationFrame(this._raf); this._raf = null; }
+      }, { rootMargin: '80px' });
+      this._visIO.observe(this);
+    }
   }
 
   /* ---------- intro cinematográfica (globo → zoom al vuelo) ---------- */
@@ -1405,17 +1453,90 @@ class Flight3D extends DjiElement {
     const hud = this.$('#hud'); if (hud) hud.hidden = !(s.hud && this._playing);
   }
 
-  /** Sombra blanda del dron proyectada en el suelo (mancha oscura difusa). */
+  /** Sombra proyectada con la FORMA real del dron (silueta cenital del quad: cuerpo
+   *  central + 4 rótores) en vez de una mancha. Dos grupos anidados para poder estirar
+   *  la sombra en la dirección de la luz (efecto rasante al atardecer) a la vez que la
+   *  silueta gira con el rumbo del dron:
+   *   - `g` (externo): posición, orientación a la luz y escala/estirado.
+   *   - `inner`: gira la silueta para compensar y dejarla al rumbo real.
+   *  Se difumina/agranda con la altura (ver `_updateShadow`). */
   _buildShadow() {
     const THREE = window.THREE;
-    const c = document.createElement('canvas'); c.width = c.height = 64;
-    const x = c.getContext('2d'), g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
-    g.addColorStop(0, 'rgba(0,0,0,0.85)'); g.addColorStop(0.55, 'rgba(0,0,0,0.4)'); g.addColorStop(1, 'rgba(0,0,0,0)');
-    x.fillStyle = g; x.fillRect(0, 0, 64, 64);
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
-      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, opacity: 0.5, depthWrite: false }));
-    m.rotation.x = -Math.PI / 2; // plano horizontal, sobre el terreno
-    return m;
+    const tex = new THREE.CanvasTexture(this._shadowSilhouette());
+    tex.anisotropy = 4;
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.5, depthWrite: false,
+        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })); // se apoya sobre el terreno sin pelearse en z
+    plane.rotation.x = -Math.PI / 2; // tumbado sobre el terreno
+    plane.renderOrder = 2;
+    this._shadowMat = plane.material;
+    const inner = new THREE.Group(); inner.add(plane); this._shadowInner = inner;
+    const g = new THREE.Group(); g.add(inner);
+    return g;
+  }
+
+  /** Dibuja la silueta cenital del quad en un canvas: cuerpo alargado, 4 brazos y 4
+   *  rótores llenos, con los bordes difuminados para que lea como sombra. El frente
+   *  del dron apunta hacia -Y del canvas (coincide con el -Z del modelo). */
+  _shadowSilhouette() {
+    const N = 256, c = document.createElement('canvas'); c.width = c.height = N;
+    const x = c.getContext('2d'), cx = N / 2, cy = N / 2;
+    x.filter = 'blur(5px)'; // borde suave de sombra
+    x.fillStyle = '#000'; x.strokeStyle = '#000'; x.lineCap = 'round';
+    const ducts = [[-50, -60], [50, -60], [-50, 60], [50, 60]]; // rótores en X
+    // brazos (trazo grueso del centro a cada rótor)
+    x.lineWidth = 22;
+    for (const [dx, dy] of ducts) { x.beginPath(); x.moveTo(cx, cy); x.lineTo(cx + dx, cy + dy); x.stroke(); }
+    // cuerpo central alargado (frente-atrás)
+    x.beginPath(); x.roundRect(cx - 22, cy - 74, 44, 148, 20); x.fill();
+    // rótores llenos
+    for (const [dx, dy] of ducts) { x.beginPath(); x.arc(cx + dx, cy + dy, 46, 0, 7); x.fill(); }
+    return c;
+  }
+
+  /** Cambia el tamaño del marcador del dron (y de su sombra) en caliente. `f` es el
+   *  factor: 1 grande, 0.75 intermedio, 0.5 mitad. Persiste para futuras reconstrucciones. */
+  _setDroneScale(f) {
+    this._droneScale = f;
+    if (this._drone) {
+      this._drone.scale.setScalar(f);
+      this._droneS = (this._droneBaseS || 12) * f;
+      // refresca la sombra ya si no estamos en un modo que la actualiza cada frame
+      const flying = (this._pilot && this._pilot.on) || (this._free && this._free.on);
+      if (this._scene && !flying) this._placeDrone(this._time || 0);
+    }
+  }
+
+  /** Orienta, desplaza, escala y atenúa la sombra del dron para un instante dado.
+   *  @param {number} px @param {number} pz posición horizontal del dron
+   *  @param {number} dy altura del dron  @param {number|null} gy cota del suelo debajo
+   *  @param {number} yaw rumbo del cuerpo (mismo signo que `_droneBody.rotation.y`) */
+  _updateShadow(px, pz, dy, gy, yaw) {
+    const g = this._shadow; if (!g || gy == null) return;
+    const agl = Math.max(0, dy - gy);
+    const sz = (this._droneS || 12) * 2.4 + agl * 0.32; // crece con la altura
+    // Desplaza la sombra hacia donde cae la luz según la hora real del vuelo (sun.dir):
+    // la sombra = el dron proyectado por el rayo del sol sobre el suelo. Se muestrea la
+    // cota del terreno en el punto desplazado (si no, quedaría enterrada bajo el relieve)
+    // y se limita el desplazamiento para que no se despegue con el dron muy alto o el sol
+    // muy bajo (ahí, físicamente, la sombra se iría lejísimos y parecería un duplicado).
+    let sx = px, sz2 = pz, sgy = gy, lightAngle = 0, stretch = 1; const s = this._sunDir;
+    if (s && s.y > 0.05) {
+      const dirLen = Math.hypot(s.x, s.z) || 1;
+      const dx = -s.x / dirLen, dz = -s.z / dirLen;      // hacia donde se proyecta la sombra
+      const flat = agl / Math.max(s.y, 0.12);            // desplazamiento físico estimado
+      const t = Math.min(flat, (this._droneS || 12) * 8); // tope: no se despega del dron
+      sx = px + t * dx; sz2 = pz + t * dz;
+      const gyOff = this._scene && this._scene.groundAtXZ ? this._scene.groundAtXZ(sx, sz2) : gy;
+      if (Number.isFinite(gyOff)) sgy = gyOff;
+      lightAngle = Math.atan2(dx, dz);                   // el +Z local del grupo mira a la luz
+      stretch = Math.max(1, Math.min(2, 1 / s.y));       // sombra más larga cuanto más bajo el sol
+    }
+    g.position.set(sx, sgy + Math.max(0.8, this._span * 0.0015), sz2);
+    g.rotation.y = lightAngle;                            // orienta el estirado a la dirección de la luz
+    g.scale.set(sz, sz, sz * stretch);                   // estira a lo largo de la luz (Z local)
+    if (this._shadowInner) this._shadowInner.rotation.y = yaw - lightAngle; // deja la silueta al rumbo real
+    this._shadowMat.opacity = Math.max(0.14, 0.5 - agl * 0.0006); // se difumina con la altura
   }
 
   /** Dron modelado como el DJI Neo 2: cuerpo gris, 4 conductos con hélice,
@@ -1425,7 +1546,7 @@ class Flight3D extends DjiElement {
     const THREE = window.THREE;
     const span = Math.max(data.bounds.spanX, Math.abs(data.bounds.spanZ)) || 500;
     const s = Math.max(9, span * 0.012); // marcador exagerado, pero sin pasarse
-    this._droneS = s;
+    this._droneBaseS = s; // tamaño base; el visible sale de multiplicar por _droneScale
     const grp = new THREE.Group();
     const body = new THREE.Group(); // gira según el rumbo (el frente mira a -Z)
     body.rotation.order = 'YXZ'; // rumbo → cabeceo → alabeo (como un avión)
@@ -1504,6 +1625,9 @@ class Flight3D extends DjiElement {
     coneGeo.translate(0, -len / 2, 0); // vértice en el origen, se abre hacia -Y
     const cone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({ color: 0x8ec5ff, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }));
     this._cone = cone; grp.add(cone);
+    // aplica el tamaño elegido (escala todo el marcador; la sombra usa _droneS)
+    grp.scale.setScalar(this._droneScale || 1);
+    this._droneS = s * (this._droneScale || 1);
     return grp;
   }
 
@@ -1527,15 +1651,8 @@ class Flight3D extends DjiElement {
       this._droneBody.rotation.z = this._roll;
       this._droneBody.rotation.x = Math.max(-0.25, Math.min(0.25, -(d.hs || 0) * 0.012)); // morro abajo al avanzar
     }
-    // sombra proyectada en el suelo bajo el dron
-    if (this._shadow) {
-      const gy = d.gy != null ? d.gy : this._scene.takeoffXZ.y;
-      const agl = Math.max(0, d.y - gy), base = (this._droneS || 12) * 2.1;
-      const sz = base + agl * 0.35; // crece y se difumina con la altura, pero sin desaparecer
-      this._shadow.position.set(d.x, gy + 0.6, d.z);
-      this._shadow.scale.set(sz, sz, 1);
-      this._shadow.material.opacity = Math.max(0.16, 0.45 - agl * 0.0007);
-    }
+    // sombra con la forma del dron, orientada al rumbo y proyectada por el sol
+    this._updateShadow(d.x, d.z, d.y, d.gy != null ? d.gy : this._scene.takeoffXZ.y, -h);
     // dirección de la cámara: horizontal por rumbo, inclinada por el pitch del gimbal
     const el = d.pitch; // rad (negativo = mirando abajo)
     const dir = new THREE.Vector3(Math.cos(el) * Math.sin(h), Math.sin(el), -Math.cos(el) * Math.cos(h));
@@ -1657,6 +1774,7 @@ class Flight3D extends DjiElement {
     }
     this.$('#free').classList.toggle('on', on);
     this._setHint(on ? 'v3d.free.hint' : null);
+    this._updateFlyUi();
   }
 
   /** Muestra/oculta el cartel de ayuda (controles) con el texto de la clave i18n. */
@@ -1693,6 +1811,7 @@ class Flight3D extends DjiElement {
     }
     this.$('#pilot').classList.toggle('on', on);
     this._setHint(on ? 'v3d.pilot.hint' : null);
+    this._updateFlyUi();
   }
 
   /** Un frame de pilotaje: mueve el dron con las teclas y encadena la cámara detrás. */
@@ -1701,8 +1820,8 @@ class Flight3D extends DjiElement {
     const THREE = window.THREE, now = performance.now(), dt = Math.min(0.05, (now - P.last) / 1000); P.last = now;
     const k = P.keys, boost = k.has('shift') ? 2.6 : 1, sm = Math.min(1, dt * 6);
     // la cámara ORBITA el dron: ratón (pointermove) y ←/→ mueven camYaw, ↑/↓ la altura
-    if (k.has('arrowleft')) P.camYaw -= 1.8 * dt;
-    if (k.has('arrowright')) P.camYaw += 1.8 * dt;
+    if (k.has('arrowleft')) P.camYaw -= 1.3 * dt;
+    if (k.has('arrowright')) P.camYaw += 1.3 * dt;
     if (k.has('arrowup')) P.camPitch = Math.min(1.35, P.camPitch + 1.4 * dt);
     if (k.has('arrowdown')) P.camPitch = Math.max(0.12, P.camPitch - 1.4 * dt);
     // movimiento RELATIVO A LA CÁMARA: W hacia donde mira, A/D lateral, E/Q vertical
@@ -1720,6 +1839,11 @@ class Flight3D extends DjiElement {
     if (!P.vel) P.vel = new THREE.Vector3();
     P.vel.lerp(desired, sm);
     P.pos.addScaledVector(P.vel, dt);
+    // acotar al terreno (no alejarse volando fuera del mapa)
+    const b = this._scene.bounds;
+    const xlo = Math.min(b.x0, b.x1), xhi = Math.max(b.x0, b.x1), zlo = Math.min(b.z0, b.z1), zhi = Math.max(b.z0, b.z1);
+    if (P.pos.x < xlo) { P.pos.x = xlo; if (P.vel.x < 0) P.vel.x = 0; } else if (P.pos.x > xhi) { P.pos.x = xhi; if (P.vel.x > 0) P.vel.x = 0; }
+    if (P.pos.z < zlo) { P.pos.z = zlo; if (P.vel.z < 0) P.vel.z = 0; } else if (P.pos.z > zhi) { P.pos.z = zhi; if (P.vel.z > 0) P.vel.z = 0; }
     // no bajar del suelo
     const gy = this._groundYAt(P.pos.x, P.pos.z);
     if (gy != null && P.pos.y < gy + (this._droneS || 10) * 1.2) { P.pos.y = gy + (this._droneS || 10) * 1.2; if (P.vel.y < 0) P.vel.y = 0; }
@@ -1742,12 +1866,8 @@ class Flight3D extends DjiElement {
       const el = -0.5, dir = new THREE.Vector3(Math.cos(el) * Math.sin(P.yaw), Math.sin(el), -Math.cos(el) * Math.cos(P.yaw));
       this._cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir.normalize());
     }
-    // sombra bajo el dron
-    if (this._shadow && gy != null) {
-      const agl = Math.max(0, P.pos.y - gy), base = (this._droneS || 12) * 2.1, sz = base + agl * 0.35;
-      this._shadow.position.set(P.pos.x, gy + 0.6, P.pos.z); this._shadow.scale.set(sz, sz, 1);
-      this._shadow.material.opacity = Math.max(0.16, 0.45 - agl * 0.0007);
-    }
+    // sombra con la forma del dron, orientada al rumbo y proyectada por el sol
+    this._updateShadow(P.pos.x, P.pos.z, P.pos.y, gy, -P.yaw);
     // cámara: orbita según camYaw/camPitch y mira AL DRON (queda centrado en pantalla)
     const r = this._span * 0.06 * P.zoom;
     const want = P.pos.clone()
@@ -1762,7 +1882,7 @@ class Flight3D extends DjiElement {
   _stepFree() {
     const F = this._free; if (!F || !F.on || this._three !== this._localScene) return;
     const THREE = window.THREE, now = performance.now(), dt = Math.min(0.05, (now - F.last) / 1000); F.last = now;
-    const k = F.keys, lr = 1.8 * dt; // flechas: mirar (rad/frame)
+    const k = F.keys, lr = 1.3 * dt; // flechas: mirar (rad/frame)
     if (k.has('arrowleft')) F.yaw -= lr;
     if (k.has('arrowright')) F.yaw += lr;
     if (k.has('arrowup')) F.pitch = Math.min(1.45, F.pitch + lr);
@@ -1811,6 +1931,24 @@ class Flight3D extends DjiElement {
   _toggleFullscreen() {
     if (document.fullscreenElement) document.exitFullscreen?.();
     else this.$('#wrap')?.requestFullscreen?.().catch(() => {});
+  }
+
+  /** Sale de los modos de vuelo (libre/pilotar) si están activos. */
+  _exitFlyModes() {
+    if (this._free && this._free.on) this._toggleFree();
+    if (this._pilot && this._pilot.on) this._togglePilot();
+  }
+
+  /** Ajusta la UI al entrar/salir de los modos de vuelo: muestra la velocidad de
+   *  vuelo solo entonces, y limpia la vista (oculta hitos y trayectoria) para no
+   *  estorbar; al salir restaura las capas según el panel de ajustes. */
+  _updateFlyUi() {
+    const flying = (this._free && this._free.on) || (this._pilot && this._pilot.on);
+    const fs = this.$('#flyspeed'); if (fs) fs.hidden = !flying;
+    if (flying) {
+      if (this._kpGroup) this._kpGroup.visible = false;
+      if (this._trackGroup) this._trackGroup.visible = false;
+    } else this._applyShow();
   }
 
   _resize() {
@@ -1920,7 +2058,7 @@ class Flight3D extends DjiElement {
 
     this.on(this.$('#play'), 'click', () => { if (this._introT0 != null) this._endIntro(); this._toggleFlyover(); });
     this.on(this.$('#reset'), 'click', () => {
-      this._stopFlyover(); const h = this._home;
+      this._exitFlyModes(); this._stopFlyover(); const h = this._home;
       if (h) { this._target.copy(h.target); this._orbit.r = h.r; this._orbit.theta = h.theta; this._orbit.phi = h.phi; }
       else { this._orbit.theta = -Math.PI * 0.7; this._orbit.phi = 1.2; }
       this._applyOrbit();
@@ -1938,6 +2076,10 @@ class Flight3D extends DjiElement {
     // actúan cuando el modo está activo
     this.on(this.$('#free'), 'click', () => this._toggleFree());
     this.on(this.$('#pilot'), 'click', () => this._togglePilot());
+    // libre/pilotar necesitan teclado (WASD): ocúltalos en táctiles sin ratón
+    if (window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches) {
+      this.$('#free').hidden = true; this.$('#pilot').hidden = true;
+    }
     this.on(window, 'keydown', (e) => this._freeKey(e, true));
     this.on(window, 'keyup', (e) => this._freeKey(e, false));
 
@@ -1959,6 +2101,12 @@ class Flight3D extends DjiElement {
       this.on(cb, 'change', () => { this._show[cb.dataset.k] = cb.checked; this._applyShow(); });
     }
     this._applyShow();
+
+    // selector de tamaño del dron (3 opciones)
+    const sizeBtns = this.$$('#dsize button');
+    const markSize = () => { for (const b of sizeBtns) b.classList.toggle('on', +b.dataset.sz === this._droneScale); };
+    for (const b of sizeBtns) this.on(b, 'click', () => { this._setDroneScale(+b.dataset.sz); markSize(); });
+    markSize();
 
     this._cineMode = this._cineMode !== false; // por defecto activado
     this.$('#cine').classList.toggle('on', this._cineMode);
@@ -2051,7 +2199,7 @@ class Flight3D extends DjiElement {
     if (this._time == null || this._time >= this._scene.duration - 0.05) this._time = 0;
     if (this._free && this._free.on) { this._free = { on: false }; this.$('#free').classList.remove('on'); }
     if (this._pilot && this._pilot.on) { this._pilot = { on: false }; this.$('#pilot').classList.remove('on'); }
-    this._setHint(null);
+    this._setHint(null); this._updateFlyUi();
     this._playing = true; this._last = this._now(); this._camTween = null;
     this._look = null;
     // intro cinematográfica: arranca amplio y la cámara se acerca al dron sola
@@ -2077,16 +2225,74 @@ class Flight3D extends DjiElement {
    *  canvas y lo codifica. La duración = duración del vuelo / velocidad elegida. */
   async _exportVideo() {
     if (!this._scene || this._exporting || this._introT0 != null) return;
-    if (!canExportVideo()) { this._exportMsg(t('v3d.export.unsupported'), true); this._showExport(true); setTimeout(() => this._showExport(false), 2500); return; }
+    this._exitFlyModes(); // el export conduce su propio sobrevuelo
+    // ruta de codificación: WebCodecs (MP4, ideal) o, si no está, MediaRecorder
+    // grabando el lienzo (plan B: funciona en más navegadores y tras un crash del
+    // proceso de render que deja WebCodecs sin exponer). Si no hay ninguna, aviso.
+    const useWebCodecs = canExportVideo();
+    if (!useWebCodecs && !this._canRecordCanvas()) {
+      this._exportMsg(t('v3d.export.unsupported'), true); this._showExport(true); setTimeout(() => this._showExport(false), 2500); return;
+    }
+    if (!useWebCodecs) console.warn('[flight-3d] WebCodecs no disponible; exporto con MediaRecorder');
     const cv = this.$('#cv');
-    // resolución de salida: cap a 1280×720 manteniendo proporción, lados pares
-    const scale = Math.min(1, 1280 / cv.width, 720 / cv.height);
-    const W = Math.max(2, Math.round(cv.width * scale / 2) * 2);
-    const H = Math.max(2, Math.round(cv.height * scale / 2) * 2);
+    const aspect = cv.width / cv.height;
+    const fps = 30, dt = 1 / fps, speed = this._speed || 1;
+    // fotogramas del vuelo completo a la velocidad elegida (antes de acotar)
+    const fullFrames = Math.ceil(this._scene.duration / speed / dt) + 1;
+    // ¿Podemos transmitir el MP4 a disco? (File System Access API + WebCodecs). Si
+    // sí, la RAM deja de ser el límite y no hace falta trocear ni bajar calidad.
+    const canStream = useWebCodecs && typeof window.showSaveFilePicker === 'function';
+    // PRESUPUESTO de tamaño de archivo. Al transmitir a disco es amplísimo (cualquier
+    // vuelo cabe); en RAM se limita según la memoria del equipo (deviceMemory, GB) para
+    // no agotarla — ahí un vuelo larguísimo baja de calidad o se recorta.
+    const gb = navigator.deviceMemory || 4;
+    const RAM_BUDGET_MB = Math.round(Math.min(1600, Math.max(400, gb * 200)));
+    const BUDGET_MB = canStream ? 100_000 : RAM_BUDGET_MB;
+    // niveles de calidad (bitrate afinado para el modo 'quality' del codificador, que
+    // aprovecha mejor cada bit): 1440p a 24 Mbps (nítido en pantallas grandes/Retina)
+    // y, si el vuelo es largo y no cabe en el presupuesto, baja a 1080p a 18 o 720p a 8.
+    const tiers = [{ h: 1440, br: 24_000_000, long: 2560 }, { h: 1080, br: 18_000_000, long: 1920 }, { h: 720, br: 8_000_000, long: 1280 }];
+    let tier = tiers[0];
+    for (const tt of tiers) { tier = tt; if (fullFrames / fps * tt.br / 8 / 1e6 <= BUDGET_MB) break; }
+    const bitrate = tier.br;
+    // resolución de salida: altura del nivel, lado largo acotado, lados pares.
+    // Se renderiza a esta resolución aunque el visor esté más pequeño en pantalla.
+    let H = tier.h, W = Math.round(H * aspect);
+    if (W > tier.long) { W = tier.long; H = Math.round(W / aspect); }
+    W = Math.max(2, Math.round(W / 2) * 2); H = Math.max(2, Math.round(H / 2) * 2);
     const out = document.createElement('canvas'); out.width = W; out.height = H;
     const octx = out.getContext('2d', { alpha: false });
-    const fps = 30, dt = 1 / fps, speed = this._speed || 1;
-    const totalFrames = Math.min(90 * fps, Math.ceil(this._scene.duration / speed / dt) + 1);
+    // último recurso: si aun a 720p no cabe, recorta la duración del vídeo para no
+    // pasar del presupuesto (el vuelo sale más corto, pero no se agota la memoria).
+    const budgetFrames = Math.floor(BUDGET_MB * 8e6 / bitrate * fps);
+    const totalFrames = Math.min(fullFrames, budgetFrames);
+    const trimmed = totalFrames < fullFrames;
+    // estimación de duración, resolución y peso del MP4 para avisar antes de arrancar
+    const estSec = totalFrames / fps, estMB = Math.max(1, Math.round(estSec * bitrate / 8 / 1e6));
+    const estEl = this.$('#expEst');
+    if (estEl) {
+      estEl.textContent = t('v3d.export.est', { dur: mmss(estSec), res: H, size: estMB })
+        + (trimmed ? ' · ' + t('v3d.export.trim') : '');
+    }
+    // ¿HACE FALTA GUARDAR EN EL PC? Solo si el MP4 estimado no cabe con holgura en
+    // RAM. Los vídeos pequeños se exportan en el navegador y se descargan solos, sin
+    // molestar con el diálogo de guardar. Los grandes se transmiten a disco (si se
+    // puede) para no agotar la memoria. El umbral escala con la RAM del equipo.
+    const RAM_SAFE_MB = Math.min(300, Math.round(RAM_BUDGET_MB / 2));
+    const needDisk = estMB > RAM_SAFE_MB;
+    // Se pide el destino AQUÍ (aún con la activación del gesto del clic, sin awaits
+    // previos) y, si el usuario cierra el diálogo, se sale limpio.
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const suggestedName = `sobrevuelo-3d-${stamp}.mp4`;
+    let sink = null;
+    if (canStream && needDisk) {
+      sink = await this._makeFileSink(suggestedName);
+      if (sink === 'cancelled') return; // el usuario cerró el diálogo: nada que limpiar
+    }
+
+    // renderiza a la resolución de salida (independiente del tamaño en pantalla)
+    this._renderer.setSize(W, H, false);
+    this._cam.aspect = W / H; this._cam.updateProjectionMatrix();
 
     this._exporting = true;
     const ac = (this._exportAbort = new AbortController());
@@ -2109,26 +2315,46 @@ class Flight3D extends DjiElement {
       this._look.z + o.r * Math.sin(o.phi) * Math.sin(o.theta));
     this._cam.lookAt(this._look);
 
+    // renderiza un fotograma del sobrevuelo al lienzo de salida `out`
+    const drawFrame = () => {
+      this._exportClock += dt * 1000; // avanza el reloj un fotograma
+      this._advanceFlyover();          // dron/estela/cámara con ese reloj
+      this._animate();                 // hélices, LEDs, rótulos
+      this._renderer.render(this._three, this._cam);
+      octx.drawImage(cv, 0, 0, W, H);
+      if (this._show.hud) this._drawExportHud(octx, W, H, this._time);
+    };
+
     let rec;
     try {
-      rec = createMp4Recorder({ width: W, height: H, fps });
-      for (let i = 0; i < totalFrames; i++) {
-        if (ac.signal.aborted) throw new DOMException('cancelado', 'AbortError');
-        this._exportClock += dt * 1000; // avanza el reloj un fotograma
-        this._advanceFlyover();          // dron/estela/cámara con ese reloj
-        this._animate();                 // hélices, LEDs, rótulos
-        this._renderer.render(this._three, this._cam);
-        octx.drawImage(cv, 0, 0, W, H);
-        if (this._show.hud) this._drawExportHud(octx, W, H, this._time);
-        await rec.encode(out);
-        if (i % 4 === 0) this._setExportProgress((i + 1) / totalFrames);
+      if (useWebCodecs && sink) {
+        // camino ideal: se transmite a disco, sin acumular el MP4 en RAM
+        rec = createMp4StreamRecorder({ width: W, height: H, fps, bitrate, sink });
+        for (let i = 0; i < totalFrames; i++) {
+          if (ac.signal.aborted) throw new DOMException('cancelado', 'AbortError');
+          drawFrame();
+          await rec.encode(out);
+          if (i % 4 === 0) this._setExportProgress((i + 1) / totalFrames);
+        }
+        await rec.finish(); // el fichero ya está escrito y cerrado en disco
+      } else if (useWebCodecs) {
+        // sin File System Access: acumula en RAM y descarga como Blob
+        rec = createMp4Recorder({ width: W, height: H, fps, bitrate });
+        for (let i = 0; i < totalFrames; i++) {
+          if (ac.signal.aborted) throw new DOMException('cancelado', 'AbortError');
+          drawFrame();
+          await rec.encode(out);
+          if (i % 4 === 0) this._setExportProgress((i + 1) / totalFrames);
+        }
+        downloadBlob(suggestedName, await rec.finish());
+      } else {
+        // plan B (sin WebCodecs): MediaRecorder al lienzo, en RAM
+        const r = await this._recordCanvas({ out, drawFrame, fps, dt, totalFrames, bitrate, signal: ac.signal });
+        downloadBlob(`sobrevuelo-3d-${stamp}.${r.ext}`, r.blob);
       }
-      const blob = await rec.finish();
-      const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
-      downloadBlob(`sobrevuelo-3d-${stamp}.mp4`, blob);
       this._exportMsg(t('v3d.export.done')); await new Promise((r) => setTimeout(r, 1200));
     } catch (e) {
-      rec?.cancel();
+      await rec?.cancel();
       const cancelled = e.name === 'AbortError';
       if (!cancelled) console.error('[flight-3d] export', e);
       this._exportMsg(cancelled ? t('v3d.export.cancelled') : t('v3d.export.error'), true);
@@ -2136,8 +2362,89 @@ class Flight3D extends DjiElement {
     } finally {
       this._exporting = false; this._exportClock = null; this._exportAbort = null;
       this._cineMode = wasCine;
+      this._resize(); // devuelve el renderer/cámara a la resolución de pantalla
       this._stopFlyover(); this._showExport(false); this._applyOrbit();
     }
+  }
+
+  /** Pide al usuario un fichero de destino (File System Access API) y devuelve un
+   *  `sink` asíncrono con el que el muxer transmite el MP4 a disco. Devuelve:
+   *   - un sink `{ write, close }` si eligió destino,
+   *   - `'cancelled'` si cerró el diálogo (no debe exportarse nada),
+   *   - `null` si el navegador no soporta la API (usar el camino en RAM).
+   *  Debe llamarse aún con la activación del gesto del usuario (sin awaits previos). */
+  async _makeFileSink(suggestedName) {
+    if (typeof window.showSaveFilePicker !== 'function') return null;
+    let handle;
+    try {
+      handle = await window.showSaveFilePicker({
+        suggestedName,
+        types: [{ description: 'Vídeo MP4', accept: { 'video/mp4': ['.mp4'] } }],
+      });
+    } catch (e) {
+      if (e && e.name === 'AbortError') return 'cancelled'; // cerró el selector
+      console.warn('[flight-3d] showSaveFilePicker no disponible; export a RAM', e);
+      return null; // sin permiso / no soportado → camino en RAM
+    }
+    const writable = await handle.createWritable();
+    // El muxer escribe con posiciones explícitas (parchea el tamaño de mdat al
+    // final), por eso cada write lleva su `position`.
+    return {
+      write: (bytes, pos) => writable.write({ type: 'write', position: pos, data: bytes }),
+      close: () => writable.close(),
+      // descarta el fichero parcial al cancelar (no confirma nada en disco)
+      abort: () => writable.abort(),
+    };
+  }
+
+  /** ¿Se puede grabar el lienzo con MediaRecorder? (plan B sin WebCodecs). */
+  _canRecordCanvas() {
+    return typeof MediaRecorder !== 'undefined'
+      && typeof HTMLCanvasElement !== 'undefined'
+      && typeof HTMLCanvasElement.prototype.captureStream === 'function';
+  }
+
+  /** Mejor contenedor/codec soportado por MediaRecorder: MP4/H.264 si existe
+   *  (reproducible en iOS), si no WebM. '' = deja que el navegador elija. */
+  _pickRecorderMime() {
+    const cands = ['video/mp4;codecs=avc1.640028', 'video/mp4', 'video/webm;codecs=h264', 'video/webm;codecs=vp9', 'video/webm'];
+    for (const m of cands) { try { if (MediaRecorder.isTypeSupported(m)) return m; } catch { /* ignora */ } }
+    return '';
+  }
+
+  /** Plan B de exportación: graba el lienzo `out` con MediaRecorder. Empuja cada
+   *  fotograma a ritmo real (requestFrame + espera dt) para que la velocidad de
+   *  reproducción sea correcta; MediaRecorder marca los tiempos por reloj de pared.
+   *  Devuelve { blob, ext }. */
+  async _recordCanvas({ out, drawFrame, fps, dt, totalFrames, bitrate, signal }) {
+    const mime = this._pickRecorderMime();
+    const stream = out.captureStream(0); // 0 fps = fotogramas manuales
+    const track = stream.getVideoTracks()[0];
+    const opts = { videoBitsPerSecond: bitrate }; if (mime) opts.mimeType = mime;
+    const mr = new MediaRecorder(stream, opts);
+    const chunks = [];
+    mr.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    const stopped = new Promise((res, rej) => { mr.onstop = res; mr.onerror = (ev) => rej(ev.error || new Error('MediaRecorder')); });
+    mr.start();
+    const frameMs = 1000 / fps;
+    let next = performance.now();
+    try {
+      for (let i = 0; i < totalFrames; i++) {
+        if (signal.aborted) throw new DOMException('cancelado', 'AbortError');
+        drawFrame();
+        track.requestFrame();
+        if (i % 4 === 0) this._setExportProgress((i + 1) / totalFrames);
+        next += frameMs;
+        const wait = next - performance.now();
+        await new Promise((r) => setTimeout(r, wait > 0 ? wait : 0));
+      }
+    } finally {
+      try { if (mr.state !== 'inactive') mr.stop(); } catch { /* ya parado */ }
+    }
+    await stopped;
+    stream.getTracks().forEach((tk) => tk.stop());
+    const type = (mime ? mime.split(';')[0] : (chunks[0] && chunks[0].type)) || 'video/webm';
+    return { blob: new Blob(chunks, { type }), ext: type.includes('mp4') ? 'mp4' : 'webm' };
   }
 
   /** Dibuja la telemetría (altura, velocidad, v. vertical, alejamiento) sobre el
@@ -2246,6 +2553,7 @@ class Flight3D extends DjiElement {
     this._playing = false;
     this._io?.disconnect(); this._io = null;
     this._ro?.disconnect(); this._ro = null;
+    this._visIO?.disconnect(); this._visIO = null;
     this._introT0 = null; this._introPlayed = false; this._globe = null;
     if (this._renderer) { this._renderer.dispose(); this._renderer = null; }
     this._three = null; this._localScene = null; this._scene = null; this._time = null; this._look = null;
@@ -5654,8 +5962,14 @@ __m["js/flyover-export.js"] = function (__x, __req) {
 // WebCodecs (H.264) y los empaqueta con el muxer MP4 estándar (mismo que el
 // export del vídeo del dron), así el resultado es compatible con iOS/QuickTime.
 // El componente 3D renderiza cada frame a un <canvas> y lo pasa a `encode()`.
+//
+// Dos grabadores con la misma interfaz (encode/finish/cancel/frames):
+//  - createMp4Recorder(): acumula el MP4 en RAM (Blobs) y lo devuelve en finish().
+//  - createMp4StreamRecorder(): transmite el MP4 a disco (File System Access) según
+//    codifica; en RAM solo queda metadata, así un vuelo largo a 1080p no agota la
+//    memoria de la pestaña. finish() no devuelve nada: el fichero ya está en disco.
 
-const { createMp4 } = __req("js/mp4-muxer.js");
+const { createMp4, createMp4Stream } = __req("js/mp4-muxer.js");
 
 /** @returns {boolean} true si el navegador puede generar el vídeo (WebCodecs). */
 function canExportVideo() {
@@ -5663,16 +5977,37 @@ function canExportVideo() {
 }
 
 /**
- * Crea un grabador incremental: se le pasa un canvas por fotograma y al final
- * devuelve el MP4 como Blob. Los timestamps se derivan de `fps` (frames a ritmo
- * constante), independientes de lo que tarde en codificar cada uno.
- * @param {{width:number, height:number, fps?:number, bitrate?:number}} o
+ * Crea y configura el VideoEncoder H.264, redirigiendo cada chunk (y la primera
+ * `decoderConfig.description`) a `muxer`. Compartido por ambos grabadores.
+ * @param {{width:number,height:number,fps:number,bitrate?:number,muxer:{setDescription:Function,addSample:Function}}} o
+ * @returns {{encoder:VideoEncoder, getErr:()=>Error|null}}
  */
-function createMp4Recorder({ width, height, fps = 30, bitrate }) {
-  if (!canExportVideo()) throw new Error('WebCodecs no disponible');
-  const W = width, H = height;
-  const muxer = createMp4({ width: W, height: H });
-  let needDesc = true, err = null, idx = 0;
+// Máximo de fotogramas admitidos en la cola de entrada del codificador. Cada
+// VideoFrame encolado retiene una imagen respaldada en GPU/RAM, así que un tope
+// bajo mantiene el pico de memoria plano aunque el vuelo dure minutos.
+const MAX_QUEUE = 2;
+
+/**
+ * Contrapresión REAL: espera hasta que la cola del codificador baje del tope,
+ * cediendo el hilo entre comprobaciones. Sin esto, un bucle que codifica más
+ * rápido de lo que el encoder consume acumula VideoFrames sin límite y agota la
+ * memoria de vídeo (peta la pestaña y arrastra al equipo). Prefiere el evento
+ * `dequeue` si el navegador lo expone; si no, sondea con un respiro corto.
+ * @param {VideoEncoder} encoder
+ */
+async function awaitQueue(encoder) {
+  while (encoder.encodeQueueSize > MAX_QUEUE) {
+    await new Promise((r) => {
+      let done = false;
+      const finish = () => { if (done) return; done = true; encoder.removeEventListener?.('dequeue', finish); clearTimeout(tid); r(); };
+      encoder.addEventListener?.('dequeue', finish, { once: true });
+      const tid = setTimeout(finish, 8); // red de seguridad si no hay evento `dequeue`
+    });
+  }
+}
+
+function buildEncoder({ width, height, fps, bitrate, muxer }) {
+  let needDesc = true, err = null;
   const encoder = new VideoEncoder({
     output: (chunk, meta) => {
       if (needDesc && meta?.decoderConfig?.description) { muxer.setDescription(meta.decoderConfig.description); needDesc = false; }
@@ -5682,31 +6017,85 @@ function createMp4Recorder({ width, height, fps = 30, bitrate }) {
     error: (e) => { err = e; },
   });
   encoder.configure({
-    codec: H > 1080 ? 'avc1.640033' : 'avc1.640028',
-    width: W, height: H, bitrate: bitrate || 10_000_000,
-    framerate: fps, latencyMode: 'realtime', avc: { format: 'avc' },
+    codec: height > 1080 ? 'avc1.640033' : 'avc1.640028',
+    width, height, bitrate: bitrate || 10_000_000,
+    // modo 'quality': el codificador analiza y reparte los bits con más criterio
+    // (a diferencia de 'realtime', pensado para videollamadas), así el mismo aspecto
+    // cabe en menos bitrate → menos peso a igual calidad. La contrapresión de la cola
+    // absorbe que codifique algo más lento.
+    framerate: fps, latencyMode: 'quality', avc: { format: 'avc' },
   });
+  return { encoder, getErr: () => err };
+}
+
+/**
+ * Grabador incremental que acumula el MP4 en RAM. Los timestamps se derivan de
+ * `fps` (frames a ritmo constante), independientes de lo que tarde en codificar
+ * cada uno. finish() devuelve el MP4 como Blob.
+ * @param {{width:number, height:number, fps?:number, bitrate?:number}} o
+ */
+function createMp4Recorder({ width, height, fps = 30, bitrate }) {
+  if (!canExportVideo()) throw new Error('WebCodecs no disponible');
+  const W = width, H = height;
+  const muxer = createMp4({ width: W, height: H });
+  const { encoder, getErr } = buildEncoder({ width: W, height: H, fps, bitrate, muxer });
   const usPerFrame = 1e6 / fps;
+  let idx = 0;
 
   return {
     /** Codifica un fotograma desde `canvas`. Un keyframe cada ~2 s. */
     async encode(canvas) {
-      if (err) throw err;
+      if (getErr()) throw getErr();
       const frame = new VideoFrame(canvas, { timestamp: Math.round(idx * usPerFrame), duration: Math.round(usPerFrame) });
       encoder.encode(frame, { keyFrame: idx % (fps * 2) === 0 });
       frame.close(); idx++;
-      // deja respirar al codificador si se acumula la cola (evita picos de memoria)
-      if (encoder.encodeQueueSize > 8) await new Promise((r) => setTimeout(r, 0));
+      // contrapresión real: no seguir hasta que el codificador drene la cola
+      await awaitQueue(encoder);
     },
     /** Vacía el codificador y devuelve el MP4 como Blob. */
-    async finish() { await encoder.flush(); encoder.close(); if (err) throw err; return muxer.finalize(); },
+    async finish() { await encoder.flush(); encoder.close(); if (getErr()) throw getErr(); return muxer.finalize(); },
     /** Aborta sin producir salida. */
     cancel() { try { encoder.close(); } catch { /* ya cerrado */ } },
     get frames() { return idx; },
   };
 }
 
-Object.assign(__x, { canExportVideo, createMp4Recorder });
+/**
+ * Grabador incremental que transmite el MP4 a disco según codifica, vía un `sink`
+ * (envoltorio sobre un FileSystemWritableFileStream). En RAM solo queda metadata
+ * de las muestras, así que el pico de memoria es plano sin importar la duración.
+ * Aplica backpressure: espera a que se vacíe la escritura a disco entre frames.
+ * finish() no devuelve nada — al terminar, el fichero ya está escrito y cerrado.
+ * @param {{width:number, height:number, fps?:number, bitrate?:number, sink:{write:Function,close:Function}}} o
+ */
+function createMp4StreamRecorder({ width, height, fps = 30, bitrate, sink }) {
+  if (!canExportVideo()) throw new Error('WebCodecs no disponible');
+  const W = width, H = height;
+  const muxer = createMp4Stream({ width: W, height: H, sink });
+  const { encoder, getErr } = buildEncoder({ width: W, height: H, fps, bitrate, muxer });
+  const usPerFrame = 1e6 / fps;
+  let idx = 0;
+
+  return {
+    /** Codifica un fotograma desde `canvas` y espera a que la escritura a disco
+     *  alcance (backpressure), para no acumular buffers pendientes en RAM. */
+    async encode(canvas) {
+      if (getErr()) throw getErr();
+      const frame = new VideoFrame(canvas, { timestamp: Math.round(idx * usPerFrame), duration: Math.round(usPerFrame) });
+      encoder.encode(frame, { keyFrame: idx % (fps * 2) === 0 });
+      frame.close(); idx++;
+      await awaitQueue(encoder); // contrapresión de la cola de entrada del codificador
+      await muxer.drain();       // vacía la cola de escritura a disco antes del siguiente frame
+    },
+    /** Vacía el codificador, escribe el moov y cierra el fichero en disco. */
+    async finish() { await encoder.flush(); encoder.close(); if (getErr()) throw getErr(); await muxer.finalize(); },
+    /** Aborta: cierra el codificador y el fichero (queda incompleto, a descartar). */
+    async cancel() { try { encoder.close(); } catch { /* ya cerrado */ } try { await muxer.abort(); } catch { /* ignora */ } },
+    get frames() { return idx; },
+  };
+}
+
+Object.assign(__x, { canExportVideo, createMp4Recorder, createMp4StreamRecorder });
 
 };
 
@@ -7186,12 +7575,18 @@ __x.default = {
   'v3d.export.cancelled': 'Export cancelled',
   'v3d.export.cancel': 'Cancel',
   'v3d.export.unsupported': 'Your browser does not support export (WebCodecs)',
+  'v3d.export.est': 'Duration ≈ {dur} · {res}p · ~{size} MB',
+  'v3d.export.trim': 'trimmed to avoid running out of memory',
   'v3d.opts.title': 'Show in the render',
   'v3d.opt.track': 'Flight path',
   'v3d.opt.kp': 'Flight highlights',
   'v3d.opt.places': 'Towns and peaks',
   'v3d.opt.water': 'Rivers and reservoirs',
   'v3d.opt.hud': 'Telemetry (HUD)',
+  'v3d.opt.size': 'Drone size',
+  'v3d.size.l': 'Large',
+  'v3d.size.m': 'Medium',
+  'v3d.size.s': 'Small',
   'v3d.unsupported': 'Your browser does not support the 3D view (WebGL).',
   'player.play': 'Play the flight',
   'player.pause': 'Pause',
@@ -7596,12 +7991,18 @@ __x.default = {
   'v3d.export.cancelled': 'Exportación cancelada',
   'v3d.export.cancel': 'Cancelar',
   'v3d.export.unsupported': 'Tu navegador no soporta la exportación (WebCodecs)',
+  'v3d.export.est': 'Duración ≈ {dur} · {res}p · ~{size} MB',
+  'v3d.export.trim': 'recortado para no agotar la memoria',
   'v3d.opts.title': 'Mostrar en el render',
   'v3d.opt.track': 'Trayectoria del vuelo',
   'v3d.opt.kp': 'Hitos del vuelo',
   'v3d.opt.places': 'Pueblos y cimas',
   'v3d.opt.water': 'Ríos y embalses',
   'v3d.opt.hud': 'Telemetría (HUD)',
+  'v3d.opt.size': 'Tamaño del dron',
+  'v3d.size.l': 'Grande',
+  'v3d.size.m': 'Medio',
+  'v3d.size.s': 'Pequeño',
   'v3d.unsupported': 'Tu navegador no admite la vista 3D (WebGL).',
   'player.play': 'Reproducir el vuelo',
   'player.pause': 'Pausa',
@@ -8265,12 +8666,22 @@ __m["js/mp4-muxer.js"] = function (__x, __req) {
 // iOS/QuickTime, a diferencia del MP4 fragmentado que produce MediaRecorder.
 // Pista de vídeo H.264 (muestras AVCC) + pista de audio AAC opcional. Si no se
 // aporta audio, la salida es idéntica al muxer de vídeo puro.
+//
+// Dos modos:
+//  - createMp4(): acumula todas las muestras en memoria (Blobs) y devuelve el MP4
+//    como Blob en finalize(). Bien para vídeos cortos.
+//  - createMp4Stream({ sink }): escribe cada muestra directamente al `sink` (un
+//    fichero en disco vía File System Access API) según llegan, sin retenerlas en
+//    RAM. Solo queda metadata en memoria (unos pocos MB), así un vuelo largo a
+//    1080p no agota la memoria de la pestaña. Solo vídeo (sin audio).
 
 const VTS = 90000; // timescale de la pista de vídeo
 
 const u8 = (...n) => new Uint8Array(n);
 const u16 = (n) => new Uint8Array([(n >> 8) & 255, n & 255]);
 const u32 = (n) => { n >>>= 0; return new Uint8Array([(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255]); };
+// entero de 64 bits big-endian (para el largesize del box mdat en modo streaming)
+const u64 = (n) => new Uint8Array([...u32(Math.floor(n / 2 ** 32)), ...u32(n % 2 ** 32)]);
 const str = (s) => new Uint8Array([...s].map((c) => c.charCodeAt(0)));
 const cat = (arrs) => { let len = 0; for (const a of arrs) len += a.length; const o = new Uint8Array(len); let p = 0; for (const a of arrs) { o.set(a, p); p += a.length; } return o; };
 const box = (type, ...payload) => { const body = cat(payload); return cat([u32(body.length + 8), str(type), body]); };
@@ -8279,6 +8690,101 @@ const fbox = (type, version, flags, ...payload) => box(type, u8(version), u8((fl
 const descr = (tag, payload) => cat([u8(tag), u8(payload.length), payload]);
 const MATRIX = cat([u32(0x00010000), u32(0), u32(0), u32(0), u32(0x00010000), u32(0), u32(0), u32(0), u32(0x40000000)]);
 
+const ftypBox = () => box('ftyp', str('isom'), u32(0x200), str('isom'), str('iso2'), str('avc1'), str('mp41'));
+
+/**
+ * Construye el box `moov` a partir de la metadata de las muestras. Puro: no toca
+ * los bytes de los datos, solo describe dónde viven (`vBase`/`aBase`).
+ * @param {{width:number,height:number,description:Uint8Array,samples:Array,dataLen:number,vBase:number,audio?:object,aSamples?:Array,aDataLen?:number,aBase?:number}} s
+ */
+function assembleMoov(s) {
+  const { width, height, description, samples, vBase } = s;
+  const hasAudio = !!(s.audio && s.aSamples && s.aSamples.length);
+  const audio = s.audio, aSamples = s.aSamples || [];
+
+  // duraciones de vídeo a partir de los timestamps
+  for (let i = 0; i < samples.length; i++) {
+    samples[i].dur = i < samples.length - 1
+      ? Math.max(1, samples[i + 1].ts - samples[i].ts)
+      : (samples.length > 1 ? samples[i - 1].ts - (samples[i - 2]?.ts ?? samples[i - 1].ts) || 3000 : 3000);
+  }
+  if (samples.length > 1) samples[samples.length - 1].dur = samples[samples.length - 2].dur;
+  const vTotal = samples.reduce((a, x) => a + x.dur, 0);
+  const vDurMs = Math.round(vTotal / VTS * 1000);
+
+  // audio: 1024 muestras PCM por frame AAC-LC
+  const AAC_FRAME = 1024;
+  const aTotal = hasAudio ? aSamples.length * AAC_FRAME : 0;
+  const aDurMs = hasAudio ? Math.round(aTotal / audio.sampleRate * 1000) : 0;
+  const durMovie = Math.max(vDurMs, aDurMs);
+
+  // ---- pista de vídeo ----
+  const avc1 = box('avc1',
+    u8(0, 0, 0, 0, 0, 0), u16(1),
+    u16(0), u16(0), u8(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+    u16(width), u16(height),
+    u32(0x00480000), u32(0x00480000), u32(0), u16(1),
+    new Uint8Array(32),
+    u16(0x0018), u16(0xFFFF),
+    box('avcC', description));
+  const vStsd = fbox('stsd', 0, 0, u32(1), avc1);
+  const sttsE = [];
+  for (const smp of samples) { const l = sttsE[sttsE.length - 1]; if (l && l.dur === smp.dur) l.count++; else sttsE.push({ count: 1, dur: smp.dur }); }
+  const vStts = fbox('stts', 0, 0, u32(sttsE.length), cat(sttsE.map((e) => cat([u32(e.count), u32(e.dur)]))));
+  const vStsc = fbox('stsc', 0, 0, u32(1), cat([u32(1), u32(samples.length), u32(1)]));
+  const vStsz = fbox('stsz', 0, 0, u32(0), u32(samples.length), cat(samples.map((x) => u32(x.size))));
+  const vStco = fbox('stco', 0, 0, u32(1), u32(vBase));
+  const keys = samples.map((x, i) => (x.key ? i + 1 : 0)).filter(Boolean);
+  const vStss = fbox('stss', 0, 0, u32(keys.length), cat(keys.map((k) => u32(k))));
+  const vStbl = box('stbl', vStsd, vStts, vStsc, vStsz, vStco, vStss);
+  const vmhd = fbox('vmhd', 0, 1, u16(0), u16(0), u16(0), u16(0));
+  const dinf = box('dinf', fbox('dref', 0, 0, u32(1), fbox('url ', 0, 1)));
+  const vMinf = box('minf', vmhd, dinf, vStbl);
+  const vHdlr = fbox('hdlr', 0, 0, u32(0), str('vide'), u8(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), cat([str('VideoHandler'), u8(0)]));
+  const vMdhd = fbox('mdhd', 0, 0, u32(0), u32(0), u32(VTS), u32(vTotal), u16(0x55c4), u16(0));
+  const vMdia = box('mdia', vMdhd, vHdlr, vMinf);
+  const vTkhd = fbox('tkhd', 0, 7, u32(0), u32(0), u32(1), u32(0), u32(durMovie),
+    u8(0, 0, 0, 0, 0, 0, 0, 0), u16(0), u16(0), u16(0), u16(0), MATRIX, u32(width << 16), u32(height << 16));
+  const vTrak = box('trak', vTkhd, vMdia);
+
+  // ---- pista de audio (opcional) ----
+  let aTrak = null;
+  if (hasAudio) {
+    const aBase = s.aBase;
+    const esds = fbox('esds', 0, 0,
+      descr(0x03, cat([u16(0), u8(0),                                  // ES_ID + flags
+        descr(0x04, cat([u8(0x40), u8(0x15), u8(0, 0, 0), u32(0), u32(128000), // AAC, audioStream, buffer/max/avg bitrate
+          descr(0x05, audio.desc)])),                                  // AudioSpecificConfig
+        descr(0x06, u8(0x02))])));                                     // SLConfig
+    const mp4a = box('mp4a',
+      u8(0, 0, 0, 0, 0, 0), u16(1),           // reserved + data_reference_index
+      u32(0), u32(0),                         // reserved
+      u16(audio.channels), u16(16),           // channelcount + samplesize
+      u16(0), u16(0),                         // pre_defined + reserved
+      u32((audio.sampleRate * 65536) >>> 0),  // samplerate 16.16
+      esds);
+    const aStsd = fbox('stsd', 0, 0, u32(1), mp4a);
+    const aStts = fbox('stts', 0, 0, u32(1), cat([u32(aSamples.length), u32(AAC_FRAME)]));
+    const aStsc = fbox('stsc', 0, 0, u32(1), cat([u32(1), u32(aSamples.length), u32(1)]));
+    const aStsz = fbox('stsz', 0, 0, u32(0), u32(aSamples.length), cat(aSamples.map((x) => u32(x.size))));
+    const aStco = fbox('stco', 0, 0, u32(1), u32(aBase));
+    const aStbl = box('stbl', aStsd, aStts, aStsc, aStsz, aStco);
+    const smhd = fbox('smhd', 0, 0, u16(0), u16(0));
+    const aMinf = box('minf', smhd, dinf, aStbl);
+    const aHdlr = fbox('hdlr', 0, 0, u32(0), str('soun'), u8(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), cat([str('SoundHandler'), u8(0)]));
+    const aMdhd = fbox('mdhd', 0, 0, u32(0), u32(0), u32(audio.sampleRate), u32(aTotal), u16(0x55c4), u16(0));
+    const aMdia = box('mdia', aMdhd, aHdlr, aMinf);
+    const aTkhd = fbox('tkhd', 0, 7, u32(0), u32(0), u32(2), u32(0), u32(durMovie),
+      u8(0, 0, 0, 0, 0, 0, 0, 0), u16(0), u16(0), u16(0x0100), u16(0), MATRIX, u32(0), u32(0));
+    aTrak = box('trak', aTkhd, aMdia);
+  }
+
+  const nextTrack = hasAudio ? 3 : 2;
+  const mvhd = fbox('mvhd', 0, 0, u32(0), u32(0), u32(1000), u32(durMovie), u32(0x00010000), u16(0x0100), u16(0),
+    u32(0), u32(0), MATRIX, u32(0), u32(0), u32(0), u32(0), u32(0), u32(0), u32(nextTrack));
+  return hasAudio ? box('moov', mvhd, vTrak, aTrak) : box('moov', mvhd, vTrak);
+}
+
 /**
  * @param {{width:number,height:number}} o
  * @returns {{setDescription:(d:BufferSource)=>void, addSample:(bytes:Uint8Array,isKey:boolean,tsMicros:number)=>void, setAudioConfig:(c:{sampleRate:number,channels:number,description:BufferSource})=>void, addAudioSample:(bytes:BufferSource,tsMicros:number)=>void, finalize:()=>Blob}}
@@ -8286,6 +8792,9 @@ const MATRIX = cat([u32(0x00010000), u32(0), u32(0), u32(0), u32(0x00010000), u3
 function createMp4({ width, height }) {
   let description = null;
   const samples = [];      // vídeo: { size, key, ts (en VTS), offset }
+  // Los bytes de cada muestra se guardan como Blob (no Uint8Array): Chrome los
+  // respalda en su almacén de blobs, paginable a disco, en vez del heap del
+  // renderer. Así un vuelo largo no dispara la RAM y el Blob final no duplica.
   const data = [];
   let dataLen = 0;
 
@@ -8300,7 +8809,7 @@ function createMp4({ width, height }) {
     addSample(bytes, isKey, tsMicros) {
       const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
       samples.push({ size: b.length, key: !!isKey, ts: Math.round(tsMicros * VTS / 1e6), offset: dataLen });
-      data.push(b); dataLen += b.length;
+      data.push(new Blob([b])); dataLen += b.length;
     },
     setAudioConfig({ sampleRate, channels, description: d }) {
       audio = { sampleRate, channels: channels || 2, desc: new Uint8Array(d instanceof ArrayBuffer ? d : d.buffer || d) };
@@ -8308,105 +8817,92 @@ function createMp4({ width, height }) {
     addAudioSample(bytes) {
       const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
       aSamples.push({ size: b.length });
-      aData.push(b); aDataLen += b.length;
+      aData.push(new Blob([b])); aDataLen += b.length;
     },
     finalize() {
       if (!description || !samples.length) throw new Error('MP4 sin datos.');
-      const hasAudio = !!(audio && aSamples.length);
-
-      // duraciones de vídeo a partir de los timestamps
-      for (let i = 0; i < samples.length; i++) {
-        samples[i].dur = i < samples.length - 1
-          ? Math.max(1, samples[i + 1].ts - samples[i].ts)
-          : (samples.length > 1 ? samples[i - 1].ts - (samples[i - 2]?.ts ?? samples[i - 1].ts) || 3000 : 3000);
-      }
-      if (samples.length > 1) samples[samples.length - 1].dur = samples[samples.length - 2].dur;
-      const vTotal = samples.reduce((s, x) => s + x.dur, 0);
-      const vDurMs = Math.round(vTotal / VTS * 1000);
-
-      // audio: 1024 muestras PCM por frame AAC-LC
-      const AAC_FRAME = 1024;
-      const aTotal = hasAudio ? aSamples.length * AAC_FRAME : 0;
-      const aDurMs = hasAudio ? Math.round(aTotal / audio.sampleRate * 1000) : 0;
-      const durMovie = Math.max(vDurMs, aDurMs);
-
-      const ftyp = box('ftyp', str('isom'), u32(0x200), str('isom'), str('iso2'), str('avc1'), str('mp41'));
+      const ftyp = ftypBox();
       const totalData = dataLen + aDataLen;
-      const mdatHeader = cat([u32(totalData + 8), str('mdat')]);
+      const mdatHeader = cat([u32(totalData + 8), str('mdat')]); // mdat de 32 bits (tamaño conocido)
       const vBase = ftyp.length + mdatHeader.length;   // offset del primer byte de vídeo
       const aBase = vBase + dataLen;                   // el audio va tras el vídeo en el mdat
-
-      // ---- pista de vídeo ----
-      const avc1 = box('avc1',
-        u8(0, 0, 0, 0, 0, 0), u16(1),
-        u16(0), u16(0), u8(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
-        u16(width), u16(height),
-        u32(0x00480000), u32(0x00480000), u32(0), u16(1),
-        new Uint8Array(32),
-        u16(0x0018), u16(0xFFFF),
-        box('avcC', description));
-      const vStsd = fbox('stsd', 0, 0, u32(1), avc1);
-      const sttsE = [];
-      for (const s of samples) { const l = sttsE[sttsE.length - 1]; if (l && l.dur === s.dur) l.count++; else sttsE.push({ count: 1, dur: s.dur }); }
-      const vStts = fbox('stts', 0, 0, u32(sttsE.length), cat(sttsE.map((e) => cat([u32(e.count), u32(e.dur)]))));
-      const vStsc = fbox('stsc', 0, 0, u32(1), cat([u32(1), u32(samples.length), u32(1)]));
-      const vStsz = fbox('stsz', 0, 0, u32(0), u32(samples.length), cat(samples.map((s) => u32(s.size))));
-      const vStco = fbox('stco', 0, 0, u32(1), u32(vBase));
-      const keys = samples.map((s, i) => (s.key ? i + 1 : 0)).filter(Boolean);
-      const vStss = fbox('stss', 0, 0, u32(keys.length), cat(keys.map((k) => u32(k))));
-      const vStbl = box('stbl', vStsd, vStts, vStsc, vStsz, vStco, vStss);
-      const vmhd = fbox('vmhd', 0, 1, u16(0), u16(0), u16(0), u16(0));
-      const dinf = box('dinf', fbox('dref', 0, 0, u32(1), fbox('url ', 0, 1)));
-      const vMinf = box('minf', vmhd, dinf, vStbl);
-      const vHdlr = fbox('hdlr', 0, 0, u32(0), str('vide'), u8(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), cat([str('VideoHandler'), u8(0)]));
-      const vMdhd = fbox('mdhd', 0, 0, u32(0), u32(0), u32(VTS), u32(vTotal), u16(0x55c4), u16(0));
-      const vMdia = box('mdia', vMdhd, vHdlr, vMinf);
-      const vTkhd = fbox('tkhd', 0, 7, u32(0), u32(0), u32(1), u32(0), u32(durMovie),
-        u8(0, 0, 0, 0, 0, 0, 0, 0), u16(0), u16(0), u16(0), u16(0), MATRIX, u32(width << 16), u32(height << 16));
-      const vTrak = box('trak', vTkhd, vMdia);
-
-      // ---- pista de audio (opcional) ----
-      let aTrak = null;
-      if (hasAudio) {
-        const esds = fbox('esds', 0, 0,
-          descr(0x03, cat([u16(0), u8(0),                                  // ES_ID + flags
-            descr(0x04, cat([u8(0x40), u8(0x15), u8(0, 0, 0), u32(0), u32(128000), // AAC, audioStream, buffer/max/avg bitrate
-              descr(0x05, audio.desc)])),                                  // AudioSpecificConfig
-            descr(0x06, u8(0x02))])));                                     // SLConfig
-        const mp4a = box('mp4a',
-          u8(0, 0, 0, 0, 0, 0), u16(1),           // reserved + data_reference_index
-          u32(0), u32(0),                         // reserved
-          u16(audio.channels), u16(16),           // channelcount + samplesize
-          u16(0), u16(0),                         // pre_defined + reserved
-          u32((audio.sampleRate * 65536) >>> 0),  // samplerate 16.16
-          esds);
-        const aStsd = fbox('stsd', 0, 0, u32(1), mp4a);
-        const aStts = fbox('stts', 0, 0, u32(1), cat([u32(aSamples.length), u32(AAC_FRAME)]));
-        const aStsc = fbox('stsc', 0, 0, u32(1), cat([u32(1), u32(aSamples.length), u32(1)]));
-        const aStsz = fbox('stsz', 0, 0, u32(0), u32(aSamples.length), cat(aSamples.map((s) => u32(s.size))));
-        const aStco = fbox('stco', 0, 0, u32(1), u32(aBase));
-        const aStbl = box('stbl', aStsd, aStts, aStsc, aStsz, aStco);
-        const smhd = fbox('smhd', 0, 0, u16(0), u16(0));
-        const aMinf = box('minf', smhd, dinf, aStbl);
-        const aHdlr = fbox('hdlr', 0, 0, u32(0), str('soun'), u8(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), cat([str('SoundHandler'), u8(0)]));
-        const aMdhd = fbox('mdhd', 0, 0, u32(0), u32(0), u32(audio.sampleRate), u32(aTotal), u16(0x55c4), u16(0));
-        const aMdia = box('mdia', aMdhd, aHdlr, aMinf);
-        const aTkhd = fbox('tkhd', 0, 7, u32(0), u32(0), u32(2), u32(0), u32(durMovie),
-          u8(0, 0, 0, 0, 0, 0, 0, 0), u16(0), u16(0), u16(0x0100), u16(0), MATRIX, u32(0), u32(0));
-        aTrak = box('trak', aTkhd, aMdia);
-      }
-
-      const nextTrack = hasAudio ? 3 : 2;
-      const mvhd = fbox('mvhd', 0, 0, u32(0), u32(0), u32(1000), u32(durMovie), u32(0x00010000), u16(0x0100), u16(0),
-        u32(0), u32(0), MATRIX, u32(0), u32(0), u32(0), u32(0), u32(0), u32(0), u32(nextTrack));
-      const moov = hasAudio ? box('moov', mvhd, vTrak, aTrak) : box('moov', mvhd, vTrak);
-
+      const moov = assembleMoov({ width, height, description, samples, dataLen, vBase, audio, aSamples, aDataLen, aBase });
       return new Blob([ftyp, mdatHeader, ...data, ...aData, moov], { type: 'video/mp4' });
     },
   };
 }
 
-Object.assign(__x, { createMp4 });
+/**
+ * Muxer en streaming: escribe el MP4 directamente a `sink` (un fichero en disco)
+ * según llegan las muestras, sin retenerlas en RAM. Solo vídeo. Estructura:
+ * ftyp → mdat (con largesize de 64 bits: se reserva y se parchea al final) →
+ * moov. En memoria solo queda la metadata de cada muestra (tamaño, ts, clave).
+ *
+ * `sink` es asíncrono: { write(bytes, position?): Promise, close(): Promise,
+ * abort?(): Promise }. `abort` (opcional) descarta el fichero al cancelar. Sobre
+ * File System Access API se envuelve un FileSystemWritableFileStream.
+ *
+ * @param {{width:number,height:number,sink:{write:(b:Uint8Array,pos?:number)=>Promise<void>,close:()=>Promise<void>}}} o
+ */
+function createMp4Stream({ width, height, sink }) {
+  let description = null;
+  const samples = [];      // { size, key, ts }
+  let dataLen = 0;         // bytes de datos de vídeo escritos hasta ahora
+  const ftyp = ftypBox();
+  const mdatOffset = ftyp.length;          // dónde empieza el box mdat
+  const vBase = mdatOffset + 16;           // datos tras el header mdat de 64 bits
+  let writePos = 0;        // posición del próximo byte a escribir en el fichero
+  let chain = Promise.resolve(); // cola de escrituras serializadas, en orden
+  let writeErr = null;
+  let started = false;
+
+  // Encadena una escritura posicionada; captura el primer error para relanzarlo.
+  const enqueue = (bytes, pos) => {
+    const at = pos;
+    chain = chain.then(() => sink.write(bytes, at)).catch((e) => { if (!writeErr) writeErr = e; });
+    return chain;
+  };
+
+  // Cabecera: ftyp + header mdat con largesize provisional (se parchea al final).
+  const start = () => {
+    const mdatHeader = cat([u32(1), str('mdat'), u64(0)]); // size=1 → largesize de 64 bits
+    enqueue(ftyp, 0); writePos = ftyp.length;
+    enqueue(mdatHeader, writePos); writePos += mdatHeader.length; // = vBase
+    started = true;
+  };
+
+  return {
+    setDescription(d) { description = new Uint8Array(d instanceof ArrayBuffer ? d : d.buffer || d); },
+    addSample(bytes, isKey, tsMicros) {
+      if (writeErr) throw writeErr;
+      if (!started) start();
+      const b = bytes instanceof Uint8Array ? bytes.slice() : new Uint8Array(bytes); // copia: el buffer del chunk se reutiliza
+      samples.push({ size: b.length, key: !!isKey, ts: Math.round(tsMicros * VTS / 1e6) });
+      enqueue(b, writePos); writePos += b.length; dataLen += b.length;
+    },
+    /** Espera a que se vacíe la cola de escrituras (backpressure). */
+    async drain() { await chain; if (writeErr) throw writeErr; },
+    /** Cierra el fichero tras escribir moov y parchear el tamaño de mdat. */
+    async finalize() {
+      if (!started || !description || !samples.length) throw new Error('MP4 sin datos.');
+      const mdatSize = 16 + dataLen; // header de 64 bits + datos
+      const moov = assembleMoov({ width, height, description, samples, dataLen, vBase });
+      enqueue(moov, writePos); writePos += moov.length;
+      enqueue(u64(mdatSize), mdatOffset + 8); // parchea el largesize del mdat
+      await chain;
+      if (writeErr) throw writeErr;
+      await sink.close();
+    },
+    /** Aborta: descarta el fichero (sink.abort() si existe) o, si no, lo cierra
+     *  como esté para que el llamante lo elimine. */
+    async abort() {
+      try { await chain; } catch { /* ignora */ }
+      try { if (sink.abort) await sink.abort(); else await sink.close(); } catch { /* ignora */ }
+    },
+  };
+}
+
+Object.assign(__x, { createMp4, createMp4Stream });
 
 };
 
@@ -9120,6 +9616,9 @@ async function buildScene3D(model, opts = {}) {
 
   // altura de mundo (m, con exageración) para una cota MSL del terreno
   const groundY = (lat, lon) => (heightAt(lat, lon) - base) * VE;
+  // altura de mundo del suelo en un punto (x,z) del mundo, invirtiendo X()/Z().
+  // Sirve para apoyar la sombra del dron sobre el terreno del punto desplazado.
+  const groundAtXZ = (x, z) => groundY(lat0 - z / MPD_LAT, lon0 + x / mpdLon);
 
   const terrain = {
     grid: rgrid, base,
@@ -9208,7 +9707,7 @@ async function buildScene3D(model, opts = {}) {
       x0: X(b.west), x1: X(b.east), z0: Z(b.north), z1: Z(b.south),
       spanX: X(b.east) - X(b.west), spanZ: Z(b.south) - Z(b.north),
     },
-    terrain, texture, water, track, droneAt, relMax, sun,
+    terrain, texture, water, track, droneAt, relMax, sun, groundAtXZ,
     keypoints: keypoints(model).map((k) => ({ key: k.key, t: k.t, x: X(k.lon), y: worldY(k.x.rel ?? 0), z: Z(k.lat) })),
     takeoffXZ: { x: X(model.takeoff[1]), z: Z(model.takeoff[0]), y: worldY(0) },
     duration: model.meta.dur || (S.length ? S[S.length - 1].t : 0),
