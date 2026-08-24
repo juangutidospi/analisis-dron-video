@@ -44,6 +44,27 @@ canvas:active { cursor: grabbing; }
 .v3d-btn.on { background: var(--color-accent); border-color: transparent; color: #fff; }
 #speed { min-width: 40px; font-variant-numeric: tabular-nums; }
 .v3d-btn svg { width: 15px; height: 15px; }
+#settings { padding: 0 10px; }
+
+/* panel de ajustes (capas del render) */
+.v3d-opts {
+  position: absolute; right: 12px; bottom: 64px; z-index: 7;
+  min-width: 200px; padding: 10px 12px; border-radius: 14px;
+  background: rgba(12,17,26,.82); backdrop-filter: blur(14px);
+  border: 1px solid rgba(255,255,255,.12); box-shadow: 0 10px 30px rgba(0,0,0,.4);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.v3d-opts[hidden] { display: none; }
+.v3d-opts-t {
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: rgba(238,242,248,.55); margin: 2px 2px 6px;
+}
+.v3d-opts label {
+  display: flex; align-items: center; gap: 9px; cursor: pointer;
+  padding: 6px 6px; border-radius: 8px; color: #eef2f8; font-size: 13px;
+}
+.v3d-opts label:hover { background: rgba(255,255,255,.07); }
+.v3d-opts input { width: 15px; height: 15px; accent-color: var(--color-accent); cursor: pointer; }
 .v3d-prog { flex: 1; height: 6px; border-radius: 100px; background: rgba(255,255,255,.16); position: relative; cursor: pointer; }
 .v3d-prog-f { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 100px; background: linear-gradient(90deg, var(--color-accent), var(--color-violet)); }
 .v3d-time { flex: none; font-size: 12px; color: #c9d2e2; font-variant-numeric: tabular-nums; min-width: 76px; text-align: right; }

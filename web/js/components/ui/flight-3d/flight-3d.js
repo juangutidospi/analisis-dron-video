@@ -14,6 +14,9 @@ const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart
 export class Flight3D extends DjiElement {
   static styles = [styles];
 
+  /** Capas visibles del render (las controla el panel de ajustes). */
+  _show = { track: true, kp: true, places: true, water: true, hud: true };
+
   /** @param {{model:object}} v */
   set flight(v) { this._flight = v; if (this.isConnected) this._paint(); }
   get flight() { return this._flight; }
@@ -37,6 +40,15 @@ export class Flight3D extends DjiElement {
           <div class="hud-item"><span class="hud-v" id="hudAlt">0</span><span class="hud-u">m</span><span class="hud-l">${t('v3d.hud.alt')}</span></div>
           <div class="hud-item"><span class="hud-v" id="hudSpd">0</span><span class="hud-u">km/h</span><span class="hud-l">${t('v3d.hud.spd')}</span></div>
           <div class="hud-item"><span class="hud-v" id="hudVs">0</span><span class="hud-u">m/s</span><span class="hud-l">${t('v3d.hud.vs')}</span></div>
+          <div class="hud-item"><span class="hud-v" id="hudFar">0</span><span class="hud-u">m</span><span class="hud-l">${t('v3d.hud.far')}</span></div>
+        </div>
+        <div class="v3d-opts" id="opts" hidden>
+          <div class="v3d-opts-t">${t('v3d.opts.title')}</div>
+          <label><input type="checkbox" data-k="track" checked><span>${t('v3d.opt.track')}</span></label>
+          <label><input type="checkbox" data-k="kp" checked><span>${t('v3d.opt.kp')}</span></label>
+          <label><input type="checkbox" data-k="places" checked><span>${t('v3d.opt.places')}</span></label>
+          <label><input type="checkbox" data-k="water" checked><span>${t('v3d.opt.water')}</span></label>
+          <label><input type="checkbox" data-k="hud" checked><span>${t('v3d.opt.hud')}</span></label>
         </div>
         <div class="v3d-bar" hidden>
           <button class="v3d-btn primary" id="play" type="button">
@@ -51,6 +63,9 @@ export class Flight3D extends DjiElement {
           </button>
           <button class="v3d-btn" id="reset" type="button" title="${t('v3d.reset')}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 4v4h4"/></svg>
+          </button>
+          <button class="v3d-btn" id="settings" type="button" title="${t('v3d.settings')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
         </div>
       </div>`;
@@ -123,8 +138,10 @@ export class Flight3D extends DjiElement {
     this._terrainMesh = this._buildTerrain(data);
     scene.add(this._terrainMesh);
     scene.add(this._buildSkirt(data)); // faldón: bloque de tierra, no lámina flotante
-    scene.add(this._buildTrack(data));
-    scene.add(this._buildLabels(data)); // rótulos 3D de los hitos
+    this._trackGroup = this._buildTrack(data);
+    scene.add(this._trackGroup);
+    this._kpGroup = this._buildLabels(data); // rótulos 3D de los hitos
+    scene.add(this._kpGroup);
     this._drone = this._buildDrone(data);
     scene.add(this._drone);
     this._shadow = this._buildShadow();
@@ -594,28 +611,33 @@ export class Flight3D extends DjiElement {
    *  lejos del terreno). Se construyen de forma perezosa cuando Overpass responde. */
   _buildHorizonLabels(pois) {
     if (!pois || !pois.length || !this._localScene) return;
-    const grp = new window.THREE.Group(), up = this._span * 0.02;
+    const THREE = window.THREE, up = this._span * 0.02;
+    // dos grupos para poder mostrar/ocultar el agua aparte de pueblos/cimas
+    const placesG = new THREE.Group(), waterG = new THREE.Group();
     for (const p of pois) {
       const text = p.kind === 'peak' && p.ele ? `${p.name} · ${Math.round(p.ele)} m` : p.name;
       const sp = this._horizonSprite(text, p.kind);
       sp.position.set(p.x, p.y + up, p.z);
       const hh = 0.04; sp.scale.set(hh * sp.userData.ar, hh, 1);
-      grp.add(sp);
-      this._labelItems.push({ sprite: sp, prio: 1 });
+      (p.kind === 'water' ? waterG : placesG).add(sp);
+      this._labelItems.push({ sprite: sp, prio: 1, cat: p.kind === 'water' ? 'water' : 'places' });
     }
-    this._localScene.add(grp);
-    this._horizonGroup = grp;
+    this._localScene.add(placesG); this._localScene.add(waterG);
+    this._horizonPlacesGroup = placesG; this._horizonWaterGroup = waterG;
+    this._applyShow(); // respeta el estado actual del panel de ajustes
   }
 
   /** Oculta los rótulos que se solapan en pantalla (prioriza los cercanos a la cámara). */
   _declutterLabels() {
     const items = this._labelItems; if (!items || !items.length) return;
     const cam = this._cam, thx = 0.17, thy = 0.075;
-    const arr = items.map((it) => {
-      const p = it.sprite.position.clone(), d = p.distanceTo(cam.position);
-      const ndc = p.project(cam);
-      return { it, x: ndc.x, y: ndc.y, front: ndc.z < 1, d, prio: it.prio || 0 };
-    }).sort((a, b) => (a.prio - b.prio) || (a.d - b.d)); // hitos primero; luego más cercano
+    const arr = items
+      .filter((it) => it.sprite.parent && it.sprite.parent.visible) // ignora capas ocultas por el panel
+      .map((it) => {
+        const p = it.sprite.position.clone(), d = p.distanceTo(cam.position);
+        const ndc = p.project(cam);
+        return { it, x: ndc.x, y: ndc.y, front: ndc.z < 1, d, prio: it.prio || 0 };
+      }).sort((a, b) => (a.prio - b.prio) || (a.d - b.d)); // hitos primero; luego más cercano
     const shown = [];
     for (const a of arr) {
       let hide = !a.front;
@@ -623,6 +645,16 @@ export class Flight3D extends DjiElement {
       a.it.sprite.visible = !hide; if (a.it.line) a.it.line.visible = !hide;
       if (!hide) shown.push(a);
     }
+  }
+
+  /** Aplica el estado del panel de ajustes: muestra/oculta cada capa del render. */
+  _applyShow() {
+    const s = this._show;
+    if (this._trackGroup) this._trackGroup.visible = s.track;
+    if (this._kpGroup) this._kpGroup.visible = s.kp;
+    if (this._horizonPlacesGroup) this._horizonPlacesGroup.visible = s.places;
+    if (this._horizonWaterGroup) this._horizonWaterGroup.visible = s.water;
+    const hud = this.$('#hud'); if (hud) hud.hidden = !(s.hud && this._playing);
   }
 
   /** Sombra blanda del dron proyectada en el suelo (mancha oscura difusa). */
@@ -767,6 +799,9 @@ export class Flight3D extends DjiElement {
       this.$('#hudSpd').textContent = Math.round((d.hs || 0) * 3.6);
       const vs = d.vs || 0;
       this.$('#hudVs').textContent = (vs >= 0 ? '+' : '') + vs.toFixed(1);
+      // alejamiento: distancia horizontal (m) al punto de despegue
+      const tk = this._scene.takeoffXZ;
+      this.$('#hudFar').textContent = Math.round(Math.hypot(d.x - tk.x, d.z - tk.z));
     }
   }
 
@@ -879,6 +914,15 @@ export class Flight3D extends DjiElement {
     this.on(this.$('#cine'), 'click', () => this._toggleCine());
     this.on(this.$('#startBtn'), 'click', () => this._runIntro());
 
+    // panel de ajustes: abre/cierra y aplica las casillas de capas
+    const opts = this.$('#opts'), settings = this.$('#settings');
+    this.on(settings, 'click', (e) => { e.stopPropagation(); opts.hidden = !opts.hidden; settings.classList.toggle('on', !opts.hidden); });
+    for (const cb of this.$$('#opts input[type=checkbox]')) {
+      cb.checked = this._show[cb.dataset.k] !== false;
+      this.on(cb, 'change', () => { this._show[cb.dataset.k] = cb.checked; this._applyShow(); });
+    }
+    this._applyShow();
+
     this._cineMode = this._cineMode !== false; // por defecto activado
     this.$('#cine').classList.toggle('on', this._cineMode);
     this._speed = this._speed || 1;
@@ -954,7 +998,7 @@ export class Flight3D extends DjiElement {
     this._orbit.r = this._orbit.max * 0.3; this._orbit.phi = 1.0;
     this._chaseTargetR = this._orbit.max * 0.055; this._introStart = performance.now();
     this._director = null; this._cHead = null; // reinicia el director de cámara
-    this.$('#hud').hidden = false;
+    this.$('#hud').hidden = !this._show.hud; // respeta el panel de ajustes
     if (this._trail) this._trail.visible = true;
     this._setPlayIcon(true);
   }
@@ -1044,7 +1088,8 @@ export class Flight3D extends DjiElement {
     this._introT0 = null; this._introPlayed = false; this._globe = null;
     if (this._renderer) { this._renderer.dispose(); this._renderer = null; }
     this._three = null; this._localScene = null; this._scene = null; this._time = null; this._look = null;
-    this._labelItems = null; this._horizonGroup = null; this._terrainMesh = null; this._ray = null; this._home = null;
+    this._labelItems = null; this._terrainMesh = null; this._ray = null; this._home = null;
+    this._trackGroup = null; this._kpGroup = null; this._horizonPlacesGroup = null; this._horizonWaterGroup = null;
   }
 }
 
