@@ -45,9 +45,14 @@ export function parseSRT(txt) {
     const sh = body.match(/shutter: 1\/([\d.]+)/);
     const cm = body.match(/color_md: ?([^\],]+)/);
     const eis = body.match(/eis:\s*([^\],]+)/);
+    // Antes del fix GPS, DJI escribe latitude/longitude = 0.000000: no es una
+    // posición real (cae en el golfo de Guinea), así que la tratamos como sin dato
+    // para que no contamine takeoff, alejamiento, recorrido ni la trayectoria.
+    let lat = num(body, 'latitude'), lon = num(body, 'longitude');
+    if (lat === 0 && lon === 0) { lat = null; lon = null; }
     rows.push({
       cnt: +m[1], ts: m[2],
-      lat: num(body, 'latitude'), lon: num(body, 'longitude'),
+      lat, lon,
       rel: num(body, 'rel_alt'), ab: num(body, 'abs_alt'),
       iso: num(body, 'iso'), ct: num(body, 'ct'), ev: num(body, 'ev'), fnum: num(body, 'fnum'),
       shutter: sh ? sh[1].slice(0, -2) : null,
@@ -101,9 +106,11 @@ export function parseSRT(txt) {
     }
   }
 
-  const valid = rows.filter(r => r.lat);
-  const lat0 = rows[0].lat, lon0 = rows[0].lon;
-  const maxfar = Math.max(...valid.map(r => hav(lat0, lon0, r.lat, r.lon)));
+  // origen del vuelo = primer fotograma con GPS válido (no el frame 0, que puede
+  // ser previo al fix); el alejamiento y el despegue se miden desde ahí.
+  const valid = rows.filter(r => r.lat != null);
+  const lat0 = valid.length ? valid[0].lat : null, lon0 = valid.length ? valid[0].lon : null;
+  const maxfar = valid.length ? Math.max(...valid.map(r => hav(lat0, lon0, r.lat, r.lon))) : 0;
 
   const rng = (k, src = valid) => {
     const v = src.map(r => r[k]).filter(x => x != null);
@@ -130,8 +137,11 @@ export function parseSRT(txt) {
       vspeed: [vspeeds.length ? Math.min(...vspeeds) : 0, vspeeds.length ? Math.max(...vspeeds) : 0],
     },
     dist: Math.round(dist), maxfar: Math.round(maxfar),
-    takeoff: [lat0, lon0], land: [rows[rows.length - 1].lat, rows[rows.length - 1].lon],
-    center: [valid.reduce((s, r) => s + r.lat, 0) / valid.length, valid.reduce((s, r) => s + r.lon, 0) / valid.length],
+    takeoff: [lat0, lon0],
+    land: valid.length ? [valid[valid.length - 1].lat, valid[valid.length - 1].lon] : [null, null],
+    center: valid.length
+      ? [valid.reduce((s, r) => s + r.lat, 0) / valid.length, valid.reduce((s, r) => s + r.lon, 0) / valid.length]
+      : [null, null],
     cam: {
       iso: isos, shutter: shs,
       fnum: uniq(rows.map(r => r.fnum)).sort((a, b) => a - b),

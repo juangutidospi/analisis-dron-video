@@ -535,6 +535,10 @@ const styles = css`
 canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
 canvas:active { cursor: grabbing; }
 
+/* pantalla completa: el contenedor llena la pantalla (sin aspect-ratio ni bordes) */
+.v3d:fullscreen { width: 100%; height: 100%; aspect-ratio: auto; border-radius: 0; border: none; }
+.v3d:fullscreen canvas { height: 100%; }
+
 /* estado de carga */
 .v3d.loading::after {
   content: ""; position: absolute; inset: 0; z-index: 4;
@@ -551,7 +555,7 @@ canvas:active { cursor: grabbing; }
 /* controles */
 .v3d-bar {
   position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 6;
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; row-gap: 8px;
   padding: 9px 12px; border-radius: 100px;
   background: rgba(12,17,26,.62); backdrop-filter: blur(12px);
   border: 1px solid rgba(255,255,255,.1);
@@ -569,6 +573,54 @@ canvas:active { cursor: grabbing; }
 .v3d-btn.on { background: var(--color-accent); border-color: transparent; color: #fff; }
 #speed { min-width: 40px; font-variant-numeric: tabular-nums; }
 .v3d-btn svg { width: 15px; height: 15px; }
+#settings, #export, #reset { padding: 0 10px; }
+
+/* panel de ajustes (capas del render) */
+.v3d-opts {
+  position: absolute; right: 12px; bottom: 64px; z-index: 7;
+  min-width: 200px; padding: 10px 12px; border-radius: 14px;
+  background: rgba(12,17,26,.82); backdrop-filter: blur(14px);
+  border: 1px solid rgba(255,255,255,.12); box-shadow: 0 10px 30px rgba(0,0,0,.4);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.v3d-opts[hidden] { display: none; }
+.v3d-opts-t {
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: rgba(238,242,248,.55); margin: 2px 2px 6px;
+}
+.v3d-opts label {
+  display: flex; align-items: center; gap: 9px; cursor: pointer;
+  padding: 6px 6px; border-radius: 8px; color: #eef2f8; font-size: 13px;
+}
+.v3d-opts label:hover { background: rgba(255,255,255,.07); }
+.v3d-opts input { width: 15px; height: 15px; accent-color: var(--color-accent); cursor: pointer; }
+
+/* overlay de progreso de la exportación de vídeo */
+.v3d-export {
+  position: absolute; inset: 0; z-index: 9; display: grid; place-items: center;
+  background: rgba(6,10,16,.55); backdrop-filter: blur(3px);
+}
+.v3d-export[hidden] { display: none; }
+.v3d-export-box {
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  padding: 22px 26px; border-radius: 16px; min-width: 240px;
+  background: rgba(12,17,26,.9); border: 1px solid rgba(255,255,255,.12);
+  box-shadow: 0 16px 40px rgba(0,0,0,.5);
+}
+.v3d-export-t { color: #eef2f8; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.v3d-export-t.err { color: #ff8f8f; }
+.v3d-export-bar { width: 220px; height: 7px; border-radius: 100px; background: rgba(255,255,255,.12); overflow: hidden; }
+.v3d-export-f { height: 100%; width: 0; background: var(--color-accent); transition: width .15s ease; }
+
+/* cartel de ayuda del modo vuelo libre */
+.v3d-free-hint {
+  position: absolute; left: 50%; bottom: 62px; transform: translateX(-50%); z-index: 7;
+  padding: 7px 14px; border-radius: 100px; white-space: nowrap;
+  background: rgba(12,17,26,.72); backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,.12); color: #eef2f8; font-size: 12px; font-weight: 500;
+}
+.v3d-free-hint[hidden] { display: none; }
+@media (max-width: 720px) { .v3d-free-hint { white-space: normal; max-width: 90%; text-align: center; } }
 .v3d-prog { flex: 1; height: 6px; border-radius: 100px; background: rgba(255,255,255,.16); position: relative; cursor: pointer; }
 .v3d-prog-f { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 100px; background: linear-gradient(90deg, var(--color-accent), var(--color-violet)); }
 .v3d-time { flex: none; font-size: 12px; color: #c9d2e2; font-variant-numeric: tabular-nums; min-width: 76px; text-align: right; }
@@ -646,6 +698,8 @@ __m["js/components/ui/flight-3d/flight-3d.js"] = function (__x, __req) {
 const { DjiElement } = __req("js/core/DjiElement.js");
 const { t } = __req("js/i18n/index.js");
 const { buildScene3D, altColor } = __req("js/scene-3d.js");
+const { createMp4Recorder, canExportVideo } = __req("js/flyover-export.js");
+const { downloadBlob } = __req("js/exports.js");
 const { styles } = __req("js/components/ui/flight-3d/flight-3d.css.js");
 
 const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -658,6 +712,18 @@ const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart
  */
 class Flight3D extends DjiElement {
   static styles = [styles];
+
+  /** Capas visibles del render (las controla el panel de ajustes). */
+  _show = { track: true, kp: true, places: true, water: true, hud: true };
+
+  /** Estado del modo vuelo libre (WASD + ratón). null u {on:false} = desactivado. */
+  _free = null;
+
+  /** Estado del modo pilotar el dron (WASD mueve el dron, la cámara lo sigue). */
+  _pilot = null;
+
+  /** Velocidad de vuelo (modos libre/pilotar): 0=lenta, 1=media, 2=rápida. */
+  _flySpeedIdx = 0;
 
   /** @param {{model:object}} v */
   set flight(v) { this._flight = v; if (this.isConnected) this._paint(); }
@@ -682,6 +748,15 @@ class Flight3D extends DjiElement {
           <div class="hud-item"><span class="hud-v" id="hudAlt">0</span><span class="hud-u">m</span><span class="hud-l">${t('v3d.hud.alt')}</span></div>
           <div class="hud-item"><span class="hud-v" id="hudSpd">0</span><span class="hud-u">km/h</span><span class="hud-l">${t('v3d.hud.spd')}</span></div>
           <div class="hud-item"><span class="hud-v" id="hudVs">0</span><span class="hud-u">m/s</span><span class="hud-l">${t('v3d.hud.vs')}</span></div>
+          <div class="hud-item"><span class="hud-v" id="hudFar">0</span><span class="hud-u">m</span><span class="hud-l">${t('v3d.hud.far')}</span></div>
+        </div>
+        <div class="v3d-opts" id="opts" hidden>
+          <div class="v3d-opts-t">${t('v3d.opts.title')}</div>
+          <label><input type="checkbox" data-k="track" checked><span>${t('v3d.opt.track')}</span></label>
+          <label><input type="checkbox" data-k="kp" checked><span>${t('v3d.opt.kp')}</span></label>
+          <label><input type="checkbox" data-k="places" checked><span>${t('v3d.opt.places')}</span></label>
+          <label><input type="checkbox" data-k="water" checked><span>${t('v3d.opt.water')}</span></label>
+          <label><input type="checkbox" data-k="hud" checked><span>${t('v3d.opt.hud')}</span></label>
         </div>
         <div class="v3d-bar" hidden>
           <button class="v3d-btn primary" id="play" type="button">
@@ -694,10 +769,36 @@ class Flight3D extends DjiElement {
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h3l1 2H5l-1-2zm5 0h3l1 2h-3l-1-2zm5 0h3l1 2h-3l-1-2zM3 8h18v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8z"/></svg>
             <span>${t('v3d.cine.short')}</span>
           </button>
+          <button class="v3d-btn" id="flyspeed" type="button" title="${t('v3d.flyspeed')}">${t('v3d.flyspeed.med')}</button>
+          <button class="v3d-btn" id="free" type="button" title="${t('v3d.free')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l3 3-3 3-3-3 3-3zm0 12l3 3-3 3-3-3 3-3zM3 12l3-3 3 3-3 3-3-3zm12 0l3-3 3 3-3 3-3-3z"/></svg>
+            <span>${t('v3d.free.short')}</span>
+          </button>
+          <button class="v3d-btn" id="pilot" type="button" title="${t('v3d.pilot')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2.2"/><circle cx="5.5" cy="5.5" r="2.6"/><circle cx="18.5" cy="5.5" r="2.6"/><circle cx="5.5" cy="18.5" r="2.6"/><circle cx="18.5" cy="18.5" r="2.6"/><path d="M7 7l3.4 3.4M17 7l-3.4 3.4M7 17l3.4-3.4M17 17l-3.4-3.4"/></svg>
+            <span>${t('v3d.pilot.short')}</span>
+          </button>
           <button class="v3d-btn" id="reset" type="button" title="${t('v3d.reset')}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 4v4h4"/></svg>
           </button>
+          <button class="v3d-btn" id="settings" type="button" title="${t('v3d.settings')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+          <button class="v3d-btn" id="export" type="button" title="${t('v3d.export')}" aria-label="${t('v3d.export.short')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M8 11l4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          </button>
+          <button class="v3d-btn" id="fs" type="button" title="${t('v3d.fullscreen')}" aria-label="${t('v3d.fullscreen')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+          </button>
         </div>
+        <div class="v3d-export" id="exp" hidden>
+          <div class="v3d-export-box">
+            <div class="v3d-export-t" id="expT">${t('v3d.export.running')} 0%</div>
+            <div class="v3d-export-bar"><div class="v3d-export-f" id="expF"></div></div>
+            <button class="v3d-btn" id="expCancel" type="button">${t('v3d.export.cancel')}</button>
+          </div>
+        </div>
+        <div class="v3d-free-hint" id="freeHint" hidden>${t('v3d.free.hint')}</div>
       </div>`;
   }
 
@@ -715,9 +816,24 @@ class Flight3D extends DjiElement {
     } else this._build();
   }
 
+  /** Tamaño máximo de textura de la GPU. Se consulta UNA sola vez (con un contexto
+   *  WebGL temporal que se libera enseguida) y se cachea, para no ir agotando los
+   *  contextos del navegador en cada reconstrucción. */
+  static _maxTextureSize() {
+    if (Flight3D._maxTex) return Flight3D._maxTex;
+    let m = 8192;
+    try {
+      const c = document.createElement('canvas');
+      const gl = c.getContext('webgl2') || c.getContext('webgl');
+      if (gl) { m = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 8192; gl.getExtension('WEBGL_lose_context')?.loseContext(); }
+    } catch { /* usa 8192 */ }
+    Flight3D._maxTex = m;
+    return m;
+  }
+
   _build() {
     const token = (this._token = Symbol('build'));
-    buildScene3D(this._flight.model).then((scene) => {
+    buildScene3D(this._flight.model, { maxTex: Flight3D._maxTextureSize() }).then((scene) => {
       if (token !== this._token || !this.isConnected) return;
       this._scene = scene;
       this._initThree(scene);
@@ -768,8 +884,10 @@ class Flight3D extends DjiElement {
     this._terrainMesh = this._buildTerrain(data);
     scene.add(this._terrainMesh);
     scene.add(this._buildSkirt(data)); // faldón: bloque de tierra, no lámina flotante
-    scene.add(this._buildTrack(data));
-    scene.add(this._buildLabels(data)); // rótulos 3D de los hitos
+    this._trackGroup = this._buildTrack(data);
+    scene.add(this._trackGroup);
+    this._kpGroup = this._buildLabels(data); // rótulos 3D de los hitos
+    scene.add(this._kpGroup);
     this._drone = this._buildDrone(data);
     scene.add(this._drone);
     this._shadow = this._buildShadow();
@@ -1105,15 +1223,14 @@ class Flight3D extends DjiElement {
     const hatch = new THREE.LineSegments(hg, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending }));
     grp.add(hatch);
 
-    // 3) CINTA superior: tubo naranja brillante + halo aditivo (bloom)
-    const curve = new THREE.CatmullRomCurve3(T.map((p) => new THREE.Vector3(p.x, p.y, p.z)));
-    const segs = Math.min(900, Math.max(90, T.length * 2)), radial = 10;
-    const tubeGeo = new THREE.TubeGeometry(curve, segs, radius, radial, false);
-    const tube = new THREE.Mesh(tubeGeo, new THREE.MeshBasicMaterial({ color: 0xffa24d }));
-    grp.add(tube);
-    const haloGeo = new THREE.TubeGeometry(curve, segs, radius * 2.6, radial, false);
-    const halo = new THREE.Mesh(haloGeo, new THREE.MeshBasicMaterial({ color: 0xff7d1a, transparent: true, opacity: 0.32, depthWrite: false, blending: THREE.AdditiveBlending }));
-    grp.add(halo);
+    // 3) LÍNEA superior fina que marca el recorrido (sustituye al "tubo" grueso
+    //    naranja + halo, que tapaba el top de la cortina)
+    const lpos = new Float32Array(cn * 3);
+    for (let i = 0; i < cn; i++) { const p = T[i]; lpos.set([p.x, p.y, p.z], i * 3); }
+    const lg = new THREE.BufferGeometry();
+    lg.setAttribute('position', new THREE.BufferAttribute(lpos, 3));
+    const line = new THREE.Line(lg, new THREE.LineBasicMaterial({ color: 0xffb060, transparent: true, opacity: 0.95, depthWrite: false }));
+    grp.add(line);
 
     // 4) marcador de despegue (aro luminoso)
     const tk = new THREE.Mesh(new THREE.CylinderGeometry(radius * 1.8, radius * 1.8, radius * 0.6, 24),
@@ -1122,7 +1239,7 @@ class Flight3D extends DjiElement {
     grp.add(tk);
 
     // datos para el revelado progresivo durante el sobrevuelo
-    this._trackReveal = { curtain, hatch, tube, halo, cn, segs, radial, times: T.map((p) => p.t) };
+    this._trackReveal = { curtain, hatch, line, cn, times: T.map((p) => p.t) };
     return grp;
   }
 
@@ -1130,18 +1247,15 @@ class Flight3D extends DjiElement {
   _revealTrack(time) {
     const R = this._trackReveal; if (!R) return;
     let k = 1; while (k < R.times.length && R.times[k] <= time) k++;
-    const f = Math.max(0.002, Math.min(1, k / (R.times.length - 1)));
     R.curtain.geometry.setDrawRange(0, Math.max(0, k - 1) * 6);
     R.hatch.geometry.setDrawRange(0, k * 2);
-    const tc = Math.max(6, Math.floor(R.segs * f) * R.radial * 6);
-    R.tube.geometry.setDrawRange(0, tc);
-    R.halo.geometry.setDrawRange(0, tc);
+    R.line.geometry.setDrawRange(0, k);
   }
 
   /** Muestra el recorrido completo (fuera de la reproducción). */
   _revealTrackFull() {
     const R = this._trackReveal; if (!R) return;
-    for (const m of [R.curtain, R.hatch, R.tube, R.halo]) m.geometry.setDrawRange(0, Infinity);
+    for (const m of [R.curtain, R.hatch, R.line]) m.geometry.setDrawRange(0, Infinity);
   }
 
   /** Etiqueta flotante elegante (pastilla fina translúcida con sombra) que mira a
@@ -1186,9 +1300,10 @@ class Flight3D extends DjiElement {
   _buildLabels(data) {
     const THREE = window.THREE, grp = new THREE.Group(), s = this._span;
     this._labelItems = [];
+    this._kpMarks = []; // posición/instante de cada hito (para saltar la cámara al hacer click)
     if (!data.keypoints) return grp;
     for (const kp of data.keypoints) {
-      const up = s * 0.06;
+      const up = s * 0.03; // línea guía más corta: los rótulos no flotan tan alto
       const sp = this._labelSprite(t('kp.' + kp.key));
       sp.position.set(kp.x, kp.y + up, kp.z);
       const hh = 0.05; sp.scale.set(hh * sp.userData.ar, hh, 1); // tamaño constante en pantalla
@@ -1199,6 +1314,7 @@ class Flight3D extends DjiElement {
       const dot = this._dotSprite(); // marcador fino de tamaño constante
       dot.position.set(kp.x, kp.y, kp.z); dot.scale.set(0.016, 0.016, 1); grp.add(dot);
       this._labelItems.push({ sprite: sp, line, prio: 0 }); // los hitos ganan al horizonte
+      this._kpMarks.push({ x: kp.x, y: kp.y, z: kp.z, t: kp.t, key: kp.key, sprite: sp });
     }
     return grp;
   }
@@ -1243,28 +1359,33 @@ class Flight3D extends DjiElement {
    *  lejos del terreno). Se construyen de forma perezosa cuando Overpass responde. */
   _buildHorizonLabels(pois) {
     if (!pois || !pois.length || !this._localScene) return;
-    const grp = new window.THREE.Group(), up = this._span * 0.02;
+    const THREE = window.THREE, up = this._span * 0.02;
+    // dos grupos para poder mostrar/ocultar el agua aparte de pueblos/cimas
+    const placesG = new THREE.Group(), waterG = new THREE.Group();
     for (const p of pois) {
       const text = p.kind === 'peak' && p.ele ? `${p.name} · ${Math.round(p.ele)} m` : p.name;
       const sp = this._horizonSprite(text, p.kind);
       sp.position.set(p.x, p.y + up, p.z);
       const hh = 0.04; sp.scale.set(hh * sp.userData.ar, hh, 1);
-      grp.add(sp);
-      this._labelItems.push({ sprite: sp, prio: 1 });
+      (p.kind === 'water' ? waterG : placesG).add(sp);
+      this._labelItems.push({ sprite: sp, prio: 1, cat: p.kind === 'water' ? 'water' : 'places' });
     }
-    this._localScene.add(grp);
-    this._horizonGroup = grp;
+    this._localScene.add(placesG); this._localScene.add(waterG);
+    this._horizonPlacesGroup = placesG; this._horizonWaterGroup = waterG;
+    this._applyShow(); // respeta el estado actual del panel de ajustes
   }
 
   /** Oculta los rótulos que se solapan en pantalla (prioriza los cercanos a la cámara). */
   _declutterLabels() {
     const items = this._labelItems; if (!items || !items.length) return;
     const cam = this._cam, thx = 0.17, thy = 0.075;
-    const arr = items.map((it) => {
-      const p = it.sprite.position.clone(), d = p.distanceTo(cam.position);
-      const ndc = p.project(cam);
-      return { it, x: ndc.x, y: ndc.y, front: ndc.z < 1, d, prio: it.prio || 0 };
-    }).sort((a, b) => (a.prio - b.prio) || (a.d - b.d)); // hitos primero; luego más cercano
+    const arr = items
+      .filter((it) => it.sprite.parent && it.sprite.parent.visible) // ignora capas ocultas por el panel
+      .map((it) => {
+        const p = it.sprite.position.clone(), d = p.distanceTo(cam.position);
+        const ndc = p.project(cam);
+        return { it, x: ndc.x, y: ndc.y, front: ndc.z < 1, d, prio: it.prio || 0 };
+      }).sort((a, b) => (a.prio - b.prio) || (a.d - b.d)); // hitos primero; luego más cercano
     const shown = [];
     for (const a of arr) {
       let hide = !a.front;
@@ -1272,6 +1393,16 @@ class Flight3D extends DjiElement {
       a.it.sprite.visible = !hide; if (a.it.line) a.it.line.visible = !hide;
       if (!hide) shown.push(a);
     }
+  }
+
+  /** Aplica el estado del panel de ajustes: muestra/oculta cada capa del render. */
+  _applyShow() {
+    const s = this._show;
+    if (this._trackGroup) this._trackGroup.visible = s.track;
+    if (this._kpGroup) this._kpGroup.visible = s.kp;
+    if (this._horizonPlacesGroup) this._horizonPlacesGroup.visible = s.places;
+    if (this._horizonWaterGroup) this._horizonWaterGroup.visible = s.water;
+    const hud = this.$('#hud'); if (hud) hud.hidden = !(s.hud && this._playing);
   }
 
   /** Sombra blanda del dron proyectada en el suelo (mancha oscura difusa). */
@@ -1416,6 +1547,9 @@ class Flight3D extends DjiElement {
       this.$('#hudSpd').textContent = Math.round((d.hs || 0) * 3.6);
       const vs = d.vs || 0;
       this.$('#hudVs').textContent = (vs >= 0 ? '+' : '') + vs.toFixed(1);
+      // alejamiento: distancia horizontal (m) al punto de despegue
+      const tk = this._scene.takeoffXZ;
+      this.$('#hudFar').textContent = Math.round(Math.hypot(d.x - tk.x, d.z - tk.z));
     }
   }
 
@@ -1453,6 +1587,232 @@ class Flight3D extends DjiElement {
     return ray.ray.intersectPlane(plane, p) ? p : null;
   }
 
+  /** Click limpio: si cae cerca de un hito (su punto o su rótulo), lleva la cámara
+   *  a ese hito. Umbral en píxeles, probando el marcador y la píldora. */
+  _clickKeypoint(e) {
+    const marks = this._kpMarks; if (!marks || !marks.length || !this._cam || this._three !== this._localScene) return;
+    const canvas = this.$('#cv'), rect = canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    const v = new window.THREE.Vector3();
+    let best = null, bestD = 42; // umbral (px)
+    for (const m of marks) {
+      for (const q of [[m.x, m.y, m.z], [m.sprite.position.x, m.sprite.position.y, m.sprite.position.z]]) {
+        v.set(q[0], q[1], q[2]).project(this._cam);
+        if (v.z > 1) continue; // detrás de la cámara
+        const sx = (v.x * 0.5 + 0.5) * rect.width, sy = (-v.y * 0.5 + 0.5) * rect.height;
+        const d = Math.hypot(sx - px, sy - py);
+        if (d < bestD) { bestD = d; best = m; }
+      }
+    }
+    if (best) this._focusKeypoint(best);
+  }
+
+  /** Coloca el dron en el instante del hito y acerca la cámara a él con una
+   *  transición suave (tween que avanza el bucle). */
+  _focusKeypoint(mark) {
+    if (this._playing) this._stopFlyover();
+    this._time = mark.t; this._placeDrone(mark.t); this._updateTime(mark.t); this._revealTrackFull(); this._look = null;
+    const o = this._orbit;
+    this._camTween = {
+      t0: performance.now(), dur: 850,
+      fromT: this._target.clone(), toT: new window.THREE.Vector3(mark.x, mark.y, mark.z),
+      fromR: o.r, toR: Math.max(o.min, this._span * 0.22),
+      fromPhi: o.phi, toPhi: Math.min(1.15, Math.max(0.7, o.phi)),
+    };
+  }
+
+  /** Avanza el tween de cámara hacia el hito (ease-in-out). */
+  _stepCamTween() {
+    const T = this._camTween, p = Math.min(1, (performance.now() - T.t0) / T.dur), e = p * p * (3 - 2 * p);
+    this._target.lerpVectors(T.fromT, T.toT, e);
+    const o = this._orbit;
+    o.r = T.fromR + (T.toR - T.fromR) * e;
+    o.phi = T.fromPhi + (T.toPhi - T.fromPhi) * e;
+    this._applyOrbit();
+    if (p >= 1) this._camTween = null;
+  }
+
+  /* ---------- modo vuelo libre (WASD + ratón) ---------- */
+
+  /** Activa/desactiva el vuelo libre. Al entrar toma la posición y orientación
+   *  actuales de la cámara; al salir reconstruye la órbita para no dar un salto. */
+  _toggleFree() {
+    const on = !(this._free && this._free.on);
+    const THREE = window.THREE, dir = new THREE.Vector3();
+    this._cam.getWorldDirection(dir);
+    if (on) {
+      this._stopFlyover(); this._camTween = null;
+      if (this._cineMode) { this._cineMode = false; this.$('#cine').classList.remove('on'); }
+      const yaw = Math.atan2(dir.x, -dir.z), pitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
+      this._free = { on: true, pos: this._cam.position.clone(), yaw, pitch, keys: new Set(), speedMul: 1, last: performance.now() };
+    } else {
+      // reconstruye la órbita mirando a un punto por delante (sin saltos)
+      const tp = this._cam.position.clone().addScaledVector(dir, this._span * 0.4);
+      this._target.copy(tp);
+      const off = this._cam.position.clone().sub(tp), r = off.length() || 1;
+      this._orbit.r = Math.max(this._orbit.min, Math.min(this._orbit.max, r));
+      this._orbit.phi = Math.acos(Math.max(-1, Math.min(1, off.y / r)));
+      this._orbit.theta = Math.atan2(off.z, off.x);
+      this._free = { on: false }; this._look = null; this._applyOrbit();
+    }
+    this.$('#free').classList.toggle('on', on);
+    this._setHint(on ? 'v3d.free.hint' : null);
+  }
+
+  /** Muestra/oculta el cartel de ayuda (controles) con el texto de la clave i18n. */
+  _setHint(key) { const h = this.$('#freeHint'); if (!h) return; if (key) { h.textContent = t(key); h.hidden = false; } else h.hidden = true; }
+
+  /** Altura del terreno bajo (x,z): rayo vertical hacia abajo sobre la malla. */
+  _groundYAt(x, z) {
+    if (!this._terrainMesh) return null;
+    const THREE = window.THREE, ray = (this._ray || (this._ray = new THREE.Raycaster()));
+    ray.set(new THREE.Vector3(x, this._span * 2, z), new THREE.Vector3(0, -1, 0));
+    const hit = ray.intersectObject(this._terrainMesh, false)[0];
+    return hit ? hit.point.y : null;
+  }
+
+  /** Activa/desactiva el pilotaje del dron. Arranca desde la posición actual del
+   *  dron; al salir reconstruye la órbita centrada en él. */
+  _togglePilot() {
+    const on = !(this._pilot && this._pilot.on);
+    if (on) {
+      this._stopFlyover(); this._camTween = null;
+      if (this._free && this._free.on) { this._free = { on: false }; this.$('#free').classList.remove('on'); }
+      if (this._cineMode) { this._cineMode = false; this.$('#cine').classList.remove('on'); }
+      const d = this._scene.droneAt(this._time || 0);
+      this._pilot = { on: true, pos: new window.THREE.Vector3(d.x, d.y, d.z), yaw: this._bodyHeading ?? 0, camYaw: this._bodyHeading ?? 0, roll: 0, keys: new Set(), camPitch: 0.5, zoom: 1, last: performance.now() };
+      this._revealTrackFull(); if (this._trail) this._trail.visible = false;
+    } else {
+      const dp = this._drone ? this._drone.position.clone() : this._target.clone();
+      this._target.copy(dp);
+      const off = this._cam.position.clone().sub(dp), r = off.length() || 1;
+      this._orbit.r = Math.max(this._orbit.min, Math.min(this._orbit.max, r));
+      this._orbit.phi = Math.acos(Math.max(-1, Math.min(1, off.y / r)));
+      this._orbit.theta = Math.atan2(off.z, off.x);
+      this._pilot = { on: false }; this._look = null; this._applyOrbit();
+    }
+    this.$('#pilot').classList.toggle('on', on);
+    this._setHint(on ? 'v3d.pilot.hint' : null);
+  }
+
+  /** Un frame de pilotaje: mueve el dron con las teclas y encadena la cámara detrás. */
+  _stepPilot() {
+    const P = this._pilot; if (!P || !P.on || this._three !== this._localScene || !this._drone) return;
+    const THREE = window.THREE, now = performance.now(), dt = Math.min(0.05, (now - P.last) / 1000); P.last = now;
+    const k = P.keys, boost = k.has('shift') ? 2.6 : 1, sm = Math.min(1, dt * 6);
+    // la cámara ORBITA el dron: ratón (pointermove) y ←/→ mueven camYaw, ↑/↓ la altura
+    if (k.has('arrowleft')) P.camYaw -= 1.8 * dt;
+    if (k.has('arrowright')) P.camYaw += 1.8 * dt;
+    if (k.has('arrowup')) P.camPitch = Math.min(1.35, P.camPitch + 1.4 * dt);
+    if (k.has('arrowdown')) P.camPitch = Math.max(0.12, P.camPitch - 1.4 * dt);
+    // movimiento RELATIVO A LA CÁMARA: W hacia donde mira, A/D lateral, E/Q vertical
+    const camF = new THREE.Vector3(Math.sin(P.camYaw), 0, -Math.cos(P.camYaw));
+    const camR = new THREE.Vector3(Math.cos(P.camYaw), 0, Math.sin(P.camYaw));
+    const move = new THREE.Vector3();
+    if (k.has('w')) move.add(camF);
+    if (k.has('s')) move.sub(camF);
+    if (k.has('d')) move.add(camR);
+    if (k.has('a')) move.sub(camR);
+    if (k.has('e') || k.has(' ')) move.y += 1;
+    if (k.has('q') || k.has('c')) move.y -= 1;
+    const spd = this._span * 0.5 * boost * this._flyMul();
+    const desired = move.lengthSq() > 0 ? move.clone().normalize().multiplyScalar(spd) : new THREE.Vector3();
+    if (!P.vel) P.vel = new THREE.Vector3();
+    P.vel.lerp(desired, sm);
+    P.pos.addScaledVector(P.vel, dt);
+    // no bajar del suelo
+    const gy = this._groundYAt(P.pos.x, P.pos.z);
+    if (gy != null && P.pos.y < gy + (this._droneS || 10) * 1.2) { P.pos.y = gy + (this._droneS || 10) * 1.2; if (P.vel.y < 0) P.vel.y = 0; }
+    // el dron ENCARA SIEMPRE hacia el frente de la cámara (camYaw): al orbitar con
+    // las flechas/ratón ya se orienta (antes de avanzar), y en lateral (A/D) no
+    // gira porque el movimiento lateral no cambia camYaw.
+    let d = P.camYaw - P.yaw; d = ((d + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+    const turnStep = d * Math.min(1, dt * 5);
+    P.yaw += turnStep;
+    P.roll += ((Math.max(-0.4, Math.min(0.4, turnStep / Math.max(dt, 0.001) * 0.18)) - P.roll) * 0.1);
+    const fwd = new THREE.Vector3(Math.sin(P.yaw), 0, -Math.cos(P.yaw));
+    this._drone.position.copy(P.pos);
+    if (this._droneBody) {
+      const fwdSpeed = P.vel.x * fwd.x + P.vel.z * fwd.z;
+      P.pitch2 = (P.pitch2 || 0) + (Math.max(-0.16, Math.min(0.16, -fwdSpeed / (this._span * 0.6))) - (P.pitch2 || 0)) * 0.1;
+      this._droneBody.rotation.y = -P.yaw; this._droneBody.rotation.z = P.roll; this._droneBody.rotation.x = P.pitch2; // -yaw: el frente (-Z) mira al rumbo (igual que _placeDrone)
+    }
+    // cono de visión: apunta al frente del dron (rumbo), algo hacia abajo
+    if (this._cone) {
+      const el = -0.5, dir = new THREE.Vector3(Math.cos(el) * Math.sin(P.yaw), Math.sin(el), -Math.cos(el) * Math.cos(P.yaw));
+      this._cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir.normalize());
+    }
+    // sombra bajo el dron
+    if (this._shadow && gy != null) {
+      const agl = Math.max(0, P.pos.y - gy), base = (this._droneS || 12) * 2.1, sz = base + agl * 0.35;
+      this._shadow.position.set(P.pos.x, gy + 0.6, P.pos.z); this._shadow.scale.set(sz, sz, 1);
+      this._shadow.material.opacity = Math.max(0.16, 0.45 - agl * 0.0007);
+    }
+    // cámara: orbita según camYaw/camPitch y mira AL DRON (queda centrado en pantalla)
+    const r = this._span * 0.06 * P.zoom;
+    const want = P.pos.clone()
+      .addScaledVector(camF, -r * Math.cos(P.camPitch))
+      .addScaledVector(new THREE.Vector3(0, 1, 0), r * Math.sin(P.camPitch));
+    this._cam.position.lerp(want, 0.2);
+    this._cam.lookAt(P.pos.x, P.pos.y, P.pos.z);
+  }
+
+  /** Un frame de vuelo libre: mueve la cámara con WASD (con inercia) y la orienta
+   *  con el ratón o las flechas (para poder usarlo con trackpad, sin arrastrar). */
+  _stepFree() {
+    const F = this._free; if (!F || !F.on || this._three !== this._localScene) return;
+    const THREE = window.THREE, now = performance.now(), dt = Math.min(0.05, (now - F.last) / 1000); F.last = now;
+    const k = F.keys, lr = 1.8 * dt; // flechas: mirar (rad/frame)
+    if (k.has('arrowleft')) F.yaw -= lr;
+    if (k.has('arrowright')) F.yaw += lr;
+    if (k.has('arrowup')) F.pitch = Math.min(1.45, F.pitch + lr);
+    if (k.has('arrowdown')) F.pitch = Math.max(-1.45, F.pitch - lr);
+    const cp = Math.cos(F.pitch), sp = Math.sin(F.pitch);
+    const dir = new THREE.Vector3(cp * Math.sin(F.yaw), sp, -cp * Math.cos(F.yaw));
+    const right = new THREE.Vector3(Math.cos(F.yaw), 0, Math.sin(F.yaw));
+    const move = new THREE.Vector3();
+    if (k.has('w')) move.add(dir);
+    if (k.has('s')) move.sub(dir);
+    if (k.has('d')) move.add(right);
+    if (k.has('a')) move.sub(right);
+    if (k.has('e') || k.has(' ')) move.y += 1;
+    if (k.has('q') || k.has('c')) move.y -= 1;
+    // velocidad con inercia (arranque/frenado suaves)
+    const spd = this._span * 0.5 * (F.speedMul || 1) * (k.has('shift') ? 2.6 : 1) * this._flyMul();
+    const desired = move.lengthSq() > 0 ? move.normalize().multiplyScalar(spd) : new THREE.Vector3();
+    if (!F.vel) F.vel = new THREE.Vector3();
+    F.vel.lerp(desired, Math.min(1, dt * 6));
+    F.pos.addScaledVector(F.vel, dt);
+    this._cam.position.copy(F.pos);
+    this._cam.lookAt(F.pos.x + dir.x, F.pos.y + dir.y, F.pos.z + dir.z);
+  }
+
+  /** Registra/borra teclas del modo activo (vuelo libre o pilotaje). */
+  _freeKey(e, down) {
+    const M = (this._free && this._free.on) ? this._free : (this._pilot && this._pilot.on) ? this._pilot : null;
+    if (!M) return;
+    const key = e.key === ' ' ? ' ' : e.key.toLowerCase();
+    if (key === 'escape') { if (down) (this._free && this._free.on ? this._toggleFree() : this._togglePilot()); return; }
+    if (!'wasdqce '.includes(key) && key !== 'shift' && !key.startsWith('arrow')) return;
+    e.preventDefault();
+    if (down) M.keys.add(key); else M.keys.delete(key);
+  }
+
+  /** Multiplicador de velocidad de vuelo según el modo elegido (lenta/media/rápida). */
+  _flyMul() { return [0.12, 0.3, 0.6][this._flySpeedIdx] ?? 0.3; }
+
+  /** Cambia al siguiente modo de velocidad de vuelo y actualiza el botón. */
+  _cycleFlySpeed() {
+    this._flySpeedIdx = (this._flySpeedIdx + 1) % 3;
+    const b = this.$('#flyspeed'); if (b) b.textContent = t(['v3d.flyspeed.slow', 'v3d.flyspeed.med', 'v3d.flyspeed.fast'][this._flySpeedIdx]);
+  }
+
+  /** Pone/quita el visor 3D a pantalla completa (el ResizeObserver reajusta solo). */
+  _toggleFullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else this.$('#wrap')?.requestFullscreen?.().catch(() => {});
+  }
+
   _resize() {
     const wrap = this.$('#wrap'); if (!wrap || !this._renderer) return;
     const w = wrap.clientWidth, h = wrap.clientHeight;
@@ -1460,18 +1820,33 @@ class Flight3D extends DjiElement {
     this._cam.aspect = w / h; this._cam.updateProjectionMatrix();
   }
 
+  /** Reloj de animación: el real, salvo durante la exportación de vídeo, donde
+   *  avanza a pasos fijos para que el resultado sea determinista y no dependa de
+   *  la velocidad de codificación. */
+  _now() { return this._exportClock != null ? this._exportClock : performance.now(); }
+
+  /** Animaciones por fotograma independientes del tiempo del vuelo: hélices, LEDs
+   *  de navegación y anti-solape de rótulos. Se usa en el bucle y en el export. */
+  _animate() {
+    if (this._rotors) for (const r of this._rotors) r.rotation.y += 0.9; // hélices girando
+    if (this._leds) { // parpadeo de las luces de navegación
+      const t = this._now() * 0.006;
+      const rear = Math.sin(t) > 0.1 ? 1 : 0.12, front = Math.sin(t * 0.7 + 1) > -0.3 ? 1 : 0.25;
+      for (const l of this._leds) l.mesh.material.color.copy(l.color).multiplyScalar(l.rear ? rear : front);
+    }
+    if (this._three === this._localScene) this._declutterLabels(); // rótulos sin solaparse
+  }
+
   _loop() {
     const tick = () => {
       this._raf = requestAnimationFrame(tick);
-      if (this._introT0 != null) this._stepIntro();
+      if (this._exporting) return; // durante la exportación conduce _exportVideo
+      if (this._pilot && this._pilot.on) this._stepPilot(); // pilotar el dron (WASD)
+      else if (this._free && this._free.on) this._stepFree(); // vuelo libre (WASD)
+      else if (this._introT0 != null) this._stepIntro();
       else if (this._playing) this._advanceFlyover();
-      if (this._rotors) for (const r of this._rotors) r.rotation.y += 0.9; // hélices girando
-      if (this._leds) { // parpadeo de las luces de navegación
-        const t = performance.now() * 0.006;
-        const rear = Math.sin(t) > 0.1 ? 1 : 0.12, front = Math.sin(t * 0.7 + 1) > -0.3 ? 1 : 0.25;
-        for (const l of this._leds) l.mesh.material.color.copy(l.color).multiplyScalar(l.rear ? rear : front);
-      }
-      if (this._three === this._localScene) this._declutterLabels(); // rótulos sin solaparse
+      else if (this._camTween) this._stepCamTween(); // vuelo de cámara al hito pulsado
+      this._animate();
       this._renderer.render(this._three, this._cam);
     };
     this._raf = requestAnimationFrame(tick);
@@ -1481,25 +1856,52 @@ class Flight3D extends DjiElement {
 
   _wireControls() {
     const canvas = this.$('#cv');
-    let drag = null;
+    let drag = null, down = null;
     this.on(canvas, 'pointerdown', (e) => {
       if (this._introT0 != null) { this._endIntro(); return; } // la 1ª pulsación salta la intro
       if (this._playing && this._cineMode) this._toggleCine(); // tomar control manual de la cámara
-      drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId);
+      drag = { x: e.clientX, y: e.clientY }; down = { x: e.clientX, y: e.clientY, moved: false };
+      canvas.setPointerCapture(e.pointerId);
     });
     this.on(canvas, 'pointermove', (e) => {
       if (!drag) return;
+      if (down && (Math.abs(e.clientX - down.x) > 4 || Math.abs(e.clientY - down.y) > 4)) { down.moved = true; this._camTween = null; }
+      if (this._free && this._free.on) { // mirar alrededor (yaw/pitch)
+        this._free.yaw += (e.clientX - drag.x) * 0.005;
+        this._free.pitch = Math.max(-1.45, Math.min(1.45, this._free.pitch - (e.clientY - drag.y) * 0.005));
+        drag = { x: e.clientX, y: e.clientY };
+        return;
+      }
+      if (this._pilot && this._pilot.on) { // orbitar la cámara alrededor del dron
+        this._pilot.camYaw += (e.clientX - drag.x) * 0.006;
+        this._pilot.camPitch = Math.max(0.12, Math.min(1.35, this._pilot.camPitch + (e.clientY - drag.y) * 0.005));
+        drag = { x: e.clientX, y: e.clientY };
+        return;
+      }
       const o = this._orbit;
       o.theta += (e.clientX - drag.x) * 0.006;
       o.phi = Math.max(0.18, Math.min(1.48, o.phi - (e.clientY - drag.y) * 0.005));
       drag = { x: e.clientX, y: e.clientY };
       if (!this._playing) this._applyOrbit();
     });
-    const stop = () => { drag = null; };
-    this.on(canvas, 'pointerup', stop); this.on(canvas, 'pointercancel', stop);
+    this.on(canvas, 'pointerup', (e) => {
+      // click limpio (sin arrastrar) sobre un hito → lleva la cámara a ese hito
+      if (down && !down.moved) this._clickKeypoint(e);
+      drag = null; down = null;
+    });
+    this.on(canvas, 'pointercancel', () => { drag = null; down = null; });
     this.on(canvas, 'wheel', (e) => {
       e.preventDefault();
       if (this._introT0 != null) this._endIntro();
+      if (this._free && this._free.on) { // en vuelo libre la rueda regula la velocidad
+        this._free.speedMul = Math.max(0.25, Math.min(5, (this._free.speedMul || 1) * (1 - Math.sign(e.deltaY) * 0.15)));
+        return;
+      }
+      if (this._pilot && this._pilot.on) { // pilotando, la rueda acerca/aleja la cámara
+        this._pilot.zoom = Math.max(0.4, Math.min(3, (this._pilot.zoom || 1) * (1 + Math.sign(e.deltaY) * 0.12)));
+        return;
+      }
+      this._camTween = null; // el zoom manual cancela el vuelo a un hito
       const o = this._orbit, oldR = o.r;
       o.r = Math.max(o.min, Math.min(o.max, o.r * (1 + Math.sign(e.deltaY) * 0.09)));
       // zoom hacia el cursor: desplaza el pivote hacia el punto bajo el ratón en
@@ -1528,6 +1930,36 @@ class Flight3D extends DjiElement {
     this.on(this.$('#cine'), 'click', () => this._toggleCine());
     this.on(this.$('#startBtn'), 'click', () => this._runIntro());
 
+    // exportar el sobrevuelo a vídeo (MP4) y cancelar en curso
+    this.on(this.$('#export'), 'click', () => this._exportVideo());
+    this.on(this.$('#expCancel'), 'click', () => this._exportAbort?.abort());
+
+    // modo vuelo libre (WASD + ratón); las teclas se escuchan en window y solo
+    // actúan cuando el modo está activo
+    this.on(this.$('#free'), 'click', () => this._toggleFree());
+    this.on(this.$('#pilot'), 'click', () => this._togglePilot());
+    this.on(window, 'keydown', (e) => this._freeKey(e, true));
+    this.on(window, 'keyup', (e) => this._freeKey(e, false));
+
+    // velocidad de vuelo (3 modos) y pantalla completa
+    this.$('#flyspeed').textContent = t(['v3d.flyspeed.slow', 'v3d.flyspeed.med', 'v3d.flyspeed.fast'][this._flySpeedIdx]);
+    this.on(this.$('#flyspeed'), 'click', () => this._cycleFlySpeed());
+    this.on(this.$('#fs'), 'click', () => this._toggleFullscreen());
+    this.on(document, 'fullscreenchange', () => {
+      const fs = !!document.fullscreenElement;
+      this.$('#fs').classList.toggle('on', fs);
+      this._resize();
+    });
+
+    // panel de ajustes: abre/cierra y aplica las casillas de capas
+    const opts = this.$('#opts'), settings = this.$('#settings');
+    this.on(settings, 'click', (e) => { e.stopPropagation(); opts.hidden = !opts.hidden; settings.classList.toggle('on', !opts.hidden); });
+    for (const cb of this.$$('#opts input[type=checkbox]')) {
+      cb.checked = this._show[cb.dataset.k] !== false;
+      this.on(cb, 'change', () => { this._show[cb.dataset.k] = cb.checked; this._applyShow(); });
+    }
+    this._applyShow();
+
     this._cineMode = this._cineMode !== false; // por defecto activado
     this.$('#cine').classList.toggle('on', this._cineMode);
     this._speed = this._speed || 1;
@@ -1552,44 +1984,64 @@ class Flight3D extends DjiElement {
   }
 
   /** Elige el siguiente plano cinematográfico (planos suaves, sin extremos). */
-  _nextShot() {
+  /** Elige el siguiente plano y lo arranca por el lado donde ya está la cámara
+   *  (continuidad: evita cruzar de golpe al otro lado del dron). */
+  _nextShot(dp, h) {
+    const THREE = window.THREE;
     const shots = ['chase', 'orbit', 'high', 'side', 'reveal'];
     const prev = this._director && this._director.shot;
     let sh; do { sh = shots[(Math.random() * shots.length) | 0]; } while (sh === prev);
-    this._director = { shot: sh, t0: performance.now(), dur: 5500 + Math.random() * 3000, dir: Math.random() < 0.5 ? -1 : 1, a0: Math.random() * Math.PI * 2 };
+    let a0 = Math.random() * Math.PI * 2, dir = Math.random() < 0.5 ? -1 : 1;
+    if (this._cam && dp) {
+      const rel = this._cam.position.clone().sub(dp);
+      if (sh === 'orbit') a0 = Math.atan2(rel.z, rel.x);           // órbita: parte del ángulo actual
+      if (sh === 'side') dir = (Math.cos(h) * rel.x + Math.sin(h) * rel.z) >= 0 ? 1 : -1; // lateral: por el lado actual
+    }
+    this._director = { shot: sh, t0: this._now(), dur: 6500 + Math.random() * 3500, dir, a0 };
+    // offset de la cámara relativo al dron al empezar el plano (para rodearlo en
+    // la transición, no cruzarlo)
+    this._shotFromRel = this._cam && dp ? this._cam.position.clone().sub(dp) : null;
   }
 
-  /** Mueve la cámara hacia `want` con inercia y un tope por frame (sin saltos). */
-  _easeCamTo(want) {
-    const target = this._cam.position.clone().lerp(want, 0.04);
-    const delta = target.sub(this._cam.position);
-    const maxMove = this._span * 0.045; // tope de desplazamiento por fotograma
-    if (delta.length() > maxMove) delta.setLength(maxMove);
-    this._cam.position.add(delta);
+  /** Interpola dos offsets (cámara relativa al dron) rodeando al sujeto: el azimut
+   *  por el arco más corto y el radio/altura por lerp. Evita que la cámara cruce
+   *  por encima del dron en los cambios de plano de ~180°. */
+  _arcBlend(a, b, t) {
+    const a0 = Math.atan2(a.z, a.x), r0 = Math.hypot(a.x, a.z), y0 = a.y;
+    const a1 = Math.atan2(b.z, b.x), r1 = Math.hypot(b.x, b.z), y1 = b.y;
+    let da = a1 - a0; da = ((da + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+    const ang = a0 + da * t, r = r0 + (r1 - r0) * t, y = y0 + (y1 - y0) * t;
+    return new window.THREE.Vector3(Math.cos(ang) * r, y, Math.sin(ang) * r);
   }
 
   /** Cámara cinematográfica: encadena planos (persecución, órbita, grúa suave,
-   *  lateral, revelado) siguiendo al dron, con inercia y ligero temblor. */
+   *  lateral, revelado) siguiendo al dron. Cada cambio de plano se mezcla con una
+   *  curva suave desde la posición actual, sin saltos ni latigazos. */
   _cineCam() {
     const THREE = window.THREE, d = this._scene.droneAt(this._time);
     const target = isNaN(d.heading) ? (this._cHead ?? 0) : d.heading;
     if (this._cHead == null) this._cHead = target;
-    else { const diff = ((target - this._cHead + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI; this._cHead += diff * 0.035; }
+    else { const diff = ((target - this._cHead + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI; this._cHead += diff * 0.03; }
     const h = this._cHead;
-    if (!this._director || performance.now() - this._director.t0 > this._director.dur) this._nextShot();
-    const D = this._director, te = (performance.now() - D.t0) / 1000;
-    const Rb = this._span * 0.24, up = new THREE.Vector3(0, 1, 0);
+    const dp = new THREE.Vector3(d.x, d.y, d.z);
+    if (!this._director || this._now() - this._director.t0 > this._director.dur) this._nextShot(dp, h);
+    const D = this._director, te = (this._now() - D.t0) / 1000;
+    const Rb = this._span * 0.14, up = new THREE.Vector3(0, 1, 0); // distancia base de los planos al dron (más cerca)
     const fwd = new THREE.Vector3(Math.sin(h), 0, -Math.cos(h));
     const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
-    const dp = new THREE.Vector3(d.x, d.y, d.z);
     let want;
     if (D.shot === 'chase') want = dp.clone().addScaledVector(fwd, -Rb * 1.15).addScaledVector(up, Rb * 0.42);
-    else if (D.shot === 'orbit') { const a = D.a0 + te * 0.28 * D.dir; want = dp.clone().addScaledVector(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)), Rb * 1.2).addScaledVector(up, Rb * 0.5); }
+    else if (D.shot === 'orbit') { const a = D.a0 + te * 0.16 * D.dir; want = dp.clone().addScaledVector(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)), Rb * 1.2).addScaledVector(up, Rb * 0.5); }
     else if (D.shot === 'high') want = dp.clone().addScaledVector(up, Rb).addScaledVector(fwd, -Rb * 0.6);
     else if (D.shot === 'side') want = dp.clone().addScaledVector(right, Rb * 1.15 * D.dir).addScaledVector(up, Rb * 0.42).addScaledVector(fwd, Rb * 0.15);
     else want = dp.clone().addScaledVector(fwd, Rb * (1.25 - te * 0.05)).addScaledVector(up, Rb * 0.35); // reveal (dolly suave)
-    this._easeCamTo(want);
-    this._look = this._look || dp.clone(); this._look.lerp(dp, 0.09);
+    // transición suave entre planos: rodea al dron desde el encuadre anterior
+    // hasta el nuevo con ease-in-out de ~2,6 s (smoothstep); luego sigue al dron
+    const TR = 2.6, tt = Math.min(1, te / TR), ease = tt * tt * (3 - 2 * tt);
+    const wantRel = want.clone().sub(dp);
+    const goal = dp.clone().add(this._arcBlend(this._shotFromRel || wantRel, wantRel, ease));
+    this._cam.position.lerp(goal, 0.12); // inercia leve para micro-suavizado
+    this._look = this._look || dp.clone(); this._look.lerp(dp, 0.05);
     this._cam.lookAt(this._look);
   }
 
@@ -1597,13 +2049,16 @@ class Flight3D extends DjiElement {
 
   _startFlyover() {
     if (this._time == null || this._time >= this._scene.duration - 0.05) this._time = 0;
-    this._playing = true; this._last = performance.now();
+    if (this._free && this._free.on) { this._free = { on: false }; this.$('#free').classList.remove('on'); }
+    if (this._pilot && this._pilot.on) { this._pilot = { on: false }; this.$('#pilot').classList.remove('on'); }
+    this._setHint(null);
+    this._playing = true; this._last = this._now(); this._camTween = null;
     this._look = null;
     // intro cinematográfica: arranca amplio y la cámara se acerca al dron sola
     this._orbit.r = this._orbit.max * 0.3; this._orbit.phi = 1.0;
-    this._chaseTargetR = this._orbit.max * 0.055; this._introStart = performance.now();
+    this._chaseTargetR = this._orbit.max * 0.055; this._introStart = this._now();
     this._director = null; this._cHead = null; // reinicia el director de cámara
-    this.$('#hud').hidden = false;
+    this.$('#hud').hidden = !this._show.hud; // respeta el panel de ajustes
     if (this._trail) this._trail.visible = true;
     this._setPlayIcon(true);
   }
@@ -1616,16 +2071,116 @@ class Flight3D extends DjiElement {
     this._setPlayIcon(false);
   }
 
+  /** Exporta el sobrevuelo a un MP4 (WebCodecs, muxer estándar → compatible con
+   *  iOS). Renderiza la escena a pasos fijos (determinista: la cámara cine, la
+   *  intro y los suavizados usan un reloj simulado), captura cada fotograma a un
+   *  canvas y lo codifica. La duración = duración del vuelo / velocidad elegida. */
+  async _exportVideo() {
+    if (!this._scene || this._exporting || this._introT0 != null) return;
+    if (!canExportVideo()) { this._exportMsg(t('v3d.export.unsupported'), true); this._showExport(true); setTimeout(() => this._showExport(false), 2500); return; }
+    const cv = this.$('#cv');
+    // resolución de salida: cap a 1280×720 manteniendo proporción, lados pares
+    const scale = Math.min(1, 1280 / cv.width, 720 / cv.height);
+    const W = Math.max(2, Math.round(cv.width * scale / 2) * 2);
+    const H = Math.max(2, Math.round(cv.height * scale / 2) * 2);
+    const out = document.createElement('canvas'); out.width = W; out.height = H;
+    const octx = out.getContext('2d', { alpha: false });
+    const fps = 30, dt = 1 / fps, speed = this._speed || 1;
+    const totalFrames = Math.min(90 * fps, Math.ceil(this._scene.duration / speed / dt) + 1);
+
+    this._exporting = true;
+    const ac = (this._exportAbort = new AbortController());
+    this._showExport(true); this._setExportProgress(0);
+
+    // sobrevuelo determinista desde el principio, con reloj simulado
+    const wasCine = this._cineMode;
+    this._three = this._localScene; this._introT0 = null; this._time = 0;
+    this._playing = true; this._look = null; this._director = null; this._cHead = null;
+    this._orbit.r = this._orbit.max * 0.3; this._orbit.phi = 1.0;
+    this._chaseTargetR = this._orbit.max * 0.055;
+    this._exportClock = performance.now(); this._last = this._exportClock; this._introStart = this._exportClock;
+    if (this._trail) this._trail.visible = true;
+    // coloca la cámara en el encuadre de apertura antes de grabar (sin tirón inicial)
+    const THREE = window.THREE, d0 = this._scene.droneAt(0), o = this._orbit;
+    this._look = new THREE.Vector3(d0.x, d0.y, d0.z);
+    this._cam.position.set(
+      this._look.x + o.r * Math.sin(o.phi) * Math.cos(o.theta),
+      this._look.y + o.r * Math.cos(o.phi),
+      this._look.z + o.r * Math.sin(o.phi) * Math.sin(o.theta));
+    this._cam.lookAt(this._look);
+
+    let rec;
+    try {
+      rec = createMp4Recorder({ width: W, height: H, fps });
+      for (let i = 0; i < totalFrames; i++) {
+        if (ac.signal.aborted) throw new DOMException('cancelado', 'AbortError');
+        this._exportClock += dt * 1000; // avanza el reloj un fotograma
+        this._advanceFlyover();          // dron/estela/cámara con ese reloj
+        this._animate();                 // hélices, LEDs, rótulos
+        this._renderer.render(this._three, this._cam);
+        octx.drawImage(cv, 0, 0, W, H);
+        if (this._show.hud) this._drawExportHud(octx, W, H, this._time);
+        await rec.encode(out);
+        if (i % 4 === 0) this._setExportProgress((i + 1) / totalFrames);
+      }
+      const blob = await rec.finish();
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+      downloadBlob(`sobrevuelo-3d-${stamp}.mp4`, blob);
+      this._exportMsg(t('v3d.export.done')); await new Promise((r) => setTimeout(r, 1200));
+    } catch (e) {
+      rec?.cancel();
+      const cancelled = e.name === 'AbortError';
+      if (!cancelled) console.error('[flight-3d] export', e);
+      this._exportMsg(cancelled ? t('v3d.export.cancelled') : t('v3d.export.error'), true);
+      await new Promise((r) => setTimeout(r, 1500));
+    } finally {
+      this._exporting = false; this._exportClock = null; this._exportAbort = null;
+      this._cineMode = wasCine;
+      this._stopFlyover(); this._showExport(false); this._applyOrbit();
+    }
+  }
+
+  /** Dibuja la telemetría (altura, velocidad, v. vertical, alejamiento) sobre el
+   *  fotograma exportado, en la esquina superior derecha. */
+  _drawExportHud(x, W, H, time) {
+    const d = this._scene.droneAt(time), tk = this._scene.takeoffXZ;
+    const far = Math.round(Math.hypot(d.x - tk.x, d.z - tk.z));
+    const vals = [
+      [String(Math.round(d.rel || 0)), t('v3d.hud.alt')],
+      [String(Math.round((d.hs || 0) * 3.6)), t('v3d.hud.spd')],
+      [((d.vs || 0) >= 0 ? '+' : '') + (d.vs || 0).toFixed(1), t('v3d.hud.vs')],
+      [String(far), t('v3d.hud.far')],
+    ];
+    const s = H / 720, cw = 116 * s, gap = 8 * s, pad = 16 * s;
+    const bw = pad * 2 + vals.length * cw + (vals.length - 1) * gap, bh = 60 * s;
+    const bx = W - bw - 16 * s, by = 16 * s;
+    x.save();
+    x.fillStyle = 'rgba(10,14,20,0.5)';
+    x.beginPath(); x.roundRect(bx, by, bw, bh, 12 * s); x.fill();
+    vals.forEach((v, i) => {
+      const cx = bx + pad + i * (cw + gap);
+      x.fillStyle = '#fff'; x.font = `700 ${27 * s}px -apple-system, system-ui, sans-serif`;
+      x.fillText(v[0], cx, by + 34 * s);
+      x.fillStyle = 'rgba(255,255,255,0.6)'; x.font = `600 ${10.5 * s}px -apple-system, system-ui, sans-serif`;
+      x.fillText(v[1].toUpperCase(), cx, by + 49 * s);
+    });
+    x.restore();
+  }
+
+  _showExport(on) { const e = this.$('#exp'); if (e) e.hidden = !on; }
+  _setExportProgress(p) { const f = this.$('#expF'); if (f) f.style.width = Math.round(p * 100) + '%'; const l = this.$('#expT'); if (l) l.textContent = t('v3d.export.running') + ' ' + Math.round(p * 100) + '%'; }
+  _exportMsg(msg, isErr) { const l = this.$('#expT'); if (l) { l.textContent = msg; l.classList.toggle('err', !!isErr); } }
+
   /** Avanza el sobrevuelo: mueve el dron, la estela y encadena la cámara. */
   _advanceFlyover() {
-    const now = performance.now(), dt = Math.min(0.05, (now - this._last) / 1000); this._last = now;
+    const now = this._now(), dt = Math.min(0.05, (now - this._last) / 1000); this._last = now;
     this._time = Math.min(this._scene.duration, (this._time || 0) + dt * (this._speed || 1));
     this._placeDrone(this._time);
     this._updateTrail(this._time);
     this._revealTrack(this._time);
     if (this._cineMode && !this._introStart) this._cineCam(); else this._chaseCam();
     this._updateTime(this._time);
-    if (this._time >= this._scene.duration) this._stopFlyover();
+    if (this._time >= this._scene.duration && !this._exporting) this._stopFlyover();
   }
 
   /** Cámara de seguimiento: orbita alrededor del dron; el usuario puede arrastrar
@@ -1637,7 +2192,7 @@ class Flight3D extends DjiElement {
     this._look.lerp(tp, 0.15); // sigue al dron suavemente
     // intro: durante ~2.6 s la cámara se acerca sola (luego manda el usuario)
     if (this._introStart) {
-      if (performance.now() - this._introStart < 2600) {
+      if (this._now() - this._introStart < 2600) {
         this._orbit.r += (this._chaseTargetR - this._orbit.r) * 0.03;
         this._orbit.phi += (1.15 - this._orbit.phi) * 0.03;
       } else this._introStart = null;
@@ -1686,6 +2241,7 @@ class Flight3D extends DjiElement {
   }
 
   _teardown() {
+    this._exportAbort?.abort(); this._exporting = false; this._exportClock = null;
     if (this._raf) cancelAnimationFrame(this._raf); this._raf = null;
     this._playing = false;
     this._io?.disconnect(); this._io = null;
@@ -1693,7 +2249,8 @@ class Flight3D extends DjiElement {
     this._introT0 = null; this._introPlayed = false; this._globe = null;
     if (this._renderer) { this._renderer.dispose(); this._renderer = null; }
     this._three = null; this._localScene = null; this._scene = null; this._time = null; this._look = null;
-    this._labelItems = null; this._horizonGroup = null; this._terrainMesh = null; this._ray = null; this._home = null;
+    this._labelItems = null; this._terrainMesh = null; this._ray = null; this._home = null; this._kpMarks = null; this._camTween = null; this._free = null; this._pilot = null;
+    this._trackGroup = null; this._kpGroup = null; this._horizonPlacesGroup = null; this._horizonWaterGroup = null;
   }
 }
 
@@ -4051,7 +4608,7 @@ class FlightReport extends DjiElement {
   afterRender() {
     if (!this.model) return;
     const S = this.model.series, dur = this.model.meta.dur, [tk0, tk1] = this.model.takeoff;
-    for (const s of S) { s.hskmh = s.hs != null ? s.hs * 3.6 : null; if (s.far == null) s.far = hav(tk0, tk1, s.lat, s.lon); }
+    for (const s of S) { s.hskmh = s.hs != null ? s.hs * 3.6 : null; if (s.far == null) s.far = s.lat != null ? hav(tk0, tk1, s.lat, s.lon) : null; }
 
     this.$('#c-alt').data = { series: S, dur, cfgs: [{ k: 'rel', color: '--c-blue', area: true, min: 0, fmt: (v) => `${Math.round(v)}`, label: t('alt.series'), unit: 'm', dec: 0 }] };
     this.$('#c-sp').data = { series: S, dur, cfgs: [
@@ -5092,6 +5649,67 @@ Object.assign(__x, { toGPX, toKML, toCSV, download, downloadBlob });
 
 };
 
+__m["js/flyover-export.js"] = function (__x, __req) {
+// Grabador MP4 para el sobrevuelo 3D: codifica una secuencia de fotogramas con
+// WebCodecs (H.264) y los empaqueta con el muxer MP4 estándar (mismo que el
+// export del vídeo del dron), así el resultado es compatible con iOS/QuickTime.
+// El componente 3D renderiza cada frame a un <canvas> y lo pasa a `encode()`.
+
+const { createMp4 } = __req("js/mp4-muxer.js");
+
+/** @returns {boolean} true si el navegador puede generar el vídeo (WebCodecs). */
+function canExportVideo() {
+  return typeof window !== 'undefined' && 'VideoEncoder' in window && 'VideoFrame' in window;
+}
+
+/**
+ * Crea un grabador incremental: se le pasa un canvas por fotograma y al final
+ * devuelve el MP4 como Blob. Los timestamps se derivan de `fps` (frames a ritmo
+ * constante), independientes de lo que tarde en codificar cada uno.
+ * @param {{width:number, height:number, fps?:number, bitrate?:number}} o
+ */
+function createMp4Recorder({ width, height, fps = 30, bitrate }) {
+  if (!canExportVideo()) throw new Error('WebCodecs no disponible');
+  const W = width, H = height;
+  const muxer = createMp4({ width: W, height: H });
+  let needDesc = true, err = null, idx = 0;
+  const encoder = new VideoEncoder({
+    output: (chunk, meta) => {
+      if (needDesc && meta?.decoderConfig?.description) { muxer.setDescription(meta.decoderConfig.description); needDesc = false; }
+      const buf = new Uint8Array(chunk.byteLength); chunk.copyTo(buf);
+      muxer.addSample(buf, chunk.type === 'key', chunk.timestamp);
+    },
+    error: (e) => { err = e; },
+  });
+  encoder.configure({
+    codec: H > 1080 ? 'avc1.640033' : 'avc1.640028',
+    width: W, height: H, bitrate: bitrate || 10_000_000,
+    framerate: fps, latencyMode: 'realtime', avc: { format: 'avc' },
+  });
+  const usPerFrame = 1e6 / fps;
+
+  return {
+    /** Codifica un fotograma desde `canvas`. Un keyframe cada ~2 s. */
+    async encode(canvas) {
+      if (err) throw err;
+      const frame = new VideoFrame(canvas, { timestamp: Math.round(idx * usPerFrame), duration: Math.round(usPerFrame) });
+      encoder.encode(frame, { keyFrame: idx % (fps * 2) === 0 });
+      frame.close(); idx++;
+      // deja respirar al codificador si se acumula la cola (evita picos de memoria)
+      if (encoder.encodeQueueSize > 8) await new Promise((r) => setTimeout(r, 0));
+    },
+    /** Vacía el codificador y devuelve el MP4 como Blob. */
+    async finish() { await encoder.flush(); encoder.close(); if (err) throw err; return muxer.finalize(); },
+    /** Aborta sin producir salida. */
+    cancel() { try { encoder.close(); } catch { /* ya cerrado */ } },
+    get frames() { return idx; },
+  };
+}
+
+Object.assign(__x, { canExportVideo, createMp4Recorder });
+
+};
+
 __m["js/frames.js"] = function (__x, __req) {
 // Extracción de fotogramas del MP4 en el propio navegador con <video> + <canvas>.
 // El vídeo nunca sale del equipo: se lee con un object URL local y se descarta al terminar.
@@ -5201,7 +5819,10 @@ const kmh = (x) => x.hs != null ? x.hs * 3.6 : null;
 
 /** Calcula los 8 hitos del vuelo (mismo orden y criterios que common.py). */
 function keypoints(d) {
-  const S = d.series, tk = d.takeoff;
+  // solo muestras con GPS válido: así el despegue/aterrizaje y el punto más lejano
+  // se sitúan sobre coordenadas reales (nunca en los frames previos al fix GPS).
+  const S = d.series.filter(x => x.lat != null), tk = d.takeoff;
+  if (!S.length) return [];
   for (const x of S) x.far = hav(tk[0], tk[1], x.lat, x.lon);
   const by = (fn) => S.reduce((a, b) => fn(b) > fn(a) ? b : a);
   const alto = by(x => x.rel);
@@ -5294,11 +5915,17 @@ async function reverseGeocode(lat, lon) {
   }
 }
 
-/** Extrae las primeras coordenadas (lat, lon) del texto de un .SRT. */
+/** Extrae las primeras coordenadas (lat, lon) con GPS válido del texto de un .SRT.
+ *  Salta el sentinela `0.000000, 0.000000` que DJI escribe antes del fix GPS
+ *  (si no, el nombre del lugar se geocodifica en el golfo de Guinea). */
 function firstCoords(srtText) {
-  const la = srtText.match(/latitude:\s*([-\d.]+)/);
-  const lo = srtText.match(/longitude:\s*([-\d.]+)/);
-  return la && lo ? [parseFloat(la[1]), parseFloat(lo[1])] : null;
+  const re = /latitude:\s*(-?[\d.]+)\]\s*\[longitude:\s*(-?[\d.]+)/g;
+  let m;
+  while ((m = re.exec(srtText)) !== null) {
+    const la = parseFloat(m[1]), lo = parseFloat(m[2]);
+    if (la !== 0 || lo !== 0) return [la, lo];
+  }
+  return null;
 }
 
 Object.assign(__x, { reverseGeocode, firstCoords });
@@ -6538,6 +7165,33 @@ __x.default = {
   'v3d.hud.alt': 'Altitude',
   'v3d.hud.spd': 'Speed',
   'v3d.hud.vs': 'Vertical',
+  'v3d.hud.far': 'Farthest',
+  'v3d.flyspeed': 'Flight speed (free and pilot)',
+  'v3d.flyspeed.slow': 'Slow',
+  'v3d.flyspeed.med': 'Medium',
+  'v3d.flyspeed.fast': 'Fast',
+  'v3d.fullscreen': 'Fullscreen',
+  'v3d.free': 'Free flight: move with WASD, look with the mouse',
+  'v3d.free.short': 'Free',
+  'v3d.free.hint': 'WASD move · arrows or mouse to look · E/Q up/down · Shift sprint · wheel speed · Esc exit',
+  'v3d.pilot': 'Pilot the drone: move it with WASD (the camera follows)',
+  'v3d.pilot.short': 'Pilot',
+  'v3d.pilot.hint': 'Mouse or ←→ orbit the camera (drone faces that way) · WASD move · ↑↓ height · E/Q up/down · Shift boost · wheel zoom · Esc exit',
+  'v3d.settings': 'Settings: choose what to show in the render',
+  'v3d.export': 'Export the flyover to video (MP4)',
+  'v3d.export.short': 'Export',
+  'v3d.export.running': 'Rendering video…',
+  'v3d.export.done': 'Video ready! Downloading…',
+  'v3d.export.error': 'Could not generate the video',
+  'v3d.export.cancelled': 'Export cancelled',
+  'v3d.export.cancel': 'Cancel',
+  'v3d.export.unsupported': 'Your browser does not support export (WebCodecs)',
+  'v3d.opts.title': 'Show in the render',
+  'v3d.opt.track': 'Flight path',
+  'v3d.opt.kp': 'Flight highlights',
+  'v3d.opt.places': 'Towns and peaks',
+  'v3d.opt.water': 'Rivers and reservoirs',
+  'v3d.opt.hud': 'Telemetry (HUD)',
   'v3d.unsupported': 'Your browser does not support the 3D view (WebGL).',
   'player.play': 'Play the flight',
   'player.pause': 'Pause',
@@ -6921,6 +7575,33 @@ __x.default = {
   'v3d.hud.alt': 'Altura',
   'v3d.hud.spd': 'Velocidad',
   'v3d.hud.vs': 'V. vertical',
+  'v3d.hud.far': 'Alejamiento',
+  'v3d.flyspeed': 'Velocidad de vuelo (libre y pilotar)',
+  'v3d.flyspeed.slow': 'Lenta',
+  'v3d.flyspeed.med': 'Media',
+  'v3d.flyspeed.fast': 'Rápida',
+  'v3d.fullscreen': 'Pantalla completa',
+  'v3d.free': 'Vuelo libre: muévete con WASD y mira con el ratón',
+  'v3d.free.short': 'Libre',
+  'v3d.free.hint': 'WASD moverse · flechas o ratón para mirar · E/Q subir/bajar · Shift correr · rueda velocidad · Esc salir',
+  'v3d.pilot': 'Pilotar el dron: muévelo con WASD (la cámara lo sigue)',
+  'v3d.pilot.short': 'Pilotar',
+  'v3d.pilot.hint': 'Ratón o ←→ orbitan la cámara (el dron encara hacia ahí) · WASD mover · ↑↓ altura · E/Q subir/bajar · Shift acelerar · rueda acercar · Esc salir',
+  'v3d.settings': 'Ajustes: elige qué ver en el render',
+  'v3d.export': 'Exportar el sobrevuelo a vídeo (MP4)',
+  'v3d.export.short': 'Exportar',
+  'v3d.export.running': 'Generando vídeo…',
+  'v3d.export.done': '¡Vídeo listo! Descargando…',
+  'v3d.export.error': 'No se pudo generar el vídeo',
+  'v3d.export.cancelled': 'Exportación cancelada',
+  'v3d.export.cancel': 'Cancelar',
+  'v3d.export.unsupported': 'Tu navegador no soporta la exportación (WebCodecs)',
+  'v3d.opts.title': 'Mostrar en el render',
+  'v3d.opt.track': 'Trayectoria del vuelo',
+  'v3d.opt.kp': 'Hitos del vuelo',
+  'v3d.opt.places': 'Pueblos y cimas',
+  'v3d.opt.water': 'Ríos y embalses',
+  'v3d.opt.hud': 'Telemetría (HUD)',
   'v3d.unsupported': 'Tu navegador no admite la vista 3D (WebGL).',
   'player.play': 'Reproducir el vuelo',
   'player.pause': 'Pausa',
@@ -8148,16 +8829,23 @@ async function fetchTerrainDEM(b) {
 }
 
 /**
- * Encuadre de teselas para el 3D: expande el bbox del vuelo por `factor` (4× por
+ * Encuadre de teselas para el 3D: expande el bbox del vuelo por `factor` (6× por
  * defecto) para mostrar más contexto alrededor, y elige el zoom para no pasar de
  * un presupuesto de teselas. Devuelve la misma forma que geo.tileConfig.
  */
-function wideConfig(track, factor = 4) {
+function wideConfig(track, factor = 6) {
   const T = track.filter((p) => p[0] != null);
   const lats = T.map((p) => p[0]), lons = T.map((p) => p[1]);
   let la0 = Math.min(...lats), la1 = Math.max(...lats), lo0 = Math.min(...lons), lo1 = Math.max(...lons);
   const dla = (la1 - la0) || 1e-4, dlo = (lo1 - lo0) || 1e-4, pad = (factor - 1) / 2;
   la0 -= dla * pad; la1 += dla * pad; lo0 -= dlo * pad; lo1 += dlo * pad;
+  // evita el mapa en tira muy estrecha (vuelos alargados): fuerza un aspecto
+  // mínimo (lado corto ≥ 60% del largo, en metros) para que entren también los
+  // pueblos/cimas laterales sin que floten fuera.
+  const cosLat = Math.cos((la0 + la1) / 2 * Math.PI / 180) || 1, R = 0.6;
+  const wLat = la1 - la0, wLon = (lo1 - lo0) * cosLat;
+  if (wLon < R * wLat) { const g = (R * wLat / cosLat - (lo1 - lo0)) / 2; lo0 -= g; lo1 += g; }
+  else if (wLat < R * wLon) { const g = (R * wLon - (la1 - la0)) / 2; la0 -= g; la1 += g; }
   const tilesAt = (z) => {
     const n = 2 ** z;
     const xt = (lon) => (lon + 180) / 360 * n;
@@ -8186,14 +8874,17 @@ function tileBounds(tc) {
  * el bbox está alineado a teselas de tc.z, también lo está en zoom+boost. El
  * mapeo uv sigue siendo normalizado [0,1] sobre `b`, así que no cambia.
  */
-async function buildTexture(tc, boost = 3) {
+async function buildTexture(tc, boost = 4, maxTex = 8192) {
   const f = 2 ** boost, z = tc.z + boost;
   const x0 = tc.x0 * f, x1 = (tc.x1 + 1) * f - 1;
   const y0 = tc.y0 * f, y1 = (tc.y1 + 1) * f - 1;
   const cols = x1 - x0 + 1, rows = y1 - y0 + 1;
-  // baja de zoom si se pasa de teselas (descargas) o del tamaño máximo de textura
-  // del GPU (8192 px por lado en tarjetas modestas)
-  if (boost > 0 && (cols * rows > 520 || cols * 256 > 8192 || rows * 256 > 8192)) return buildTexture(tc, boost - 1);
+  // baja de zoom si se pasa del presupuesto de teselas (descargas) o del tamaño
+  // de textura. TOPE DE MEMORIA: aunque la GPU declare 16384, un lienzo así (>300
+  // MB) cuelga/crashea navegadores con poca memoria; nos quedamos en 8192 por lado
+  // (~84 MB) y ~600 teselas, que es lo que va sobrado en cualquier equipo.
+  const cap = Math.min(maxTex || 8192, 8192);
+  if (boost > 0 && (cols * rows > 600 || cols * 256 > cap || rows * 256 > cap)) return buildTexture(tc, boost - 1, maxTex);
   const cv = document.createElement('canvas');
   cv.width = cols * 256; cv.height = rows * 256;
   const ctx = cv.getContext('2d');
@@ -8253,11 +8944,14 @@ function buildWaterMask(texCanvas) {
   let water = 0;
   for (let i = 0; i < W * H; i++) {
     const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2], mx2 = Math.max(r, g, b);
-    // agua (azul o turquesa): azulada-verdosa con el rojo apagado, no vegetación
-    // (verde con poco azul) ni suelo claro (todo alto). Vale para embalses turquesa.
-    const isWater = b >= g - 10 && b > r + 6 && g >= r + 3 && mx2 < 205;
+    // agua (embalse/río): azul claramente dominante sobre el rojo y no muy clara.
+    // Umbrales estrictos para no marcar campos/sombras azuladas como agua (que
+    // saldrían con un destello del sol falso). Vale para embalses turquesa (b≈g).
+    const isWater = b > r + 14 && b >= g - 4 && r < 110 && mx2 < 175;
     o[i * 4] = 0;
-    o[i * 4 + 1] = isWater ? 16 : 255;   // G = rugosidad (agua muy lisa)
+    // G = rugosidad. Agua = liso pero NO espejo (≈0.4), para un brillo suave en
+    // vez de un reflejo duro; tierra = mate (1.0).
+    o[i * 4 + 1] = isWater ? 100 : 255;
     o[i * 4 + 2] = 0;                     // B sin usar (metalización a 0)
     o[i * 4 + 3] = 255;
     if (isWater) water++;
@@ -8280,6 +8974,44 @@ function expandBox(b, mult, minKm, maxKm) {
   return { south: cLat - hLat, north: cLat + hLat, west: cLon - hLon, east: cLon + hLon };
 }
 
+// Servidor principal de Overpass: rápido, con CORS y datos mundiales. Es el único
+// del que nos fiamos para el camino rápido.
+const OVERPASS_MAIN = 'https://overpass-api.de/api/interpreter';
+// Espejos de respaldo (con CORS y datos mundiales) para cuando el principal falla.
+// Son fiables pero LENTOS (10–30 s), así que solo se usan como último recurso; da
+// igual porque los rótulos se cargan en segundo plano y no bloquean la escena.
+// (Se descartan a propósito kumi/private.coffee/osm.jp —sin CORS— y osm.ch —solo
+// datos de Suiza, devuelve vacío para el resto—.)
+const OVERPASS_FALLBACKS = [
+  'https://overpass-api.de/api/interpreter', // por si se ha recuperado
+  'https://overpass.openstreetmap.fr/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+];
+
+/** Un intento a un endpoint, abortado si supera `timeoutMs`. Lanza si falla. */
+async function overpassTry(url, body, timeoutMs) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { method: 'POST', body, signal: ctrl.signal });
+    if (!res.ok) throw new Error(String(res.status));
+    return (await res.json()).elements || [];
+  } finally { clearTimeout(to); }
+}
+
+/**
+ * Lanza una consulta Overpass con tolerancia a fallos: primero un intento rápido al
+ * servidor principal; si falla (504/timeout, frecuente por saturación), corre en
+ * paralelo varios espejos (`Promise.any`, gana el que responda) con más margen.
+ * Devuelve el array de elementos, o null si ninguno respondió.
+ */
+async function fetchOverpass(query) {
+  const body = 'data=' + encodeURIComponent(query);
+  try { return await overpassTry(OVERPASS_MAIN, body, 9000); } catch { /* al respaldo */ }
+  try { return await Promise.any(OVERPASS_FALLBACKS.map((u) => overpassTry(u, body, 28000))); } catch { /* nada */ }
+  return null;
+}
+
 /**
  * Puntos de interés del horizonte desde OpenStreetMap (Overpass): cimas
  * (natural=peak, con su cota), núcleos de población (place=city/town/village/
@@ -8291,26 +9023,6 @@ function expandBox(b, mult, minKm, maxKm) {
  * @param {{west:number,east:number,north:number,south:number}} b bbox de consulta
  * @returns {Promise<Array<{lat:number,lon:number,name:string,kind:'peak'|'town'|'water',ele:number|null,rank:number}>>}
  */
-/**
- * Lanza una consulta Overpass probando el servidor principal y un espejo, con un
- * tiempo máximo. Devuelve el array de elementos, o null si ningún endpoint
- * respondió a tiempo.
- */
-async function fetchOverpass(query, timeoutMs) {
-  const endpoints = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
-  for (const url of endpoints) {
-    try {
-      const ctrl = new AbortController();
-      const to = setTimeout(() => ctrl.abort(), timeoutMs);
-      const res = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(query), signal: ctrl.signal });
-      clearTimeout(to);
-      if (!res.ok) continue;
-      return (await res.json()).elements || [];
-    } catch { /* siguiente espejo */ }
-  }
-  return null;
-}
-
 async function fetchHorizonPOIs(b) {
   const bbox = `${b.south},${b.west},${b.north},${b.east}`;
   // Dos consultas independientes en paralelo: cimas/núcleos (nodos, rápida) y
@@ -8330,7 +9042,7 @@ async function fetchHorizonPOIs(b) {
     `relation["landuse"="reservoir"]["name"](${bbox});` +
     `way["waterway"="river"]["name"](${bbox});` +
     `);out center 200;`;
-  const [land, water] = await Promise.all([fetchOverpass(qLand, 12000), fetchOverpass(qWater, 12000)]);
+  const [land, water] = await Promise.all([fetchOverpass(qLand), fetchOverpass(qWater)]);
   const els = [...(land || []), ...(water || [])];
   if (!els.length) return [];
 
@@ -8372,7 +9084,7 @@ async function fetchHorizonPOIs(b) {
  * @returns {Promise<object>} datos listos para cualquier motor de render
  */
 async function buildScene3D(model, opts = {}) {
-  const tc = wideConfig(model.track, opts.extent ?? 4); // mapa ampliado a 4× el vuelo
+  const tc = wideConfig(model.track, opts.extent ?? 6); // mapa ampliado a 6× el vuelo
   const { PX, PY } = projector(tc);
   const b = tileBounds(tc);
 
@@ -8461,16 +9173,16 @@ async function buildScene3D(model, opts = {}) {
     elevation: sp.elevation, azimuth: sp.azimuth, phase: lightPhase(sp.elevation),
   };
 
-  const texture = await buildTexture(tc);
+  const texture = await buildTexture(tc, 4, opts.maxTex);
   const water = buildWaterMask(texture); // máscara de agua (o null)
   const world = await buildWorldTexture(4); // globo de la intro (más nítido)
 
-  // rótulos del horizonte (cimas/pueblos de OSM): consulta un radio bastante
-  // mayor que el terreno (los pueblos vecinos quedan a varios km) y coloca cada
-  // rótulo en su dirección real. La cima usa su cota real; el resto (y lo que
-  // cae fuera del terreno) usa la altura del DEM, que se satura al borde. Va en
-  // segundo plano para no retrasar la escena; el componente los añade al resolver.
-  const poiBox = expandBox(b, 4, 4, 12); // 4× el terreno, entre 4 y 12 km por lado
+  // rótulos del horizonte (cimas/pueblos de OSM): se consultan DENTRO del terreno
+  // (95%, con un pequeño margen del borde) para que ningún rótulo quede flotando
+  // fuera del mapa. La cima usa su cota real; el resto (y el agua, cuyo centroide
+  // puede caer lejos) usa la altura del DEM. Va en segundo plano para no retrasar
+  // la escena; el componente los añade al resolver.
+  const poiBox = expandBox(b, 0.95, 0, 1e4); // ≈ el terreno visible, ligeramente por dentro
   const poisReady = fetchHorizonPOIs(poiBox)
     .then((raw) => raw.map((p) => {
       let lat = p.lat, lon = p.lon;
@@ -8615,9 +9327,14 @@ function parseSRT(txt) {
     const sh = body.match(/shutter: 1\/([\d.]+)/);
     const cm = body.match(/color_md: ?([^\],]+)/);
     const eis = body.match(/eis:\s*([^\],]+)/);
+    // Antes del fix GPS, DJI escribe latitude/longitude = 0.000000: no es una
+    // posición real (cae en el golfo de Guinea), así que la tratamos como sin dato
+    // para que no contamine takeoff, alejamiento, recorrido ni la trayectoria.
+    let lat = num(body, 'latitude'), lon = num(body, 'longitude');
+    if (lat === 0 && lon === 0) { lat = null; lon = null; }
     rows.push({
       cnt: +m[1], ts: m[2],
-      lat: num(body, 'latitude'), lon: num(body, 'longitude'),
+      lat, lon,
       rel: num(body, 'rel_alt'), ab: num(body, 'abs_alt'),
       iso: num(body, 'iso'), ct: num(body, 'ct'), ev: num(body, 'ev'), fnum: num(body, 'fnum'),
       shutter: sh ? sh[1].slice(0, -2) : null,
@@ -8671,9 +9388,11 @@ function parseSRT(txt) {
     }
   }
 
-  const valid = rows.filter(r => r.lat);
-  const lat0 = rows[0].lat, lon0 = rows[0].lon;
-  const maxfar = Math.max(...valid.map(r => hav(lat0, lon0, r.lat, r.lon)));
+  // origen del vuelo = primer fotograma con GPS válido (no el frame 0, que puede
+  // ser previo al fix); el alejamiento y el despegue se miden desde ahí.
+  const valid = rows.filter(r => r.lat != null);
+  const lat0 = valid.length ? valid[0].lat : null, lon0 = valid.length ? valid[0].lon : null;
+  const maxfar = valid.length ? Math.max(...valid.map(r => hav(lat0, lon0, r.lat, r.lon))) : 0;
 
   const rng = (k, src = valid) => {
     const v = src.map(r => r[k]).filter(x => x != null);
@@ -8700,8 +9419,11 @@ function parseSRT(txt) {
       vspeed: [vspeeds.length ? Math.min(...vspeeds) : 0, vspeeds.length ? Math.max(...vspeeds) : 0],
     },
     dist: Math.round(dist), maxfar: Math.round(maxfar),
-    takeoff: [lat0, lon0], land: [rows[rows.length - 1].lat, rows[rows.length - 1].lon],
-    center: [valid.reduce((s, r) => s + r.lat, 0) / valid.length, valid.reduce((s, r) => s + r.lon, 0) / valid.length],
+    takeoff: [lat0, lon0],
+    land: valid.length ? [valid[valid.length - 1].lat, valid[valid.length - 1].lon] : [null, null],
+    center: valid.length
+      ? [valid.reduce((s, r) => s + r.lat, 0) / valid.length, valid.reduce((s, r) => s + r.lon, 0) / valid.length]
+      : [null, null],
     cam: {
       iso: isos, shutter: shs,
       fnum: uniq(rows.map(r => r.fnum)).sort((a, b) => a - b),

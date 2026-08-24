@@ -598,7 +598,7 @@ export class FlightReport extends DjiElement {
   afterRender() {
     if (!this.model) return;
     const S = this.model.series, dur = this.model.meta.dur, [tk0, tk1] = this.model.takeoff;
-    for (const s of S) { s.hskmh = s.hs != null ? s.hs * 3.6 : null; if (s.far == null) s.far = hav(tk0, tk1, s.lat, s.lon); }
+    for (const s of S) { s.hskmh = s.hs != null ? s.hs * 3.6 : null; if (s.far == null) s.far = s.lat != null ? hav(tk0, tk1, s.lat, s.lon) : null; }
 
     this.$('#c-alt').data = { series: S, dur, cfgs: [{ k: 'rel', color: '--c-blue', area: true, min: 0, fmt: (v) => `${Math.round(v)}`, label: t('alt.series'), unit: 'm', dec: 0 }] };
     this.$('#c-sp').data = { series: S, dur, cfgs: [
