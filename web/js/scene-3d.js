@@ -63,16 +63,23 @@ async function fetchTerrainDEM(b) {
 }
 
 /**
- * Encuadre de teselas para el 3D: expande el bbox del vuelo por `factor` (4× por
+ * Encuadre de teselas para el 3D: expande el bbox del vuelo por `factor` (6× por
  * defecto) para mostrar más contexto alrededor, y elige el zoom para no pasar de
  * un presupuesto de teselas. Devuelve la misma forma que geo.tileConfig.
  */
-function wideConfig(track, factor = 4) {
+function wideConfig(track, factor = 6) {
   const T = track.filter((p) => p[0] != null);
   const lats = T.map((p) => p[0]), lons = T.map((p) => p[1]);
   let la0 = Math.min(...lats), la1 = Math.max(...lats), lo0 = Math.min(...lons), lo1 = Math.max(...lons);
   const dla = (la1 - la0) || 1e-4, dlo = (lo1 - lo0) || 1e-4, pad = (factor - 1) / 2;
   la0 -= dla * pad; la1 += dla * pad; lo0 -= dlo * pad; lo1 += dlo * pad;
+  // evita el mapa en tira muy estrecha (vuelos alargados): fuerza un aspecto
+  // mínimo (lado corto ≥ 60% del largo, en metros) para que entren también los
+  // pueblos/cimas laterales sin que floten fuera.
+  const cosLat = Math.cos((la0 + la1) / 2 * Math.PI / 180) || 1, R = 0.6;
+  const wLat = la1 - la0, wLon = (lo1 - lo0) * cosLat;
+  if (wLon < R * wLat) { const g = (R * wLat / cosLat - (lo1 - lo0)) / 2; lo0 -= g; lo1 += g; }
+  else if (wLat < R * wLon) { const g = (R * wLon - (la1 - la0)) / 2; la0 -= g; la1 += g; }
   const tilesAt = (z) => {
     const n = 2 ** z;
     const xt = (lon) => (lon + 180) / 360 * n;
@@ -101,14 +108,18 @@ function tileBounds(tc) {
  * el bbox está alineado a teselas de tc.z, también lo está en zoom+boost. El
  * mapeo uv sigue siendo normalizado [0,1] sobre `b`, así que no cambia.
  */
-async function buildTexture(tc, boost = 3) {
+async function buildTexture(tc, boost = 4, maxTex = 8192) {
   const f = 2 ** boost, z = tc.z + boost;
   const x0 = tc.x0 * f, x1 = (tc.x1 + 1) * f - 1;
   const y0 = tc.y0 * f, y1 = (tc.y1 + 1) * f - 1;
   const cols = x1 - x0 + 1, rows = y1 - y0 + 1;
-  // baja de zoom si se pasa de teselas (descargas) o del tamaño máximo de textura
-  // del GPU (8192 px por lado en tarjetas modestas)
-  if (boost > 0 && (cols * rows > 520 || cols * 256 > 8192 || rows * 256 > 8192)) return buildTexture(tc, boost - 1);
+  // baja de zoom si se pasa del presupuesto de teselas (descargas) o del tamaño
+  // máximo de textura que soporta la GPU (típico 16384; 8192 en tarjetas modestas).
+  // Con más margen la textura conserva nitidez aunque el mapa sea grande.
+  const cap = Math.min(maxTex || 8192, 16384);
+  // tope de teselas: más nitidez que antes (≈4×), pero acotado porque el navegador
+  // solo abre ~6 conexiones por host y cada tesela extra alarga la carga.
+  if (boost > 0 && (cols * rows > 1400 || cols * 256 > cap || rows * 256 > cap)) return buildTexture(tc, boost - 1, maxTex);
   const cv = document.createElement('canvas');
   cv.width = cols * 256; cv.height = rows * 256;
   const ctx = cv.getContext('2d');
@@ -168,11 +179,14 @@ function buildWaterMask(texCanvas) {
   let water = 0;
   for (let i = 0; i < W * H; i++) {
     const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2], mx2 = Math.max(r, g, b);
-    // agua (azul o turquesa): azulada-verdosa con el rojo apagado, no vegetación
-    // (verde con poco azul) ni suelo claro (todo alto). Vale para embalses turquesa.
-    const isWater = b >= g - 10 && b > r + 6 && g >= r + 3 && mx2 < 205;
+    // agua (embalse/río): azul claramente dominante sobre el rojo y no muy clara.
+    // Umbrales estrictos para no marcar campos/sombras azuladas como agua (que
+    // saldrían con un destello del sol falso). Vale para embalses turquesa (b≈g).
+    const isWater = b > r + 14 && b >= g - 4 && r < 110 && mx2 < 175;
     o[i * 4] = 0;
-    o[i * 4 + 1] = isWater ? 16 : 255;   // G = rugosidad (agua muy lisa)
+    // G = rugosidad. Agua = liso pero NO espejo (≈0.4), para un brillo suave en
+    // vez de un reflejo duro; tierra = mate (1.0).
+    o[i * 4 + 1] = isWater ? 100 : 255;
     o[i * 4 + 2] = 0;                     // B sin usar (metalización a 0)
     o[i * 4 + 3] = 255;
     if (isWater) water++;
@@ -195,6 +209,44 @@ function expandBox(b, mult, minKm, maxKm) {
   return { south: cLat - hLat, north: cLat + hLat, west: cLon - hLon, east: cLon + hLon };
 }
 
+// Servidor principal de Overpass: rápido, con CORS y datos mundiales. Es el único
+// del que nos fiamos para el camino rápido.
+const OVERPASS_MAIN = 'https://overpass-api.de/api/interpreter';
+// Espejos de respaldo (con CORS y datos mundiales) para cuando el principal falla.
+// Son fiables pero LENTOS (10–30 s), así que solo se usan como último recurso; da
+// igual porque los rótulos se cargan en segundo plano y no bloquean la escena.
+// (Se descartan a propósito kumi/private.coffee/osm.jp —sin CORS— y osm.ch —solo
+// datos de Suiza, devuelve vacío para el resto—.)
+const OVERPASS_FALLBACKS = [
+  'https://overpass-api.de/api/interpreter', // por si se ha recuperado
+  'https://overpass.openstreetmap.fr/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+];
+
+/** Un intento a un endpoint, abortado si supera `timeoutMs`. Lanza si falla. */
+async function overpassTry(url, body, timeoutMs) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { method: 'POST', body, signal: ctrl.signal });
+    if (!res.ok) throw new Error(String(res.status));
+    return (await res.json()).elements || [];
+  } finally { clearTimeout(to); }
+}
+
+/**
+ * Lanza una consulta Overpass con tolerancia a fallos: primero un intento rápido al
+ * servidor principal; si falla (504/timeout, frecuente por saturación), corre en
+ * paralelo varios espejos (`Promise.any`, gana el que responda) con más margen.
+ * Devuelve el array de elementos, o null si ninguno respondió.
+ */
+async function fetchOverpass(query) {
+  const body = 'data=' + encodeURIComponent(query);
+  try { return await overpassTry(OVERPASS_MAIN, body, 9000); } catch { /* al respaldo */ }
+  try { return await Promise.any(OVERPASS_FALLBACKS.map((u) => overpassTry(u, body, 28000))); } catch { /* nada */ }
+  return null;
+}
+
 /**
  * Puntos de interés del horizonte desde OpenStreetMap (Overpass): cimas
  * (natural=peak, con su cota), núcleos de población (place=city/town/village/
@@ -206,26 +258,6 @@ function expandBox(b, mult, minKm, maxKm) {
  * @param {{west:number,east:number,north:number,south:number}} b bbox de consulta
  * @returns {Promise<Array<{lat:number,lon:number,name:string,kind:'peak'|'town'|'water',ele:number|null,rank:number}>>}
  */
-/**
- * Lanza una consulta Overpass probando el servidor principal y un espejo, con un
- * tiempo máximo. Devuelve el array de elementos, o null si ningún endpoint
- * respondió a tiempo.
- */
-async function fetchOverpass(query, timeoutMs) {
-  const endpoints = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
-  for (const url of endpoints) {
-    try {
-      const ctrl = new AbortController();
-      const to = setTimeout(() => ctrl.abort(), timeoutMs);
-      const res = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(query), signal: ctrl.signal });
-      clearTimeout(to);
-      if (!res.ok) continue;
-      return (await res.json()).elements || [];
-    } catch { /* siguiente espejo */ }
-  }
-  return null;
-}
-
 async function fetchHorizonPOIs(b) {
   const bbox = `${b.south},${b.west},${b.north},${b.east}`;
   // Dos consultas independientes en paralelo: cimas/núcleos (nodos, rápida) y
@@ -245,7 +277,7 @@ async function fetchHorizonPOIs(b) {
     `relation["landuse"="reservoir"]["name"](${bbox});` +
     `way["waterway"="river"]["name"](${bbox});` +
     `);out center 200;`;
-  const [land, water] = await Promise.all([fetchOverpass(qLand, 12000), fetchOverpass(qWater, 12000)]);
+  const [land, water] = await Promise.all([fetchOverpass(qLand), fetchOverpass(qWater)]);
   const els = [...(land || []), ...(water || [])];
   if (!els.length) return [];
 
@@ -287,7 +319,7 @@ async function fetchHorizonPOIs(b) {
  * @returns {Promise<object>} datos listos para cualquier motor de render
  */
 export async function buildScene3D(model, opts = {}) {
-  const tc = wideConfig(model.track, opts.extent ?? 4); // mapa ampliado a 4× el vuelo
+  const tc = wideConfig(model.track, opts.extent ?? 6); // mapa ampliado a 6× el vuelo
   const { PX, PY } = projector(tc);
   const b = tileBounds(tc);
 
@@ -376,16 +408,16 @@ export async function buildScene3D(model, opts = {}) {
     elevation: sp.elevation, azimuth: sp.azimuth, phase: lightPhase(sp.elevation),
   };
 
-  const texture = await buildTexture(tc);
+  const texture = await buildTexture(tc, 4, opts.maxTex);
   const water = buildWaterMask(texture); // máscara de agua (o null)
   const world = await buildWorldTexture(4); // globo de la intro (más nítido)
 
-  // rótulos del horizonte (cimas/pueblos de OSM): consulta un radio bastante
-  // mayor que el terreno (los pueblos vecinos quedan a varios km) y coloca cada
-  // rótulo en su dirección real. La cima usa su cota real; el resto (y lo que
-  // cae fuera del terreno) usa la altura del DEM, que se satura al borde. Va en
-  // segundo plano para no retrasar la escena; el componente los añade al resolver.
-  const poiBox = expandBox(b, 4, 4, 12); // 4× el terreno, entre 4 y 12 km por lado
+  // rótulos del horizonte (cimas/pueblos de OSM): se consultan DENTRO del terreno
+  // (95%, con un pequeño margen del borde) para que ningún rótulo quede flotando
+  // fuera del mapa. La cima usa su cota real; el resto (y el agua, cuyo centroide
+  // puede caer lejos) usa la altura del DEM. Va en segundo plano para no retrasar
+  // la escena; el componente los añade al resolver.
+  const poiBox = expandBox(b, 0.95, 0, 1e4); // ≈ el terreno visible, ligeramente por dentro
   const poisReady = fetchHorizonPOIs(poiBox)
     .then((raw) => raw.map((p) => {
       let lat = p.lat, lon = p.lon;

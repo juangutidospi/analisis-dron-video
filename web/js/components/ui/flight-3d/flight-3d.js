@@ -87,7 +87,11 @@ export class Flight3D extends DjiElement {
 
   _build() {
     const token = (this._token = Symbol('build'));
-    buildScene3D(this._flight.model).then((scene) => {
+    // tamaño máximo de textura de la GPU (para no perder nitidez al ampliar el
+    // mapa): se consulta con un contexto temporal, ya que el renderer aún no existe
+    let maxTex = 8192;
+    try { const c = document.createElement('canvas'); const gl = c.getContext('webgl2') || c.getContext('webgl'); if (gl) maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE); } catch { /* usa 8192 */ }
+    buildScene3D(this._flight.model, { maxTex }).then((scene) => {
       if (token !== this._token || !this.isConnected) return;
       this._scene = scene;
       this._initThree(scene);
