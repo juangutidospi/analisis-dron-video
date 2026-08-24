@@ -354,6 +354,9 @@ export async function buildScene3D(model, opts = {}) {
 
   // altura de mundo (m, con exageración) para una cota MSL del terreno
   const groundY = (lat, lon) => (heightAt(lat, lon) - base) * VE;
+  // altura de mundo del suelo en un punto (x,z) del mundo, invirtiendo X()/Z().
+  // Sirve para apoyar la sombra del dron sobre el terreno del punto desplazado.
+  const groundAtXZ = (x, z) => groundY(lat0 - z / MPD_LAT, lon0 + x / mpdLon);
 
   const terrain = {
     grid: rgrid, base,
@@ -442,7 +445,7 @@ export async function buildScene3D(model, opts = {}) {
       x0: X(b.west), x1: X(b.east), z0: Z(b.north), z1: Z(b.south),
       spanX: X(b.east) - X(b.west), spanZ: Z(b.south) - Z(b.north),
     },
-    terrain, texture, water, track, droneAt, relMax, sun,
+    terrain, texture, water, track, droneAt, relMax, sun, groundAtXZ,
     keypoints: keypoints(model).map((k) => ({ key: k.key, t: k.t, x: X(k.lon), y: worldY(k.x.rel ?? 0), z: Z(k.lat) })),
     takeoffXZ: { x: X(model.takeoff[1]), z: Z(model.takeoff[0]), y: worldY(0) },
     duration: model.meta.dur || (S.length ? S[S.length - 1].t : 0),

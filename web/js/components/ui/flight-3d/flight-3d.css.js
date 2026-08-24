@@ -48,13 +48,18 @@ canvas:active { cursor: grabbing; }
 .v3d-btn.on { background: var(--color-accent); border-color: transparent; color: #fff; }
 #speed { min-width: 40px; font-variant-numeric: tabular-nums; }
 .v3d-btn svg { width: 15px; height: 15px; }
-#settings, #export, #reset { padding: 0 10px; }
+#settings, #export, #reset, #fs { padding: 0 10px; }
+.v3d-btn[hidden] { display: none; }
+.v3d-sep { flex: none; width: 1px; align-self: stretch; margin: 2px 1px; background: rgba(255,255,255,.14); }
+#fs .fs-in { display: none; }
+#fs.on .fs-out { display: none; }
+#fs.on .fs-in { display: block; }
 
 /* panel de ajustes (capas del render) */
 .v3d-opts {
-  position: absolute; right: 12px; bottom: 64px; z-index: 7;
+  position: absolute; right: 12px; bottom: 64px; z-index: 10;
   min-width: 200px; padding: 10px 12px; border-radius: 14px;
-  background: rgba(12,17,26,.82); backdrop-filter: blur(14px);
+  background: rgba(12,17,26,.95); backdrop-filter: blur(14px);
   border: 1px solid rgba(255,255,255,.12); box-shadow: 0 10px 30px rgba(0,0,0,.4);
   display: flex; flex-direction: column; gap: 2px;
 }
@@ -69,6 +74,21 @@ canvas:active { cursor: grabbing; }
 }
 .v3d-opts label:hover { background: rgba(255,255,255,.07); }
 .v3d-opts input { width: 15px; height: 15px; accent-color: var(--color-accent); cursor: pointer; }
+
+/* selector de tamaño del dron (segmentado de 3 opciones, apilado bajo su etiqueta) */
+.v3d-size {
+  display: flex; flex-direction: column; gap: 7px;
+  margin: 6px 2px 2px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.1);
+}
+.v3d-size-l { color: #eef2f8; font-size: 13px; padding-left: 4px; }
+.v3d-seg { display: flex; width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,.16); }
+.v3d-seg button {
+  flex: 1; appearance: none; border: 0; cursor: pointer; padding: 6px 4px; font-size: 12px; font-weight: 600;
+  background: rgba(255,255,255,.05); color: #cdd5e0; border-left: 1px solid rgba(255,255,255,.12);
+}
+.v3d-seg button:first-child { border-left: 0; }
+.v3d-seg button:hover { background: rgba(255,255,255,.12); }
+.v3d-seg button.on { background: var(--color-accent); color: #fff; }
 
 /* overlay de progreso de la exportación de vídeo */
 .v3d-export {
@@ -86,6 +106,8 @@ canvas:active { cursor: grabbing; }
 .v3d-export-t.err { color: #ff8f8f; }
 .v3d-export-bar { width: 220px; height: 7px; border-radius: 100px; background: rgba(255,255,255,.12); overflow: hidden; }
 .v3d-export-f { height: 100%; width: 0; background: var(--color-accent); transition: width .15s ease; }
+.v3d-export-est { color: rgba(238,242,248,.6); font-size: 12px; font-variant-numeric: tabular-nums; }
+.v3d-export-est:empty { display: none; }
 
 /* cartel de ayuda del modo vuelo libre */
 .v3d-free-hint {
