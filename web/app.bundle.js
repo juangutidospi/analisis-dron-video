@@ -535,6 +535,10 @@ const styles = css`
 canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
 canvas:active { cursor: grabbing; }
 
+/* pantalla completa: el contenedor llena la pantalla (sin aspect-ratio ni bordes) */
+.v3d:fullscreen { width: 100%; height: 100%; aspect-ratio: auto; border-radius: 0; border: none; }
+.v3d:fullscreen canvas { height: 100%; }
+
 /* estado de carga */
 .v3d.loading::after {
   content: ""; position: absolute; inset: 0; z-index: 4;
@@ -551,7 +555,7 @@ canvas:active { cursor: grabbing; }
 /* controles */
 .v3d-bar {
   position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 6;
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; row-gap: 8px;
   padding: 9px 12px; border-radius: 100px;
   background: rgba(12,17,26,.62); backdrop-filter: blur(12px);
   border: 1px solid rgba(255,255,255,.1);
@@ -607,6 +611,16 @@ canvas:active { cursor: grabbing; }
 .v3d-export-t.err { color: #ff8f8f; }
 .v3d-export-bar { width: 220px; height: 7px; border-radius: 100px; background: rgba(255,255,255,.12); overflow: hidden; }
 .v3d-export-f { height: 100%; width: 0; background: var(--color-accent); transition: width .15s ease; }
+
+/* cartel de ayuda del modo vuelo libre */
+.v3d-free-hint {
+  position: absolute; left: 50%; bottom: 62px; transform: translateX(-50%); z-index: 7;
+  padding: 7px 14px; border-radius: 100px; white-space: nowrap;
+  background: rgba(12,17,26,.72); backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,.12); color: #eef2f8; font-size: 12px; font-weight: 500;
+}
+.v3d-free-hint[hidden] { display: none; }
+@media (max-width: 720px) { .v3d-free-hint { white-space: normal; max-width: 90%; text-align: center; } }
 .v3d-prog { flex: 1; height: 6px; border-radius: 100px; background: rgba(255,255,255,.16); position: relative; cursor: pointer; }
 .v3d-prog-f { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 100px; background: linear-gradient(90deg, var(--color-accent), var(--color-violet)); }
 .v3d-time { flex: none; font-size: 12px; color: #c9d2e2; font-variant-numeric: tabular-nums; min-width: 76px; text-align: right; }
@@ -702,6 +716,15 @@ class Flight3D extends DjiElement {
   /** Capas visibles del render (las controla el panel de ajustes). */
   _show = { track: true, kp: true, places: true, water: true, hud: true };
 
+  /** Estado del modo vuelo libre (WASD + ratón). null u {on:false} = desactivado. */
+  _free = null;
+
+  /** Estado del modo pilotar el dron (WASD mueve el dron, la cámara lo sigue). */
+  _pilot = null;
+
+  /** Velocidad de vuelo (modos libre/pilotar): 0=lenta, 1=media, 2=rápida. */
+  _flySpeedIdx = 0;
+
   /** @param {{model:object}} v */
   set flight(v) { this._flight = v; if (this.isConnected) this._paint(); }
   get flight() { return this._flight; }
@@ -746,6 +769,15 @@ class Flight3D extends DjiElement {
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h3l1 2H5l-1-2zm5 0h3l1 2h-3l-1-2zm5 0h3l1 2h-3l-1-2zM3 8h18v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8z"/></svg>
             <span>${t('v3d.cine.short')}</span>
           </button>
+          <button class="v3d-btn" id="flyspeed" type="button" title="${t('v3d.flyspeed')}">${t('v3d.flyspeed.med')}</button>
+          <button class="v3d-btn" id="free" type="button" title="${t('v3d.free')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l3 3-3 3-3-3 3-3zm0 12l3 3-3 3-3-3 3-3zM3 12l3-3 3 3-3 3-3-3zm12 0l3-3 3 3-3 3-3-3z"/></svg>
+            <span>${t('v3d.free.short')}</span>
+          </button>
+          <button class="v3d-btn" id="pilot" type="button" title="${t('v3d.pilot')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2.2"/><circle cx="5.5" cy="5.5" r="2.6"/><circle cx="18.5" cy="5.5" r="2.6"/><circle cx="5.5" cy="18.5" r="2.6"/><circle cx="18.5" cy="18.5" r="2.6"/><path d="M7 7l3.4 3.4M17 7l-3.4 3.4M7 17l3.4-3.4M17 17l-3.4-3.4"/></svg>
+            <span>${t('v3d.pilot.short')}</span>
+          </button>
           <button class="v3d-btn" id="reset" type="button" title="${t('v3d.reset')}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 4v4h4"/></svg>
           </button>
@@ -755,6 +787,9 @@ class Flight3D extends DjiElement {
           <button class="v3d-btn" id="export" type="button" title="${t('v3d.export')}" aria-label="${t('v3d.export.short')}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M8 11l4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
           </button>
+          <button class="v3d-btn" id="fs" type="button" title="${t('v3d.fullscreen')}" aria-label="${t('v3d.fullscreen')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+          </button>
         </div>
         <div class="v3d-export" id="exp" hidden>
           <div class="v3d-export-box">
@@ -763,6 +798,7 @@ class Flight3D extends DjiElement {
             <button class="v3d-btn" id="expCancel" type="button">${t('v3d.export.cancel')}</button>
           </div>
         </div>
+        <div class="v3d-free-hint" id="freeHint" hidden>${t('v3d.free.hint')}</div>
       </div>`;
   }
 
@@ -780,13 +816,24 @@ class Flight3D extends DjiElement {
     } else this._build();
   }
 
+  /** Tamaño máximo de textura de la GPU. Se consulta UNA sola vez (con un contexto
+   *  WebGL temporal que se libera enseguida) y se cachea, para no ir agotando los
+   *  contextos del navegador en cada reconstrucción. */
+  static _maxTextureSize() {
+    if (Flight3D._maxTex) return Flight3D._maxTex;
+    let m = 8192;
+    try {
+      const c = document.createElement('canvas');
+      const gl = c.getContext('webgl2') || c.getContext('webgl');
+      if (gl) { m = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 8192; gl.getExtension('WEBGL_lose_context')?.loseContext(); }
+    } catch { /* usa 8192 */ }
+    Flight3D._maxTex = m;
+    return m;
+  }
+
   _build() {
     const token = (this._token = Symbol('build'));
-    // tamaño máximo de textura de la GPU (para no perder nitidez al ampliar el
-    // mapa): se consulta con un contexto temporal, ya que el renderer aún no existe
-    let maxTex = 8192;
-    try { const c = document.createElement('canvas'); const gl = c.getContext('webgl2') || c.getContext('webgl'); if (gl) maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE); } catch { /* usa 8192 */ }
-    buildScene3D(this._flight.model, { maxTex }).then((scene) => {
+    buildScene3D(this._flight.model, { maxTex: Flight3D._maxTextureSize() }).then((scene) => {
       if (token !== this._token || !this.isConnected) return;
       this._scene = scene;
       this._initThree(scene);
@@ -1585,6 +1632,187 @@ class Flight3D extends DjiElement {
     if (p >= 1) this._camTween = null;
   }
 
+  /* ---------- modo vuelo libre (WASD + ratón) ---------- */
+
+  /** Activa/desactiva el vuelo libre. Al entrar toma la posición y orientación
+   *  actuales de la cámara; al salir reconstruye la órbita para no dar un salto. */
+  _toggleFree() {
+    const on = !(this._free && this._free.on);
+    const THREE = window.THREE, dir = new THREE.Vector3();
+    this._cam.getWorldDirection(dir);
+    if (on) {
+      this._stopFlyover(); this._camTween = null;
+      if (this._cineMode) { this._cineMode = false; this.$('#cine').classList.remove('on'); }
+      const yaw = Math.atan2(dir.x, -dir.z), pitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
+      this._free = { on: true, pos: this._cam.position.clone(), yaw, pitch, keys: new Set(), speedMul: 1, last: performance.now() };
+    } else {
+      // reconstruye la órbita mirando a un punto por delante (sin saltos)
+      const tp = this._cam.position.clone().addScaledVector(dir, this._span * 0.4);
+      this._target.copy(tp);
+      const off = this._cam.position.clone().sub(tp), r = off.length() || 1;
+      this._orbit.r = Math.max(this._orbit.min, Math.min(this._orbit.max, r));
+      this._orbit.phi = Math.acos(Math.max(-1, Math.min(1, off.y / r)));
+      this._orbit.theta = Math.atan2(off.z, off.x);
+      this._free = { on: false }; this._look = null; this._applyOrbit();
+    }
+    this.$('#free').classList.toggle('on', on);
+    this._setHint(on ? 'v3d.free.hint' : null);
+  }
+
+  /** Muestra/oculta el cartel de ayuda (controles) con el texto de la clave i18n. */
+  _setHint(key) { const h = this.$('#freeHint'); if (!h) return; if (key) { h.textContent = t(key); h.hidden = false; } else h.hidden = true; }
+
+  /** Altura del terreno bajo (x,z): rayo vertical hacia abajo sobre la malla. */
+  _groundYAt(x, z) {
+    if (!this._terrainMesh) return null;
+    const THREE = window.THREE, ray = (this._ray || (this._ray = new THREE.Raycaster()));
+    ray.set(new THREE.Vector3(x, this._span * 2, z), new THREE.Vector3(0, -1, 0));
+    const hit = ray.intersectObject(this._terrainMesh, false)[0];
+    return hit ? hit.point.y : null;
+  }
+
+  /** Activa/desactiva el pilotaje del dron. Arranca desde la posición actual del
+   *  dron; al salir reconstruye la órbita centrada en él. */
+  _togglePilot() {
+    const on = !(this._pilot && this._pilot.on);
+    if (on) {
+      this._stopFlyover(); this._camTween = null;
+      if (this._free && this._free.on) { this._free = { on: false }; this.$('#free').classList.remove('on'); }
+      if (this._cineMode) { this._cineMode = false; this.$('#cine').classList.remove('on'); }
+      const d = this._scene.droneAt(this._time || 0);
+      this._pilot = { on: true, pos: new window.THREE.Vector3(d.x, d.y, d.z), yaw: this._bodyHeading ?? 0, camYaw: this._bodyHeading ?? 0, roll: 0, keys: new Set(), camPitch: 0.5, zoom: 1, last: performance.now() };
+      this._revealTrackFull(); if (this._trail) this._trail.visible = false;
+    } else {
+      const dp = this._drone ? this._drone.position.clone() : this._target.clone();
+      this._target.copy(dp);
+      const off = this._cam.position.clone().sub(dp), r = off.length() || 1;
+      this._orbit.r = Math.max(this._orbit.min, Math.min(this._orbit.max, r));
+      this._orbit.phi = Math.acos(Math.max(-1, Math.min(1, off.y / r)));
+      this._orbit.theta = Math.atan2(off.z, off.x);
+      this._pilot = { on: false }; this._look = null; this._applyOrbit();
+    }
+    this.$('#pilot').classList.toggle('on', on);
+    this._setHint(on ? 'v3d.pilot.hint' : null);
+  }
+
+  /** Un frame de pilotaje: mueve el dron con las teclas y encadena la cámara detrás. */
+  _stepPilot() {
+    const P = this._pilot; if (!P || !P.on || this._three !== this._localScene || !this._drone) return;
+    const THREE = window.THREE, now = performance.now(), dt = Math.min(0.05, (now - P.last) / 1000); P.last = now;
+    const k = P.keys, boost = k.has('shift') ? 2.6 : 1, sm = Math.min(1, dt * 6);
+    // la cámara ORBITA el dron: ratón (pointermove) y ←/→ mueven camYaw, ↑/↓ la altura
+    if (k.has('arrowleft')) P.camYaw -= 1.8 * dt;
+    if (k.has('arrowright')) P.camYaw += 1.8 * dt;
+    if (k.has('arrowup')) P.camPitch = Math.min(1.35, P.camPitch + 1.4 * dt);
+    if (k.has('arrowdown')) P.camPitch = Math.max(0.12, P.camPitch - 1.4 * dt);
+    // movimiento RELATIVO A LA CÁMARA: W hacia donde mira, A/D lateral, E/Q vertical
+    const camF = new THREE.Vector3(Math.sin(P.camYaw), 0, -Math.cos(P.camYaw));
+    const camR = new THREE.Vector3(Math.cos(P.camYaw), 0, Math.sin(P.camYaw));
+    const move = new THREE.Vector3();
+    if (k.has('w')) move.add(camF);
+    if (k.has('s')) move.sub(camF);
+    if (k.has('d')) move.add(camR);
+    if (k.has('a')) move.sub(camR);
+    if (k.has('e') || k.has(' ')) move.y += 1;
+    if (k.has('q') || k.has('c')) move.y -= 1;
+    const spd = this._span * 0.5 * boost * this._flyMul();
+    const desired = move.lengthSq() > 0 ? move.clone().normalize().multiplyScalar(spd) : new THREE.Vector3();
+    if (!P.vel) P.vel = new THREE.Vector3();
+    P.vel.lerp(desired, sm);
+    P.pos.addScaledVector(P.vel, dt);
+    // no bajar del suelo
+    const gy = this._groundYAt(P.pos.x, P.pos.z);
+    if (gy != null && P.pos.y < gy + (this._droneS || 10) * 1.2) { P.pos.y = gy + (this._droneS || 10) * 1.2; if (P.vel.y < 0) P.vel.y = 0; }
+    // el dron ENCARA SIEMPRE hacia el frente de la cámara (camYaw): al orbitar con
+    // las flechas/ratón ya se orienta (antes de avanzar), y en lateral (A/D) no
+    // gira porque el movimiento lateral no cambia camYaw.
+    let d = P.camYaw - P.yaw; d = ((d + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+    const turnStep = d * Math.min(1, dt * 5);
+    P.yaw += turnStep;
+    P.roll += ((Math.max(-0.4, Math.min(0.4, turnStep / Math.max(dt, 0.001) * 0.18)) - P.roll) * 0.1);
+    const fwd = new THREE.Vector3(Math.sin(P.yaw), 0, -Math.cos(P.yaw));
+    this._drone.position.copy(P.pos);
+    if (this._droneBody) {
+      const fwdSpeed = P.vel.x * fwd.x + P.vel.z * fwd.z;
+      P.pitch2 = (P.pitch2 || 0) + (Math.max(-0.16, Math.min(0.16, -fwdSpeed / (this._span * 0.6))) - (P.pitch2 || 0)) * 0.1;
+      this._droneBody.rotation.y = -P.yaw; this._droneBody.rotation.z = P.roll; this._droneBody.rotation.x = P.pitch2; // -yaw: el frente (-Z) mira al rumbo (igual que _placeDrone)
+    }
+    // cono de visión: apunta al frente del dron (rumbo), algo hacia abajo
+    if (this._cone) {
+      const el = -0.5, dir = new THREE.Vector3(Math.cos(el) * Math.sin(P.yaw), Math.sin(el), -Math.cos(el) * Math.cos(P.yaw));
+      this._cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir.normalize());
+    }
+    // sombra bajo el dron
+    if (this._shadow && gy != null) {
+      const agl = Math.max(0, P.pos.y - gy), base = (this._droneS || 12) * 2.1, sz = base + agl * 0.35;
+      this._shadow.position.set(P.pos.x, gy + 0.6, P.pos.z); this._shadow.scale.set(sz, sz, 1);
+      this._shadow.material.opacity = Math.max(0.16, 0.45 - agl * 0.0007);
+    }
+    // cámara: orbita según camYaw/camPitch y mira AL DRON (queda centrado en pantalla)
+    const r = this._span * 0.06 * P.zoom;
+    const want = P.pos.clone()
+      .addScaledVector(camF, -r * Math.cos(P.camPitch))
+      .addScaledVector(new THREE.Vector3(0, 1, 0), r * Math.sin(P.camPitch));
+    this._cam.position.lerp(want, 0.2);
+    this._cam.lookAt(P.pos.x, P.pos.y, P.pos.z);
+  }
+
+  /** Un frame de vuelo libre: mueve la cámara con WASD (con inercia) y la orienta
+   *  con el ratón o las flechas (para poder usarlo con trackpad, sin arrastrar). */
+  _stepFree() {
+    const F = this._free; if (!F || !F.on || this._three !== this._localScene) return;
+    const THREE = window.THREE, now = performance.now(), dt = Math.min(0.05, (now - F.last) / 1000); F.last = now;
+    const k = F.keys, lr = 1.8 * dt; // flechas: mirar (rad/frame)
+    if (k.has('arrowleft')) F.yaw -= lr;
+    if (k.has('arrowright')) F.yaw += lr;
+    if (k.has('arrowup')) F.pitch = Math.min(1.45, F.pitch + lr);
+    if (k.has('arrowdown')) F.pitch = Math.max(-1.45, F.pitch - lr);
+    const cp = Math.cos(F.pitch), sp = Math.sin(F.pitch);
+    const dir = new THREE.Vector3(cp * Math.sin(F.yaw), sp, -cp * Math.cos(F.yaw));
+    const right = new THREE.Vector3(Math.cos(F.yaw), 0, Math.sin(F.yaw));
+    const move = new THREE.Vector3();
+    if (k.has('w')) move.add(dir);
+    if (k.has('s')) move.sub(dir);
+    if (k.has('d')) move.add(right);
+    if (k.has('a')) move.sub(right);
+    if (k.has('e') || k.has(' ')) move.y += 1;
+    if (k.has('q') || k.has('c')) move.y -= 1;
+    // velocidad con inercia (arranque/frenado suaves)
+    const spd = this._span * 0.5 * (F.speedMul || 1) * (k.has('shift') ? 2.6 : 1) * this._flyMul();
+    const desired = move.lengthSq() > 0 ? move.normalize().multiplyScalar(spd) : new THREE.Vector3();
+    if (!F.vel) F.vel = new THREE.Vector3();
+    F.vel.lerp(desired, Math.min(1, dt * 6));
+    F.pos.addScaledVector(F.vel, dt);
+    this._cam.position.copy(F.pos);
+    this._cam.lookAt(F.pos.x + dir.x, F.pos.y + dir.y, F.pos.z + dir.z);
+  }
+
+  /** Registra/borra teclas del modo activo (vuelo libre o pilotaje). */
+  _freeKey(e, down) {
+    const M = (this._free && this._free.on) ? this._free : (this._pilot && this._pilot.on) ? this._pilot : null;
+    if (!M) return;
+    const key = e.key === ' ' ? ' ' : e.key.toLowerCase();
+    if (key === 'escape') { if (down) (this._free && this._free.on ? this._toggleFree() : this._togglePilot()); return; }
+    if (!'wasdqce '.includes(key) && key !== 'shift' && !key.startsWith('arrow')) return;
+    e.preventDefault();
+    if (down) M.keys.add(key); else M.keys.delete(key);
+  }
+
+  /** Multiplicador de velocidad de vuelo según el modo elegido (lenta/media/rápida). */
+  _flyMul() { return [0.12, 0.3, 0.6][this._flySpeedIdx] ?? 0.3; }
+
+  /** Cambia al siguiente modo de velocidad de vuelo y actualiza el botón. */
+  _cycleFlySpeed() {
+    this._flySpeedIdx = (this._flySpeedIdx + 1) % 3;
+    const b = this.$('#flyspeed'); if (b) b.textContent = t(['v3d.flyspeed.slow', 'v3d.flyspeed.med', 'v3d.flyspeed.fast'][this._flySpeedIdx]);
+  }
+
+  /** Pone/quita el visor 3D a pantalla completa (el ResizeObserver reajusta solo). */
+  _toggleFullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else this.$('#wrap')?.requestFullscreen?.().catch(() => {});
+  }
+
   _resize() {
     const wrap = this.$('#wrap'); if (!wrap || !this._renderer) return;
     const w = wrap.clientWidth, h = wrap.clientHeight;
@@ -1613,7 +1841,9 @@ class Flight3D extends DjiElement {
     const tick = () => {
       this._raf = requestAnimationFrame(tick);
       if (this._exporting) return; // durante la exportación conduce _exportVideo
-      if (this._introT0 != null) this._stepIntro();
+      if (this._pilot && this._pilot.on) this._stepPilot(); // pilotar el dron (WASD)
+      else if (this._free && this._free.on) this._stepFree(); // vuelo libre (WASD)
+      else if (this._introT0 != null) this._stepIntro();
       else if (this._playing) this._advanceFlyover();
       else if (this._camTween) this._stepCamTween(); // vuelo de cámara al hito pulsado
       this._animate();
@@ -1636,6 +1866,18 @@ class Flight3D extends DjiElement {
     this.on(canvas, 'pointermove', (e) => {
       if (!drag) return;
       if (down && (Math.abs(e.clientX - down.x) > 4 || Math.abs(e.clientY - down.y) > 4)) { down.moved = true; this._camTween = null; }
+      if (this._free && this._free.on) { // mirar alrededor (yaw/pitch)
+        this._free.yaw += (e.clientX - drag.x) * 0.005;
+        this._free.pitch = Math.max(-1.45, Math.min(1.45, this._free.pitch - (e.clientY - drag.y) * 0.005));
+        drag = { x: e.clientX, y: e.clientY };
+        return;
+      }
+      if (this._pilot && this._pilot.on) { // orbitar la cámara alrededor del dron
+        this._pilot.camYaw += (e.clientX - drag.x) * 0.006;
+        this._pilot.camPitch = Math.max(0.12, Math.min(1.35, this._pilot.camPitch + (e.clientY - drag.y) * 0.005));
+        drag = { x: e.clientX, y: e.clientY };
+        return;
+      }
       const o = this._orbit;
       o.theta += (e.clientX - drag.x) * 0.006;
       o.phi = Math.max(0.18, Math.min(1.48, o.phi - (e.clientY - drag.y) * 0.005));
@@ -1651,6 +1893,14 @@ class Flight3D extends DjiElement {
     this.on(canvas, 'wheel', (e) => {
       e.preventDefault();
       if (this._introT0 != null) this._endIntro();
+      if (this._free && this._free.on) { // en vuelo libre la rueda regula la velocidad
+        this._free.speedMul = Math.max(0.25, Math.min(5, (this._free.speedMul || 1) * (1 - Math.sign(e.deltaY) * 0.15)));
+        return;
+      }
+      if (this._pilot && this._pilot.on) { // pilotando, la rueda acerca/aleja la cámara
+        this._pilot.zoom = Math.max(0.4, Math.min(3, (this._pilot.zoom || 1) * (1 + Math.sign(e.deltaY) * 0.12)));
+        return;
+      }
       this._camTween = null; // el zoom manual cancela el vuelo a un hito
       const o = this._orbit, oldR = o.r;
       o.r = Math.max(o.min, Math.min(o.max, o.r * (1 + Math.sign(e.deltaY) * 0.09)));
@@ -1683,6 +1933,23 @@ class Flight3D extends DjiElement {
     // exportar el sobrevuelo a vídeo (MP4) y cancelar en curso
     this.on(this.$('#export'), 'click', () => this._exportVideo());
     this.on(this.$('#expCancel'), 'click', () => this._exportAbort?.abort());
+
+    // modo vuelo libre (WASD + ratón); las teclas se escuchan en window y solo
+    // actúan cuando el modo está activo
+    this.on(this.$('#free'), 'click', () => this._toggleFree());
+    this.on(this.$('#pilot'), 'click', () => this._togglePilot());
+    this.on(window, 'keydown', (e) => this._freeKey(e, true));
+    this.on(window, 'keyup', (e) => this._freeKey(e, false));
+
+    // velocidad de vuelo (3 modos) y pantalla completa
+    this.$('#flyspeed').textContent = t(['v3d.flyspeed.slow', 'v3d.flyspeed.med', 'v3d.flyspeed.fast'][this._flySpeedIdx]);
+    this.on(this.$('#flyspeed'), 'click', () => this._cycleFlySpeed());
+    this.on(this.$('#fs'), 'click', () => this._toggleFullscreen());
+    this.on(document, 'fullscreenchange', () => {
+      const fs = !!document.fullscreenElement;
+      this.$('#fs').classList.toggle('on', fs);
+      this._resize();
+    });
 
     // panel de ajustes: abre/cierra y aplica las casillas de capas
     const opts = this.$('#opts'), settings = this.$('#settings');
@@ -1782,6 +2049,9 @@ class Flight3D extends DjiElement {
 
   _startFlyover() {
     if (this._time == null || this._time >= this._scene.duration - 0.05) this._time = 0;
+    if (this._free && this._free.on) { this._free = { on: false }; this.$('#free').classList.remove('on'); }
+    if (this._pilot && this._pilot.on) { this._pilot = { on: false }; this.$('#pilot').classList.remove('on'); }
+    this._setHint(null);
     this._playing = true; this._last = this._now(); this._camTween = null;
     this._look = null;
     // intro cinematográfica: arranca amplio y la cámara se acerca al dron sola
@@ -1979,7 +2249,7 @@ class Flight3D extends DjiElement {
     this._introT0 = null; this._introPlayed = false; this._globe = null;
     if (this._renderer) { this._renderer.dispose(); this._renderer = null; }
     this._three = null; this._localScene = null; this._scene = null; this._time = null; this._look = null;
-    this._labelItems = null; this._terrainMesh = null; this._ray = null; this._home = null; this._kpMarks = null; this._camTween = null;
+    this._labelItems = null; this._terrainMesh = null; this._ray = null; this._home = null; this._kpMarks = null; this._camTween = null; this._free = null; this._pilot = null;
     this._trackGroup = null; this._kpGroup = null; this._horizonPlacesGroup = null; this._horizonWaterGroup = null;
   }
 }
@@ -6896,6 +7166,17 @@ __x.default = {
   'v3d.hud.spd': 'Speed',
   'v3d.hud.vs': 'Vertical',
   'v3d.hud.far': 'Farthest',
+  'v3d.flyspeed': 'Flight speed (free and pilot)',
+  'v3d.flyspeed.slow': 'Slow',
+  'v3d.flyspeed.med': 'Medium',
+  'v3d.flyspeed.fast': 'Fast',
+  'v3d.fullscreen': 'Fullscreen',
+  'v3d.free': 'Free flight: move with WASD, look with the mouse',
+  'v3d.free.short': 'Free',
+  'v3d.free.hint': 'WASD move · arrows or mouse to look · E/Q up/down · Shift sprint · wheel speed · Esc exit',
+  'v3d.pilot': 'Pilot the drone: move it with WASD (the camera follows)',
+  'v3d.pilot.short': 'Pilot',
+  'v3d.pilot.hint': 'Mouse or ←→ orbit the camera (drone faces that way) · WASD move · ↑↓ height · E/Q up/down · Shift boost · wheel zoom · Esc exit',
   'v3d.settings': 'Settings: choose what to show in the render',
   'v3d.export': 'Export the flyover to video (MP4)',
   'v3d.export.short': 'Export',
@@ -7295,6 +7576,17 @@ __x.default = {
   'v3d.hud.spd': 'Velocidad',
   'v3d.hud.vs': 'V. vertical',
   'v3d.hud.far': 'Alejamiento',
+  'v3d.flyspeed': 'Velocidad de vuelo (libre y pilotar)',
+  'v3d.flyspeed.slow': 'Lenta',
+  'v3d.flyspeed.med': 'Media',
+  'v3d.flyspeed.fast': 'Rápida',
+  'v3d.fullscreen': 'Pantalla completa',
+  'v3d.free': 'Vuelo libre: muévete con WASD y mira con el ratón',
+  'v3d.free.short': 'Libre',
+  'v3d.free.hint': 'WASD moverse · flechas o ratón para mirar · E/Q subir/bajar · Shift correr · rueda velocidad · Esc salir',
+  'v3d.pilot': 'Pilotar el dron: muévelo con WASD (la cámara lo sigue)',
+  'v3d.pilot.short': 'Pilotar',
+  'v3d.pilot.hint': 'Ratón o ←→ orbitan la cámara (el dron encara hacia ahí) · WASD mover · ↑↓ altura · E/Q subir/bajar · Shift acelerar · rueda acercar · Esc salir',
   'v3d.settings': 'Ajustes: elige qué ver en el render',
   'v3d.export': 'Exportar el sobrevuelo a vídeo (MP4)',
   'v3d.export.short': 'Exportar',
@@ -8588,12 +8880,11 @@ async function buildTexture(tc, boost = 4, maxTex = 8192) {
   const y0 = tc.y0 * f, y1 = (tc.y1 + 1) * f - 1;
   const cols = x1 - x0 + 1, rows = y1 - y0 + 1;
   // baja de zoom si se pasa del presupuesto de teselas (descargas) o del tamaño
-  // máximo de textura que soporta la GPU (típico 16384; 8192 en tarjetas modestas).
-  // Con más margen la textura conserva nitidez aunque el mapa sea grande.
-  const cap = Math.min(maxTex || 8192, 16384);
-  // tope de teselas: más nitidez que antes (≈4×), pero acotado porque el navegador
-  // solo abre ~6 conexiones por host y cada tesela extra alarga la carga.
-  if (boost > 0 && (cols * rows > 1400 || cols * 256 > cap || rows * 256 > cap)) return buildTexture(tc, boost - 1, maxTex);
+  // de textura. TOPE DE MEMORIA: aunque la GPU declare 16384, un lienzo así (>300
+  // MB) cuelga/crashea navegadores con poca memoria; nos quedamos en 8192 por lado
+  // (~84 MB) y ~600 teselas, que es lo que va sobrado en cualquier equipo.
+  const cap = Math.min(maxTex || 8192, 8192);
+  if (boost > 0 && (cols * rows > 600 || cols * 256 > cap || rows * 256 > cap)) return buildTexture(tc, boost - 1, maxTex);
   const cv = document.createElement('canvas');
   cv.width = cols * 256; cv.height = rows * 256;
   const ctx = cv.getContext('2d');
