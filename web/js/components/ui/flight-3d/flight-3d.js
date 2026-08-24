@@ -97,13 +97,24 @@ export class Flight3D extends DjiElement {
     } else this._build();
   }
 
+  /** Tamaño máximo de textura de la GPU. Se consulta UNA sola vez (con un contexto
+   *  WebGL temporal que se libera enseguida) y se cachea, para no ir agotando los
+   *  contextos del navegador en cada reconstrucción. */
+  static _maxTextureSize() {
+    if (Flight3D._maxTex) return Flight3D._maxTex;
+    let m = 8192;
+    try {
+      const c = document.createElement('canvas');
+      const gl = c.getContext('webgl2') || c.getContext('webgl');
+      if (gl) { m = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 8192; gl.getExtension('WEBGL_lose_context')?.loseContext(); }
+    } catch { /* usa 8192 */ }
+    Flight3D._maxTex = m;
+    return m;
+  }
+
   _build() {
     const token = (this._token = Symbol('build'));
-    // tamaño máximo de textura de la GPU (para no perder nitidez al ampliar el
-    // mapa): se consulta con un contexto temporal, ya que el renderer aún no existe
-    let maxTex = 8192;
-    try { const c = document.createElement('canvas'); const gl = c.getContext('webgl2') || c.getContext('webgl'); if (gl) maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE); } catch { /* usa 8192 */ }
-    buildScene3D(this._flight.model, { maxTex }).then((scene) => {
+    buildScene3D(this._flight.model, { maxTex: Flight3D._maxTextureSize() }).then((scene) => {
       if (token !== this._token || !this.isConnected) return;
       this._scene = scene;
       this._initThree(scene);

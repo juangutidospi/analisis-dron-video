@@ -114,12 +114,11 @@ async function buildTexture(tc, boost = 4, maxTex = 8192) {
   const y0 = tc.y0 * f, y1 = (tc.y1 + 1) * f - 1;
   const cols = x1 - x0 + 1, rows = y1 - y0 + 1;
   // baja de zoom si se pasa del presupuesto de teselas (descargas) o del tamaño
-  // máximo de textura que soporta la GPU (típico 16384; 8192 en tarjetas modestas).
-  // Con más margen la textura conserva nitidez aunque el mapa sea grande.
-  const cap = Math.min(maxTex || 8192, 16384);
-  // tope de teselas: más nitidez que antes (≈4×), pero acotado porque el navegador
-  // solo abre ~6 conexiones por host y cada tesela extra alarga la carga.
-  if (boost > 0 && (cols * rows > 1400 || cols * 256 > cap || rows * 256 > cap)) return buildTexture(tc, boost - 1, maxTex);
+  // de textura. TOPE DE MEMORIA: aunque la GPU declare 16384, un lienzo así (>300
+  // MB) cuelga/crashea navegadores con poca memoria; nos quedamos en 8192 por lado
+  // (~84 MB) y ~600 teselas, que es lo que va sobrado en cualquier equipo.
+  const cap = Math.min(maxTex || 8192, 8192);
+  if (boost > 0 && (cols * rows > 600 || cols * 256 > cap || rows * 256 > cap)) return buildTexture(tc, boost - 1, maxTex);
   const cv = document.createElement('canvas');
   cv.width = cols * 256; cv.height = rows * 256;
   const ctx = cv.getContext('2d');
