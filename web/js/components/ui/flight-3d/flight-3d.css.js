@@ -44,7 +44,7 @@ canvas:active { cursor: grabbing; }
 .v3d-btn.on { background: var(--color-accent); border-color: transparent; color: #fff; }
 #speed { min-width: 40px; font-variant-numeric: tabular-nums; }
 .v3d-btn svg { width: 15px; height: 15px; }
-#settings { padding: 0 10px; }
+#settings, #export, #reset { padding: 0 10px; }
 
 /* panel de ajustes (capas del render) */
 .v3d-opts {
@@ -65,6 +65,23 @@ canvas:active { cursor: grabbing; }
 }
 .v3d-opts label:hover { background: rgba(255,255,255,.07); }
 .v3d-opts input { width: 15px; height: 15px; accent-color: var(--color-accent); cursor: pointer; }
+
+/* overlay de progreso de la exportación de vídeo */
+.v3d-export {
+  position: absolute; inset: 0; z-index: 9; display: grid; place-items: center;
+  background: rgba(6,10,16,.55); backdrop-filter: blur(3px);
+}
+.v3d-export[hidden] { display: none; }
+.v3d-export-box {
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  padding: 22px 26px; border-radius: 16px; min-width: 240px;
+  background: rgba(12,17,26,.9); border: 1px solid rgba(255,255,255,.12);
+  box-shadow: 0 16px 40px rgba(0,0,0,.5);
+}
+.v3d-export-t { color: #eef2f8; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.v3d-export-t.err { color: #ff8f8f; }
+.v3d-export-bar { width: 220px; height: 7px; border-radius: 100px; background: rgba(255,255,255,.12); overflow: hidden; }
+.v3d-export-f { height: 100%; width: 0; background: var(--color-accent); transition: width .15s ease; }
 .v3d-prog { flex: 1; height: 6px; border-radius: 100px; background: rgba(255,255,255,.16); position: relative; cursor: pointer; }
 .v3d-prog-f { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 100px; background: linear-gradient(90deg, var(--color-accent), var(--color-violet)); }
 .v3d-time { flex: none; font-size: 12px; color: #c9d2e2; font-variant-numeric: tabular-nums; min-width: 76px; text-align: right; }

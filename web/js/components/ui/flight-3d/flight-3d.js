@@ -1,6 +1,8 @@
 import { DjiElement } from '../../../core/DjiElement.js';
 import { t } from '../../../i18n/index.js';
 import { buildScene3D, altColor } from '../../../scene-3d.js';
+import { createMp4Recorder, canExportVideo } from '../../../flyover-export.js';
+import { downloadBlob } from '../../../exports.js';
 import { styles } from './flight-3d.css.js';
 
 const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -67,6 +69,16 @@ export class Flight3D extends DjiElement {
           <button class="v3d-btn" id="settings" type="button" title="${t('v3d.settings')}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
+          <button class="v3d-btn" id="export" type="button" title="${t('v3d.export')}" aria-label="${t('v3d.export.short')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M8 11l4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          </button>
+        </div>
+        <div class="v3d-export" id="exp" hidden>
+          <div class="v3d-export-box">
+            <div class="v3d-export-t" id="expT">${t('v3d.export.running')} 0%</div>
+            <div class="v3d-export-bar"><div class="v3d-export-f" id="expF"></div></div>
+            <button class="v3d-btn" id="expCancel" type="button">${t('v3d.export.cancel')}</button>
+          </div>
         </div>
       </div>`;
   }
@@ -850,18 +862,30 @@ export class Flight3D extends DjiElement {
     this._cam.aspect = w / h; this._cam.updateProjectionMatrix();
   }
 
+  /** Reloj de animación: el real, salvo durante la exportación de vídeo, donde
+   *  avanza a pasos fijos para que el resultado sea determinista y no dependa de
+   *  la velocidad de codificación. */
+  _now() { return this._exportClock != null ? this._exportClock : performance.now(); }
+
+  /** Animaciones por fotograma independientes del tiempo del vuelo: hélices, LEDs
+   *  de navegación y anti-solape de rótulos. Se usa en el bucle y en el export. */
+  _animate() {
+    if (this._rotors) for (const r of this._rotors) r.rotation.y += 0.9; // hélices girando
+    if (this._leds) { // parpadeo de las luces de navegación
+      const t = this._now() * 0.006;
+      const rear = Math.sin(t) > 0.1 ? 1 : 0.12, front = Math.sin(t * 0.7 + 1) > -0.3 ? 1 : 0.25;
+      for (const l of this._leds) l.mesh.material.color.copy(l.color).multiplyScalar(l.rear ? rear : front);
+    }
+    if (this._three === this._localScene) this._declutterLabels(); // rótulos sin solaparse
+  }
+
   _loop() {
     const tick = () => {
       this._raf = requestAnimationFrame(tick);
+      if (this._exporting) return; // durante la exportación conduce _exportVideo
       if (this._introT0 != null) this._stepIntro();
       else if (this._playing) this._advanceFlyover();
-      if (this._rotors) for (const r of this._rotors) r.rotation.y += 0.9; // hélices girando
-      if (this._leds) { // parpadeo de las luces de navegación
-        const t = performance.now() * 0.006;
-        const rear = Math.sin(t) > 0.1 ? 1 : 0.12, front = Math.sin(t * 0.7 + 1) > -0.3 ? 1 : 0.25;
-        for (const l of this._leds) l.mesh.material.color.copy(l.color).multiplyScalar(l.rear ? rear : front);
-      }
-      if (this._three === this._localScene) this._declutterLabels(); // rótulos sin solaparse
+      this._animate();
       this._renderer.render(this._three, this._cam);
     };
     this._raf = requestAnimationFrame(tick);
@@ -917,6 +941,10 @@ export class Flight3D extends DjiElement {
     this.on(this.$('#speed'), 'click', () => this._cycleSpeed());
     this.on(this.$('#cine'), 'click', () => this._toggleCine());
     this.on(this.$('#startBtn'), 'click', () => this._runIntro());
+
+    // exportar el sobrevuelo a vídeo (MP4) y cancelar en curso
+    this.on(this.$('#export'), 'click', () => this._exportVideo());
+    this.on(this.$('#expCancel'), 'click', () => this._exportAbort?.abort());
 
     // panel de ajustes: abre/cierra y aplica las casillas de capas
     const opts = this.$('#opts'), settings = this.$('#settings');
@@ -1016,11 +1044,11 @@ export class Flight3D extends DjiElement {
 
   _startFlyover() {
     if (this._time == null || this._time >= this._scene.duration - 0.05) this._time = 0;
-    this._playing = true; this._last = performance.now();
+    this._playing = true; this._last = this._now();
     this._look = null;
     // intro cinematográfica: arranca amplio y la cámara se acerca al dron sola
     this._orbit.r = this._orbit.max * 0.3; this._orbit.phi = 1.0;
-    this._chaseTargetR = this._orbit.max * 0.055; this._introStart = performance.now();
+    this._chaseTargetR = this._orbit.max * 0.055; this._introStart = this._now();
     this._director = null; this._cHead = null; // reinicia el director de cámara
     this.$('#hud').hidden = !this._show.hud; // respeta el panel de ajustes
     if (this._trail) this._trail.visible = true;
@@ -1035,16 +1063,116 @@ export class Flight3D extends DjiElement {
     this._setPlayIcon(false);
   }
 
+  /** Exporta el sobrevuelo a un MP4 (WebCodecs, muxer estándar → compatible con
+   *  iOS). Renderiza la escena a pasos fijos (determinista: la cámara cine, la
+   *  intro y los suavizados usan un reloj simulado), captura cada fotograma a un
+   *  canvas y lo codifica. La duración = duración del vuelo / velocidad elegida. */
+  async _exportVideo() {
+    if (!this._scene || this._exporting || this._introT0 != null) return;
+    if (!canExportVideo()) { this._exportMsg(t('v3d.export.unsupported'), true); this._showExport(true); setTimeout(() => this._showExport(false), 2500); return; }
+    const cv = this.$('#cv');
+    // resolución de salida: cap a 1280×720 manteniendo proporción, lados pares
+    const scale = Math.min(1, 1280 / cv.width, 720 / cv.height);
+    const W = Math.max(2, Math.round(cv.width * scale / 2) * 2);
+    const H = Math.max(2, Math.round(cv.height * scale / 2) * 2);
+    const out = document.createElement('canvas'); out.width = W; out.height = H;
+    const octx = out.getContext('2d', { alpha: false });
+    const fps = 30, dt = 1 / fps, speed = this._speed || 1;
+    const totalFrames = Math.min(90 * fps, Math.ceil(this._scene.duration / speed / dt) + 1);
+
+    this._exporting = true;
+    const ac = (this._exportAbort = new AbortController());
+    this._showExport(true); this._setExportProgress(0);
+
+    // sobrevuelo determinista desde el principio, con reloj simulado
+    const wasCine = this._cineMode;
+    this._three = this._localScene; this._introT0 = null; this._time = 0;
+    this._playing = true; this._look = null; this._director = null; this._cHead = null;
+    this._orbit.r = this._orbit.max * 0.3; this._orbit.phi = 1.0;
+    this._chaseTargetR = this._orbit.max * 0.055;
+    this._exportClock = performance.now(); this._last = this._exportClock; this._introStart = this._exportClock;
+    if (this._trail) this._trail.visible = true;
+    // coloca la cámara en el encuadre de apertura antes de grabar (sin tirón inicial)
+    const THREE = window.THREE, d0 = this._scene.droneAt(0), o = this._orbit;
+    this._look = new THREE.Vector3(d0.x, d0.y, d0.z);
+    this._cam.position.set(
+      this._look.x + o.r * Math.sin(o.phi) * Math.cos(o.theta),
+      this._look.y + o.r * Math.cos(o.phi),
+      this._look.z + o.r * Math.sin(o.phi) * Math.sin(o.theta));
+    this._cam.lookAt(this._look);
+
+    let rec;
+    try {
+      rec = createMp4Recorder({ width: W, height: H, fps });
+      for (let i = 0; i < totalFrames; i++) {
+        if (ac.signal.aborted) throw new DOMException('cancelado', 'AbortError');
+        this._exportClock += dt * 1000; // avanza el reloj un fotograma
+        this._advanceFlyover();          // dron/estela/cámara con ese reloj
+        this._animate();                 // hélices, LEDs, rótulos
+        this._renderer.render(this._three, this._cam);
+        octx.drawImage(cv, 0, 0, W, H);
+        if (this._show.hud) this._drawExportHud(octx, W, H, this._time);
+        await rec.encode(out);
+        if (i % 4 === 0) this._setExportProgress((i + 1) / totalFrames);
+      }
+      const blob = await rec.finish();
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+      downloadBlob(`sobrevuelo-3d-${stamp}.mp4`, blob);
+      this._exportMsg(t('v3d.export.done')); await new Promise((r) => setTimeout(r, 1200));
+    } catch (e) {
+      rec?.cancel();
+      const cancelled = e.name === 'AbortError';
+      if (!cancelled) console.error('[flight-3d] export', e);
+      this._exportMsg(cancelled ? t('v3d.export.cancelled') : t('v3d.export.error'), true);
+      await new Promise((r) => setTimeout(r, 1500));
+    } finally {
+      this._exporting = false; this._exportClock = null; this._exportAbort = null;
+      this._cineMode = wasCine;
+      this._stopFlyover(); this._showExport(false); this._applyOrbit();
+    }
+  }
+
+  /** Dibuja la telemetría (altura, velocidad, v. vertical, alejamiento) sobre el
+   *  fotograma exportado, en la esquina superior derecha. */
+  _drawExportHud(x, W, H, time) {
+    const d = this._scene.droneAt(time), tk = this._scene.takeoffXZ;
+    const far = Math.round(Math.hypot(d.x - tk.x, d.z - tk.z));
+    const vals = [
+      [String(Math.round(d.rel || 0)), t('v3d.hud.alt')],
+      [String(Math.round((d.hs || 0) * 3.6)), t('v3d.hud.spd')],
+      [((d.vs || 0) >= 0 ? '+' : '') + (d.vs || 0).toFixed(1), t('v3d.hud.vs')],
+      [String(far), t('v3d.hud.far')],
+    ];
+    const s = H / 720, cw = 116 * s, gap = 8 * s, pad = 16 * s;
+    const bw = pad * 2 + vals.length * cw + (vals.length - 1) * gap, bh = 60 * s;
+    const bx = W - bw - 16 * s, by = 16 * s;
+    x.save();
+    x.fillStyle = 'rgba(10,14,20,0.5)';
+    x.beginPath(); x.roundRect(bx, by, bw, bh, 12 * s); x.fill();
+    vals.forEach((v, i) => {
+      const cx = bx + pad + i * (cw + gap);
+      x.fillStyle = '#fff'; x.font = `700 ${27 * s}px -apple-system, system-ui, sans-serif`;
+      x.fillText(v[0], cx, by + 34 * s);
+      x.fillStyle = 'rgba(255,255,255,0.6)'; x.font = `600 ${10.5 * s}px -apple-system, system-ui, sans-serif`;
+      x.fillText(v[1].toUpperCase(), cx, by + 49 * s);
+    });
+    x.restore();
+  }
+
+  _showExport(on) { const e = this.$('#exp'); if (e) e.hidden = !on; }
+  _setExportProgress(p) { const f = this.$('#expF'); if (f) f.style.width = Math.round(p * 100) + '%'; const l = this.$('#expT'); if (l) l.textContent = t('v3d.export.running') + ' ' + Math.round(p * 100) + '%'; }
+  _exportMsg(msg, isErr) { const l = this.$('#expT'); if (l) { l.textContent = msg; l.classList.toggle('err', !!isErr); } }
+
   /** Avanza el sobrevuelo: mueve el dron, la estela y encadena la cámara. */
   _advanceFlyover() {
-    const now = performance.now(), dt = Math.min(0.05, (now - this._last) / 1000); this._last = now;
+    const now = this._now(), dt = Math.min(0.05, (now - this._last) / 1000); this._last = now;
     this._time = Math.min(this._scene.duration, (this._time || 0) + dt * (this._speed || 1));
     this._placeDrone(this._time);
     this._updateTrail(this._time);
     this._revealTrack(this._time);
     if (this._cineMode && !this._introStart) this._cineCam(); else this._chaseCam();
     this._updateTime(this._time);
-    if (this._time >= this._scene.duration) this._stopFlyover();
+    if (this._time >= this._scene.duration && !this._exporting) this._stopFlyover();
   }
 
   /** Cámara de seguimiento: orbita alrededor del dron; el usuario puede arrastrar
@@ -1056,7 +1184,7 @@ export class Flight3D extends DjiElement {
     this._look.lerp(tp, 0.15); // sigue al dron suavemente
     // intro: durante ~2.6 s la cámara se acerca sola (luego manda el usuario)
     if (this._introStart) {
-      if (performance.now() - this._introStart < 2600) {
+      if (this._now() - this._introStart < 2600) {
         this._orbit.r += (this._chaseTargetR - this._orbit.r) * 0.03;
         this._orbit.phi += (1.15 - this._orbit.phi) * 0.03;
       } else this._introStart = null;
@@ -1105,6 +1233,7 @@ export class Flight3D extends DjiElement {
   }
 
   _teardown() {
+    this._exportAbort?.abort(); this._exporting = false; this._exportClock = null;
     if (this._raf) cancelAnimationFrame(this._raf); this._raf = null;
     this._playing = false;
     this._io?.disconnect(); this._io = null;
