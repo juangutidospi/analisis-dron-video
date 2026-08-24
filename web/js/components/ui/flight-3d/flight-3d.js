@@ -947,44 +947,64 @@ export class Flight3D extends DjiElement {
   }
 
   /** Elige el siguiente plano cinematográfico (planos suaves, sin extremos). */
-  _nextShot() {
+  /** Elige el siguiente plano y lo arranca por el lado donde ya está la cámara
+   *  (continuidad: evita cruzar de golpe al otro lado del dron). */
+  _nextShot(dp, h) {
+    const THREE = window.THREE;
     const shots = ['chase', 'orbit', 'high', 'side', 'reveal'];
     const prev = this._director && this._director.shot;
     let sh; do { sh = shots[(Math.random() * shots.length) | 0]; } while (sh === prev);
-    this._director = { shot: sh, t0: performance.now(), dur: 5500 + Math.random() * 3000, dir: Math.random() < 0.5 ? -1 : 1, a0: Math.random() * Math.PI * 2 };
+    let a0 = Math.random() * Math.PI * 2, dir = Math.random() < 0.5 ? -1 : 1;
+    if (this._cam && dp) {
+      const rel = this._cam.position.clone().sub(dp);
+      if (sh === 'orbit') a0 = Math.atan2(rel.z, rel.x);           // órbita: parte del ángulo actual
+      if (sh === 'side') dir = (Math.cos(h) * rel.x + Math.sin(h) * rel.z) >= 0 ? 1 : -1; // lateral: por el lado actual
+    }
+    this._director = { shot: sh, t0: this._now(), dur: 6500 + Math.random() * 3500, dir, a0 };
+    // offset de la cámara relativo al dron al empezar el plano (para rodearlo en
+    // la transición, no cruzarlo)
+    this._shotFromRel = this._cam && dp ? this._cam.position.clone().sub(dp) : null;
   }
 
-  /** Mueve la cámara hacia `want` con inercia y un tope por frame (sin saltos). */
-  _easeCamTo(want) {
-    const target = this._cam.position.clone().lerp(want, 0.04);
-    const delta = target.sub(this._cam.position);
-    const maxMove = this._span * 0.045; // tope de desplazamiento por fotograma
-    if (delta.length() > maxMove) delta.setLength(maxMove);
-    this._cam.position.add(delta);
+  /** Interpola dos offsets (cámara relativa al dron) rodeando al sujeto: el azimut
+   *  por el arco más corto y el radio/altura por lerp. Evita que la cámara cruce
+   *  por encima del dron en los cambios de plano de ~180°. */
+  _arcBlend(a, b, t) {
+    const a0 = Math.atan2(a.z, a.x), r0 = Math.hypot(a.x, a.z), y0 = a.y;
+    const a1 = Math.atan2(b.z, b.x), r1 = Math.hypot(b.x, b.z), y1 = b.y;
+    let da = a1 - a0; da = ((da + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+    const ang = a0 + da * t, r = r0 + (r1 - r0) * t, y = y0 + (y1 - y0) * t;
+    return new window.THREE.Vector3(Math.cos(ang) * r, y, Math.sin(ang) * r);
   }
 
   /** Cámara cinematográfica: encadena planos (persecución, órbita, grúa suave,
-   *  lateral, revelado) siguiendo al dron, con inercia y ligero temblor. */
+   *  lateral, revelado) siguiendo al dron. Cada cambio de plano se mezcla con una
+   *  curva suave desde la posición actual, sin saltos ni latigazos. */
   _cineCam() {
     const THREE = window.THREE, d = this._scene.droneAt(this._time);
     const target = isNaN(d.heading) ? (this._cHead ?? 0) : d.heading;
     if (this._cHead == null) this._cHead = target;
-    else { const diff = ((target - this._cHead + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI; this._cHead += diff * 0.035; }
+    else { const diff = ((target - this._cHead + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI; this._cHead += diff * 0.03; }
     const h = this._cHead;
-    if (!this._director || performance.now() - this._director.t0 > this._director.dur) this._nextShot();
-    const D = this._director, te = (performance.now() - D.t0) / 1000;
-    const Rb = this._span * 0.24, up = new THREE.Vector3(0, 1, 0);
+    const dp = new THREE.Vector3(d.x, d.y, d.z);
+    if (!this._director || this._now() - this._director.t0 > this._director.dur) this._nextShot(dp, h);
+    const D = this._director, te = (this._now() - D.t0) / 1000;
+    const Rb = this._span * 0.14, up = new THREE.Vector3(0, 1, 0); // distancia base de los planos al dron (más cerca)
     const fwd = new THREE.Vector3(Math.sin(h), 0, -Math.cos(h));
     const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
-    const dp = new THREE.Vector3(d.x, d.y, d.z);
     let want;
     if (D.shot === 'chase') want = dp.clone().addScaledVector(fwd, -Rb * 1.15).addScaledVector(up, Rb * 0.42);
-    else if (D.shot === 'orbit') { const a = D.a0 + te * 0.28 * D.dir; want = dp.clone().addScaledVector(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)), Rb * 1.2).addScaledVector(up, Rb * 0.5); }
+    else if (D.shot === 'orbit') { const a = D.a0 + te * 0.16 * D.dir; want = dp.clone().addScaledVector(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)), Rb * 1.2).addScaledVector(up, Rb * 0.5); }
     else if (D.shot === 'high') want = dp.clone().addScaledVector(up, Rb).addScaledVector(fwd, -Rb * 0.6);
     else if (D.shot === 'side') want = dp.clone().addScaledVector(right, Rb * 1.15 * D.dir).addScaledVector(up, Rb * 0.42).addScaledVector(fwd, Rb * 0.15);
     else want = dp.clone().addScaledVector(fwd, Rb * (1.25 - te * 0.05)).addScaledVector(up, Rb * 0.35); // reveal (dolly suave)
-    this._easeCamTo(want);
-    this._look = this._look || dp.clone(); this._look.lerp(dp, 0.09);
+    // transición suave entre planos: rodea al dron desde el encuadre anterior
+    // hasta el nuevo con ease-in-out de ~2,6 s (smoothstep); luego sigue al dron
+    const TR = 2.6, tt = Math.min(1, te / TR), ease = tt * tt * (3 - 2 * tt);
+    const wantRel = want.clone().sub(dp);
+    const goal = dp.clone().add(this._arcBlend(this._shotFromRel || wantRel, wantRel, ease));
+    this._cam.position.lerp(goal, 0.12); // inercia leve para micro-suavizado
+    this._look = this._look || dp.clone(); this._look.lerp(dp, 0.05);
     this._cam.lookAt(this._look);
   }
 
