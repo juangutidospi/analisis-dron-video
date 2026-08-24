@@ -569,6 +569,27 @@ canvas:active { cursor: grabbing; }
 .v3d-btn.on { background: var(--color-accent); border-color: transparent; color: #fff; }
 #speed { min-width: 40px; font-variant-numeric: tabular-nums; }
 .v3d-btn svg { width: 15px; height: 15px; }
+#settings { padding: 0 10px; }
+
+/* panel de ajustes (capas del render) */
+.v3d-opts {
+  position: absolute; right: 12px; bottom: 64px; z-index: 7;
+  min-width: 200px; padding: 10px 12px; border-radius: 14px;
+  background: rgba(12,17,26,.82); backdrop-filter: blur(14px);
+  border: 1px solid rgba(255,255,255,.12); box-shadow: 0 10px 30px rgba(0,0,0,.4);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.v3d-opts[hidden] { display: none; }
+.v3d-opts-t {
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: rgba(238,242,248,.55); margin: 2px 2px 6px;
+}
+.v3d-opts label {
+  display: flex; align-items: center; gap: 9px; cursor: pointer;
+  padding: 6px 6px; border-radius: 8px; color: #eef2f8; font-size: 13px;
+}
+.v3d-opts label:hover { background: rgba(255,255,255,.07); }
+.v3d-opts input { width: 15px; height: 15px; accent-color: var(--color-accent); cursor: pointer; }
 .v3d-prog { flex: 1; height: 6px; border-radius: 100px; background: rgba(255,255,255,.16); position: relative; cursor: pointer; }
 .v3d-prog-f { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 100px; background: linear-gradient(90deg, var(--color-accent), var(--color-violet)); }
 .v3d-time { flex: none; font-size: 12px; color: #c9d2e2; font-variant-numeric: tabular-nums; min-width: 76px; text-align: right; }
@@ -659,6 +680,9 @@ const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart
 class Flight3D extends DjiElement {
   static styles = [styles];
 
+  /** Capas visibles del render (las controla el panel de ajustes). */
+  _show = { track: true, kp: true, places: true, water: true, hud: true };
+
   /** @param {{model:object}} v */
   set flight(v) { this._flight = v; if (this.isConnected) this._paint(); }
   get flight() { return this._flight; }
@@ -682,6 +706,15 @@ class Flight3D extends DjiElement {
           <div class="hud-item"><span class="hud-v" id="hudAlt">0</span><span class="hud-u">m</span><span class="hud-l">${t('v3d.hud.alt')}</span></div>
           <div class="hud-item"><span class="hud-v" id="hudSpd">0</span><span class="hud-u">km/h</span><span class="hud-l">${t('v3d.hud.spd')}</span></div>
           <div class="hud-item"><span class="hud-v" id="hudVs">0</span><span class="hud-u">m/s</span><span class="hud-l">${t('v3d.hud.vs')}</span></div>
+          <div class="hud-item"><span class="hud-v" id="hudFar">0</span><span class="hud-u">m</span><span class="hud-l">${t('v3d.hud.far')}</span></div>
+        </div>
+        <div class="v3d-opts" id="opts" hidden>
+          <div class="v3d-opts-t">${t('v3d.opts.title')}</div>
+          <label><input type="checkbox" data-k="track" checked><span>${t('v3d.opt.track')}</span></label>
+          <label><input type="checkbox" data-k="kp" checked><span>${t('v3d.opt.kp')}</span></label>
+          <label><input type="checkbox" data-k="places" checked><span>${t('v3d.opt.places')}</span></label>
+          <label><input type="checkbox" data-k="water" checked><span>${t('v3d.opt.water')}</span></label>
+          <label><input type="checkbox" data-k="hud" checked><span>${t('v3d.opt.hud')}</span></label>
         </div>
         <div class="v3d-bar" hidden>
           <button class="v3d-btn primary" id="play" type="button">
@@ -696,6 +729,9 @@ class Flight3D extends DjiElement {
           </button>
           <button class="v3d-btn" id="reset" type="button" title="${t('v3d.reset')}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 4v4h4"/></svg>
+          </button>
+          <button class="v3d-btn" id="settings" type="button" title="${t('v3d.settings')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
         </div>
       </div>`;
@@ -768,8 +804,10 @@ class Flight3D extends DjiElement {
     this._terrainMesh = this._buildTerrain(data);
     scene.add(this._terrainMesh);
     scene.add(this._buildSkirt(data)); // faldón: bloque de tierra, no lámina flotante
-    scene.add(this._buildTrack(data));
-    scene.add(this._buildLabels(data)); // rótulos 3D de los hitos
+    this._trackGroup = this._buildTrack(data);
+    scene.add(this._trackGroup);
+    this._kpGroup = this._buildLabels(data); // rótulos 3D de los hitos
+    scene.add(this._kpGroup);
     this._drone = this._buildDrone(data);
     scene.add(this._drone);
     this._shadow = this._buildShadow();
@@ -1105,15 +1143,14 @@ class Flight3D extends DjiElement {
     const hatch = new THREE.LineSegments(hg, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending }));
     grp.add(hatch);
 
-    // 3) CINTA superior: tubo naranja brillante + halo aditivo (bloom)
-    const curve = new THREE.CatmullRomCurve3(T.map((p) => new THREE.Vector3(p.x, p.y, p.z)));
-    const segs = Math.min(900, Math.max(90, T.length * 2)), radial = 10;
-    const tubeGeo = new THREE.TubeGeometry(curve, segs, radius, radial, false);
-    const tube = new THREE.Mesh(tubeGeo, new THREE.MeshBasicMaterial({ color: 0xffa24d }));
-    grp.add(tube);
-    const haloGeo = new THREE.TubeGeometry(curve, segs, radius * 2.6, radial, false);
-    const halo = new THREE.Mesh(haloGeo, new THREE.MeshBasicMaterial({ color: 0xff7d1a, transparent: true, opacity: 0.32, depthWrite: false, blending: THREE.AdditiveBlending }));
-    grp.add(halo);
+    // 3) LÍNEA superior fina que marca el recorrido (sustituye al "tubo" grueso
+    //    naranja + halo, que tapaba el top de la cortina)
+    const lpos = new Float32Array(cn * 3);
+    for (let i = 0; i < cn; i++) { const p = T[i]; lpos.set([p.x, p.y, p.z], i * 3); }
+    const lg = new THREE.BufferGeometry();
+    lg.setAttribute('position', new THREE.BufferAttribute(lpos, 3));
+    const line = new THREE.Line(lg, new THREE.LineBasicMaterial({ color: 0xffb060, transparent: true, opacity: 0.95, depthWrite: false }));
+    grp.add(line);
 
     // 4) marcador de despegue (aro luminoso)
     const tk = new THREE.Mesh(new THREE.CylinderGeometry(radius * 1.8, radius * 1.8, radius * 0.6, 24),
@@ -1122,7 +1159,7 @@ class Flight3D extends DjiElement {
     grp.add(tk);
 
     // datos para el revelado progresivo durante el sobrevuelo
-    this._trackReveal = { curtain, hatch, tube, halo, cn, segs, radial, times: T.map((p) => p.t) };
+    this._trackReveal = { curtain, hatch, line, cn, times: T.map((p) => p.t) };
     return grp;
   }
 
@@ -1130,18 +1167,15 @@ class Flight3D extends DjiElement {
   _revealTrack(time) {
     const R = this._trackReveal; if (!R) return;
     let k = 1; while (k < R.times.length && R.times[k] <= time) k++;
-    const f = Math.max(0.002, Math.min(1, k / (R.times.length - 1)));
     R.curtain.geometry.setDrawRange(0, Math.max(0, k - 1) * 6);
     R.hatch.geometry.setDrawRange(0, k * 2);
-    const tc = Math.max(6, Math.floor(R.segs * f) * R.radial * 6);
-    R.tube.geometry.setDrawRange(0, tc);
-    R.halo.geometry.setDrawRange(0, tc);
+    R.line.geometry.setDrawRange(0, k);
   }
 
   /** Muestra el recorrido completo (fuera de la reproducción). */
   _revealTrackFull() {
     const R = this._trackReveal; if (!R) return;
-    for (const m of [R.curtain, R.hatch, R.tube, R.halo]) m.geometry.setDrawRange(0, Infinity);
+    for (const m of [R.curtain, R.hatch, R.line]) m.geometry.setDrawRange(0, Infinity);
   }
 
   /** Etiqueta flotante elegante (pastilla fina translúcida con sombra) que mira a
@@ -1243,28 +1277,33 @@ class Flight3D extends DjiElement {
    *  lejos del terreno). Se construyen de forma perezosa cuando Overpass responde. */
   _buildHorizonLabels(pois) {
     if (!pois || !pois.length || !this._localScene) return;
-    const grp = new window.THREE.Group(), up = this._span * 0.02;
+    const THREE = window.THREE, up = this._span * 0.02;
+    // dos grupos para poder mostrar/ocultar el agua aparte de pueblos/cimas
+    const placesG = new THREE.Group(), waterG = new THREE.Group();
     for (const p of pois) {
       const text = p.kind === 'peak' && p.ele ? `${p.name} · ${Math.round(p.ele)} m` : p.name;
       const sp = this._horizonSprite(text, p.kind);
       sp.position.set(p.x, p.y + up, p.z);
       const hh = 0.04; sp.scale.set(hh * sp.userData.ar, hh, 1);
-      grp.add(sp);
-      this._labelItems.push({ sprite: sp, prio: 1 });
+      (p.kind === 'water' ? waterG : placesG).add(sp);
+      this._labelItems.push({ sprite: sp, prio: 1, cat: p.kind === 'water' ? 'water' : 'places' });
     }
-    this._localScene.add(grp);
-    this._horizonGroup = grp;
+    this._localScene.add(placesG); this._localScene.add(waterG);
+    this._horizonPlacesGroup = placesG; this._horizonWaterGroup = waterG;
+    this._applyShow(); // respeta el estado actual del panel de ajustes
   }
 
   /** Oculta los rótulos que se solapan en pantalla (prioriza los cercanos a la cámara). */
   _declutterLabels() {
     const items = this._labelItems; if (!items || !items.length) return;
     const cam = this._cam, thx = 0.17, thy = 0.075;
-    const arr = items.map((it) => {
-      const p = it.sprite.position.clone(), d = p.distanceTo(cam.position);
-      const ndc = p.project(cam);
-      return { it, x: ndc.x, y: ndc.y, front: ndc.z < 1, d, prio: it.prio || 0 };
-    }).sort((a, b) => (a.prio - b.prio) || (a.d - b.d)); // hitos primero; luego más cercano
+    const arr = items
+      .filter((it) => it.sprite.parent && it.sprite.parent.visible) // ignora capas ocultas por el panel
+      .map((it) => {
+        const p = it.sprite.position.clone(), d = p.distanceTo(cam.position);
+        const ndc = p.project(cam);
+        return { it, x: ndc.x, y: ndc.y, front: ndc.z < 1, d, prio: it.prio || 0 };
+      }).sort((a, b) => (a.prio - b.prio) || (a.d - b.d)); // hitos primero; luego más cercano
     const shown = [];
     for (const a of arr) {
       let hide = !a.front;
@@ -1272,6 +1311,16 @@ class Flight3D extends DjiElement {
       a.it.sprite.visible = !hide; if (a.it.line) a.it.line.visible = !hide;
       if (!hide) shown.push(a);
     }
+  }
+
+  /** Aplica el estado del panel de ajustes: muestra/oculta cada capa del render. */
+  _applyShow() {
+    const s = this._show;
+    if (this._trackGroup) this._trackGroup.visible = s.track;
+    if (this._kpGroup) this._kpGroup.visible = s.kp;
+    if (this._horizonPlacesGroup) this._horizonPlacesGroup.visible = s.places;
+    if (this._horizonWaterGroup) this._horizonWaterGroup.visible = s.water;
+    const hud = this.$('#hud'); if (hud) hud.hidden = !(s.hud && this._playing);
   }
 
   /** Sombra blanda del dron proyectada en el suelo (mancha oscura difusa). */
@@ -1416,6 +1465,9 @@ class Flight3D extends DjiElement {
       this.$('#hudSpd').textContent = Math.round((d.hs || 0) * 3.6);
       const vs = d.vs || 0;
       this.$('#hudVs').textContent = (vs >= 0 ? '+' : '') + vs.toFixed(1);
+      // alejamiento: distancia horizontal (m) al punto de despegue
+      const tk = this._scene.takeoffXZ;
+      this.$('#hudFar').textContent = Math.round(Math.hypot(d.x - tk.x, d.z - tk.z));
     }
   }
 
@@ -1528,6 +1580,15 @@ class Flight3D extends DjiElement {
     this.on(this.$('#cine'), 'click', () => this._toggleCine());
     this.on(this.$('#startBtn'), 'click', () => this._runIntro());
 
+    // panel de ajustes: abre/cierra y aplica las casillas de capas
+    const opts = this.$('#opts'), settings = this.$('#settings');
+    this.on(settings, 'click', (e) => { e.stopPropagation(); opts.hidden = !opts.hidden; settings.classList.toggle('on', !opts.hidden); });
+    for (const cb of this.$$('#opts input[type=checkbox]')) {
+      cb.checked = this._show[cb.dataset.k] !== false;
+      this.on(cb, 'change', () => { this._show[cb.dataset.k] = cb.checked; this._applyShow(); });
+    }
+    this._applyShow();
+
     this._cineMode = this._cineMode !== false; // por defecto activado
     this.$('#cine').classList.toggle('on', this._cineMode);
     this._speed = this._speed || 1;
@@ -1603,7 +1664,7 @@ class Flight3D extends DjiElement {
     this._orbit.r = this._orbit.max * 0.3; this._orbit.phi = 1.0;
     this._chaseTargetR = this._orbit.max * 0.055; this._introStart = performance.now();
     this._director = null; this._cHead = null; // reinicia el director de cámara
-    this.$('#hud').hidden = false;
+    this.$('#hud').hidden = !this._show.hud; // respeta el panel de ajustes
     if (this._trail) this._trail.visible = true;
     this._setPlayIcon(true);
   }
@@ -1693,7 +1754,8 @@ class Flight3D extends DjiElement {
     this._introT0 = null; this._introPlayed = false; this._globe = null;
     if (this._renderer) { this._renderer.dispose(); this._renderer = null; }
     this._three = null; this._localScene = null; this._scene = null; this._time = null; this._look = null;
-    this._labelItems = null; this._horizonGroup = null; this._terrainMesh = null; this._ray = null; this._home = null;
+    this._labelItems = null; this._terrainMesh = null; this._ray = null; this._home = null;
+    this._trackGroup = null; this._kpGroup = null; this._horizonPlacesGroup = null; this._horizonWaterGroup = null;
   }
 }
 
@@ -4051,7 +4113,7 @@ class FlightReport extends DjiElement {
   afterRender() {
     if (!this.model) return;
     const S = this.model.series, dur = this.model.meta.dur, [tk0, tk1] = this.model.takeoff;
-    for (const s of S) { s.hskmh = s.hs != null ? s.hs * 3.6 : null; if (s.far == null) s.far = hav(tk0, tk1, s.lat, s.lon); }
+    for (const s of S) { s.hskmh = s.hs != null ? s.hs * 3.6 : null; if (s.far == null) s.far = s.lat != null ? hav(tk0, tk1, s.lat, s.lon) : null; }
 
     this.$('#c-alt').data = { series: S, dur, cfgs: [{ k: 'rel', color: '--c-blue', area: true, min: 0, fmt: (v) => `${Math.round(v)}`, label: t('alt.series'), unit: 'm', dec: 0 }] };
     this.$('#c-sp').data = { series: S, dur, cfgs: [
@@ -5201,7 +5263,10 @@ const kmh = (x) => x.hs != null ? x.hs * 3.6 : null;
 
 /** Calcula los 8 hitos del vuelo (mismo orden y criterios que common.py). */
 function keypoints(d) {
-  const S = d.series, tk = d.takeoff;
+  // solo muestras con GPS válido: así el despegue/aterrizaje y el punto más lejano
+  // se sitúan sobre coordenadas reales (nunca en los frames previos al fix GPS).
+  const S = d.series.filter(x => x.lat != null), tk = d.takeoff;
+  if (!S.length) return [];
   for (const x of S) x.far = hav(tk[0], tk[1], x.lat, x.lon);
   const by = (fn) => S.reduce((a, b) => fn(b) > fn(a) ? b : a);
   const alto = by(x => x.rel);
@@ -5294,11 +5359,17 @@ async function reverseGeocode(lat, lon) {
   }
 }
 
-/** Extrae las primeras coordenadas (lat, lon) del texto de un .SRT. */
+/** Extrae las primeras coordenadas (lat, lon) con GPS válido del texto de un .SRT.
+ *  Salta el sentinela `0.000000, 0.000000` que DJI escribe antes del fix GPS
+ *  (si no, el nombre del lugar se geocodifica en el golfo de Guinea). */
 function firstCoords(srtText) {
-  const la = srtText.match(/latitude:\s*([-\d.]+)/);
-  const lo = srtText.match(/longitude:\s*([-\d.]+)/);
-  return la && lo ? [parseFloat(la[1]), parseFloat(lo[1])] : null;
+  const re = /latitude:\s*(-?[\d.]+)\]\s*\[longitude:\s*(-?[\d.]+)/g;
+  let m;
+  while ((m = re.exec(srtText)) !== null) {
+    const la = parseFloat(m[1]), lo = parseFloat(m[2]);
+    if (la !== 0 || lo !== 0) return [la, lo];
+  }
+  return null;
 }
 
 Object.assign(__x, { reverseGeocode, firstCoords });
@@ -6538,6 +6609,14 @@ __x.default = {
   'v3d.hud.alt': 'Altitude',
   'v3d.hud.spd': 'Speed',
   'v3d.hud.vs': 'Vertical',
+  'v3d.hud.far': 'Farthest',
+  'v3d.settings': 'Settings: choose what to show in the render',
+  'v3d.opts.title': 'Show in the render',
+  'v3d.opt.track': 'Flight path',
+  'v3d.opt.kp': 'Flight highlights',
+  'v3d.opt.places': 'Towns and peaks',
+  'v3d.opt.water': 'Rivers and reservoirs',
+  'v3d.opt.hud': 'Telemetry (HUD)',
   'v3d.unsupported': 'Your browser does not support the 3D view (WebGL).',
   'player.play': 'Play the flight',
   'player.pause': 'Pause',
@@ -6921,6 +7000,14 @@ __x.default = {
   'v3d.hud.alt': 'Altura',
   'v3d.hud.spd': 'Velocidad',
   'v3d.hud.vs': 'V. vertical',
+  'v3d.hud.far': 'Alejamiento',
+  'v3d.settings': 'Ajustes: elige qué ver en el render',
+  'v3d.opts.title': 'Mostrar en el render',
+  'v3d.opt.track': 'Trayectoria del vuelo',
+  'v3d.opt.kp': 'Hitos del vuelo',
+  'v3d.opt.places': 'Pueblos y cimas',
+  'v3d.opt.water': 'Ríos y embalses',
+  'v3d.opt.hud': 'Telemetría (HUD)',
   'v3d.unsupported': 'Tu navegador no admite la vista 3D (WebGL).',
   'player.play': 'Reproducir el vuelo',
   'player.pause': 'Pausa',
@@ -8615,9 +8702,14 @@ function parseSRT(txt) {
     const sh = body.match(/shutter: 1\/([\d.]+)/);
     const cm = body.match(/color_md: ?([^\],]+)/);
     const eis = body.match(/eis:\s*([^\],]+)/);
+    // Antes del fix GPS, DJI escribe latitude/longitude = 0.000000: no es una
+    // posición real (cae en el golfo de Guinea), así que la tratamos como sin dato
+    // para que no contamine takeoff, alejamiento, recorrido ni la trayectoria.
+    let lat = num(body, 'latitude'), lon = num(body, 'longitude');
+    if (lat === 0 && lon === 0) { lat = null; lon = null; }
     rows.push({
       cnt: +m[1], ts: m[2],
-      lat: num(body, 'latitude'), lon: num(body, 'longitude'),
+      lat, lon,
       rel: num(body, 'rel_alt'), ab: num(body, 'abs_alt'),
       iso: num(body, 'iso'), ct: num(body, 'ct'), ev: num(body, 'ev'), fnum: num(body, 'fnum'),
       shutter: sh ? sh[1].slice(0, -2) : null,
@@ -8671,9 +8763,11 @@ function parseSRT(txt) {
     }
   }
 
-  const valid = rows.filter(r => r.lat);
-  const lat0 = rows[0].lat, lon0 = rows[0].lon;
-  const maxfar = Math.max(...valid.map(r => hav(lat0, lon0, r.lat, r.lon)));
+  // origen del vuelo = primer fotograma con GPS válido (no el frame 0, que puede
+  // ser previo al fix); el alejamiento y el despegue se miden desde ahí.
+  const valid = rows.filter(r => r.lat != null);
+  const lat0 = valid.length ? valid[0].lat : null, lon0 = valid.length ? valid[0].lon : null;
+  const maxfar = valid.length ? Math.max(...valid.map(r => hav(lat0, lon0, r.lat, r.lon))) : 0;
 
   const rng = (k, src = valid) => {
     const v = src.map(r => r[k]).filter(x => x != null);
@@ -8700,8 +8794,11 @@ function parseSRT(txt) {
       vspeed: [vspeeds.length ? Math.min(...vspeeds) : 0, vspeeds.length ? Math.max(...vspeeds) : 0],
     },
     dist: Math.round(dist), maxfar: Math.round(maxfar),
-    takeoff: [lat0, lon0], land: [rows[rows.length - 1].lat, rows[rows.length - 1].lon],
-    center: [valid.reduce((s, r) => s + r.lat, 0) / valid.length, valid.reduce((s, r) => s + r.lon, 0) / valid.length],
+    takeoff: [lat0, lon0],
+    land: valid.length ? [valid[valid.length - 1].lat, valid[valid.length - 1].lon] : [null, null],
+    center: valid.length
+      ? [valid.reduce((s, r) => s + r.lat, 0) / valid.length, valid.reduce((s, r) => s + r.lon, 0) / valid.length]
+      : [null, null],
     cam: {
       iso: isos, shutter: shs,
       fnum: uniq(rows.map(r => r.fnum)).sort((a, b) => a - b),
