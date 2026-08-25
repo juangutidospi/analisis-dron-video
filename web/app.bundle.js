@@ -736,7 +736,7 @@ class Flight3D extends DjiElement {
   static styles = [styles];
 
   /** Capas visibles del render (las controla el panel de ajustes). */
-  _show = { track: true, kp: true, places: true, water: true, hud: true };
+  _show = { track: true, kp: true, places: true, water: true, buildings: true, trees: true, hud: true };
 
   /** Escala del marcador del dron (y su sombra), elegible en el panel de ajustes:
    *  1 = grande (original), 0.75 = intermedio, 0.5 = mitad. */
@@ -782,6 +782,8 @@ class Flight3D extends DjiElement {
           <label><input type="checkbox" data-k="kp" checked><span>${t('v3d.opt.kp')}</span></label>
           <label><input type="checkbox" data-k="places" checked><span>${t('v3d.opt.places')}</span></label>
           <label><input type="checkbox" data-k="water" checked><span>${t('v3d.opt.water')}</span></label>
+          <label><input type="checkbox" data-k="buildings" checked><span>${t('v3d.opt.buildings')}</span></label>
+          <label><input type="checkbox" data-k="trees" checked><span>${t('v3d.opt.trees')}</span></label>
           <label><input type="checkbox" data-k="hud" checked><span>${t('v3d.opt.hud')}</span></label>
           <div class="v3d-size">
             <span class="v3d-size-l">${t('v3d.opt.size')}</span>
@@ -882,6 +884,16 @@ class Flight3D extends DjiElement {
         if (token !== this._token || !this.isConnected) return;
         this._buildHorizonLabels(pois);
       }).catch(() => {});
+      // edificios del Catastro (casas con volumen + tejados reales): también en 2º plano
+      scene.buildingsReady?.then((list) => {
+        if (token !== this._token || !this.isConnected) return;
+        this._buildBuildings(list, scene);
+      }).catch(() => {});
+      // árboles (verde del satélite + OSM): en 2º plano, como los edificios
+      scene.treesReady?.then((list) => {
+        if (token !== this._token || !this.isConnected) return;
+        this._buildTrees(list);
+      }).catch(() => {});
     }).catch((err) => { console.error('[flight-3d]', err); this._fallback(); });
   }
 
@@ -909,7 +921,10 @@ class Flight3D extends DjiElement {
     // paleta de cielo/luz según la fase solar real del vuelo
     const pal = this._skyPalette(data.sun);
     scene.background = new THREE.Color(pal.horizon);
-    scene.fog = new THREE.Fog(pal.horizon, span * 2.2, span * 7);
+    // perspectiva aérea: el terreno lejano se funde con el color del cielo (sensación
+    // de distancia). Empieza más cerca y satura antes que antes; los rótulos del
+    // horizonte llevan fog:false, así que no se difuminan.
+    scene.fog = new THREE.Fog(pal.horizon, span * 1.6, span * 5.0);
     scene.add(this._buildSky(data, pal));
 
     // luces: cielo/suelo + sol direccional desde la posición real del sol
@@ -1423,6 +1438,249 @@ class Flight3D extends DjiElement {
     this._applyShow(); // respeta el estado actual del panel de ajustes
   }
 
+  /** Casas con VOLUMEN a partir de las huellas del Catastro (`data.buildingsReady`) y
+   *  su nº de plantas, con aire rural: TEJADO A CUATRO AGUAS (apex en el centroide)
+   *  mapeado con la foto satélite (la teja real vista desde arriba); MUROS con tono de
+   *  fachada VARIADO por edificio (para que no parezca maqueta) y un degradado de
+   *  oclusión oscureciendo la base. Todo se fusiona en dos mallas (muros + tejados). */
+  _buildBuildings(list, data) {
+    if (!list || !list.length || !this._localScene) return;
+    const THREE = window.THREE;
+    const KINDS = ['plaster', 'brick', 'shutter', 'stone']; // TIPOS de fachada distintos
+    const NV = KINDS.length;
+    const facPos = Array.from({ length: NV }, () => []); // plantas altas, una malla por tipo
+    const facCol = Array.from({ length: NV }, () => []);
+    const facUV = Array.from({ length: NV }, () => []);
+    const gPos = [], gCol = [], gUV = [];          // planta baja (una sola malla)
+    const roofPos = [], roofUV = [];
+    const BAY = 3.2;                               // ancho de un vano (m)
+    for (const bd of list) {
+      const c = bd.contour, n = c.length;
+      const closed = n > 1 && c[0].x === c[n - 1].x && c[0].z === c[n - 1].z;
+      const m = closed ? n - 1 : n;
+      if (m < 3) continue;
+      let cx = 0, cz = 0, cu = 0, cv = 0, minx = Infinity, maxx = -Infinity, minz = Infinity, maxz = -Infinity;
+      for (let i = 0; i < m; i++) { const v = c[i]; cx += v.x; cz += v.z; cu += v.u; cv += v.v; if (v.x < minx) minx = v.x; if (v.x > maxx) maxx = v.x; if (v.z < minz) minz = v.z; if (v.z > maxz) maxz = v.z; }
+      cx /= m; cz /= m; cu /= m; cv /= m;
+      const roofH = Math.min(Math.min(maxx - minx, maxz - minz) * 0.28, 3.5);
+      const floors = Math.max(1, bd.floors || 2);
+      const yb = bd.baseY, yg = bd.groundY != null ? bd.groundY : yb + 1.5, yt = bd.topY, yApex = yt + roofH;
+      const floorH = Math.max(1, (yt - yg) / floors);
+      const yG = floors >= 2 ? yg + floorH : yt;   // techo de la planta baja
+      const hash = Math.abs(Math.round(c[0].x * 7.13 + c[0].z * 3.71 + m * 13));
+      const kind = hash % NV;                       // TIPO de fachada de este edificio
+      const jit = 0.86 + (hash % 7) / 7 * 0.22;     // brillo por edificio (variedad sutil, sin cambiar el tipo)
+      const uOff = (hash % 3) * 0.37, vFloors = (floors - 1) / 2; // 2 plantas por tesela de fachada
+      for (let i = 0; i < m; i++) {
+        const a = c[i], b = c[(i + 1) % m];
+        const L = Math.hypot(b.x - a.x, b.z - a.z);
+        // planta baja (yb→yG): comercios/portales, base bien oscura para CONTRASTE
+        const Ug = Math.max(1, L / BAY), vg = (y) => (y - yg) / floorH;
+        const pushG = (x, y, z, f, u) => { gPos.push(x, y, z); const c2 = jit * f; gCol.push(c2, c2, c2); gUV.push(u, vg(y)); };
+        pushG(a.x, yb, a.z, 0.55, 0); pushG(b.x, yb, b.z, 0.55, Ug); pushG(b.x, yG, b.z, 1, Ug);
+        pushG(a.x, yb, a.z, 0.55, 0); pushG(b.x, yG, b.z, 1, Ug); pushG(a.x, yG, a.z, 1, 0);
+        if (floors >= 2) { // plantas altas (yG→yt): fachada del TIPO elegido
+          const Uf = Math.max(0.5, L / (2 * BAY));
+          const P = facPos[kind], C = facCol[kind], U = facUV[kind];
+          const pushF = (x, y, z, u, v) => { P.push(x, y, z); C.push(jit, jit, jit); U.push(u, v); };
+          pushF(a.x, yG, a.z, uOff, 0); pushF(b.x, yG, b.z, uOff + Uf, 0); pushF(b.x, yt, b.z, uOff + Uf, vFloors);
+          pushF(a.x, yG, a.z, uOff, 0); pushF(b.x, yt, b.z, uOff + Uf, vFloors); pushF(a.x, yt, a.z, uOff, vFloors);
+        }
+      }
+      for (let i = 0; i < m; i++) { // tejado a cuatro aguas (teja del satélite)
+        const a = c[i], b = c[(i + 1) % m];
+        roofPos.push(a.x, yt, a.z, b.x, yt, b.z, cx, yApex, cz);
+        roofUV.push(a.u, a.v, b.u, b.v, cu, cv);
+      }
+    }
+    const mkMesh = (pos, mat, uv, col) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      if (uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      if (col) g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      g.computeVertexNormals();
+      return new THREE.Mesh(g, mat);
+    };
+    // material de fachada por TIPO (la textura lleva el color/patrón; vertexColor solo varía el brillo)
+    const facMat = (tex) => new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.2, vertexColors: true, roughness: 0.94, metalness: 0, side: THREE.DoubleSide });
+    const groundTex = this._groundFloorTexture();
+    const groundMat = new THREE.MeshStandardMaterial({ map: groundTex, emissiveMap: groundTex, emissive: 0xffffff, emissiveIntensity: 0.18, vertexColors: true, roughness: 0.95, metalness: 0, side: THREE.DoubleSide });
+    const roofTex = new THREE.CanvasTexture(data.texture);
+    roofTex.colorSpace = THREE.SRGBColorSpace; roofTex.minFilter = THREE.LinearFilter; roofTex.generateMipmaps = false;
+    roofTex.anisotropy = this._renderer.capabilities.getMaxAnisotropy();
+    const roofMat = new THREE.MeshStandardMaterial({ map: roofTex, emissiveMap: roofTex, emissive: 0xffffff, emissiveIntensity: 0.85, roughness: 1, metalness: 0, side: THREE.DoubleSide });
+    const grp = new THREE.Group();
+    if (gPos.length) grp.add(mkMesh(gPos, groundMat, gUV, gCol));
+    for (let k = 0; k < NV; k++) if (facPos[k].length) grp.add(mkMesh(facPos[k], facMat(this._facadeVariant(KINDS[k])), facUV[k], facCol[k]));
+    if (roofPos.length) grp.add(mkMesh(roofPos, roofMat, roofUV, null));
+    this._localScene.add(grp); this._buildingsGroup = grp;
+    this._applyShow();
+  }
+
+  /** Textura de FACHADA de plantas altas, por TIPO (`plaster`/`brick`/`shutter`/`stone`):
+   *  cada uno con su color/patrón de muro y su estilo de ventana. Rejilla 2×2 (2 vanos ×
+   *  2 plantas) que se repite con RepeatWrapping; la UV mapea las filas a las plantas
+   *  reales. El color va en la textura (no en el vertexColor, que solo varía el brillo). */
+  _facadeVariant(kind) {
+    const THREE = window.THREE, s = 256, h = 128;
+    const c = document.createElement('canvas'); c.width = c.height = s;
+    const x = c.getContext('2d');
+    // --- muro base según el tipo ---
+    const base = { plaster: '#e7dabf', brick: '#9c5340', shutter: '#d7ac61', stone: '#cfc8b6' }[kind] || '#e7dabf';
+    x.fillStyle = base; x.fillRect(0, 0, s, s);
+    if (kind === 'brick') { // hiladas de ladrillo (mortero más claro, juntas alternas)
+      x.strokeStyle = 'rgba(220,190,170,0.5)'; x.lineWidth = 2;
+      for (let y = 0; y <= s; y += 11) { x.beginPath(); x.moveTo(0, y); x.lineTo(s, y); x.stroke(); }
+      x.lineWidth = 1.5; let row = 0;
+      for (let y = 0; y < s; y += 11, row++) for (let vx = (row % 2 ? 13 : 0); vx <= s; vx += 26) { x.beginPath(); x.moveTo(vx, y); x.lineTo(vx, y + 11); x.stroke(); }
+    } else if (kind === 'stone') { // sillería: junta clara en cuadrícula
+      x.strokeStyle = 'rgba(150,142,126,0.5)'; x.lineWidth = 1.5;
+      for (let y = 0; y <= s; y += 21) { x.beginPath(); x.moveTo(0, y); x.lineTo(s, y); x.stroke(); }
+      for (let vx = 0; vx <= s; vx += 32) { x.beginPath(); x.moveTo(vx, 0); x.lineTo(vx, s); x.stroke(); }
+    }
+    // --- ventanas: una por celda (2×2), estilo según el tipo ---
+    const cells = [[0, 0], [1, 0], [0, 1], [1, 1]];
+    for (let ci = 0; ci < 4; ci++) {
+      const ox = cells[ci][0] * h, oy = cells[ci][1] * h;
+      x.fillStyle = 'rgba(0,0,0,0.12)'; x.fillRect(ox, oy + h - 7, h, 7); // forjado
+      const wwf = kind === 'shutter' ? 0.34 : (kind === 'stone' ? 0.44 : 0.42);
+      const whf = kind === 'stone' ? 0.66 : 0.58;
+      const ww = Math.round(h * wwf), wh = Math.round(h * whf);
+      const wx = ox + Math.round((h - ww) / 2), wy = oy + Math.round(h * 0.15);
+      if (kind === 'brick') { x.fillStyle = '#e9e2d4'; x.fillRect(wx - 5, wy - 6, ww + 10, 6); x.fillRect(wx - 5, wy + wh, ww + 10, 6); } // dintel y alféizar de piedra
+      x.fillStyle = '#2b3038'; // hueco / cristal
+      if (kind === 'stone') { // arco de medio punto
+        x.beginPath(); x.moveTo(wx, wy + wh); x.lineTo(wx, wy + ww / 2); x.arc(wx + ww / 2, wy + ww / 2, ww / 2, Math.PI, 0); x.lineTo(wx + ww, wy + wh); x.closePath(); x.fill();
+      } else x.fillRect(wx, wy, ww, wh);
+      x.fillStyle = 'rgba(255,255,255,0.10)'; x.fillRect(wx, wy, ww, wh * 0.4); // reflejo
+      x.strokeStyle = 'rgba(255,255,255,0.6)'; x.lineWidth = 3; x.strokeRect(wx, wy, ww, wh); // marco
+      x.strokeStyle = 'rgba(255,255,255,0.38)'; x.lineWidth = 2;
+      x.beginPath(); x.moveTo(wx + ww / 2, wy); x.lineTo(wx + ww / 2, wy + wh); x.moveTo(wx, wy + wh / 2); x.lineTo(wx + ww, wy + wh / 2); x.stroke();
+      if (kind === 'shutter') { // contraventanas a los lados
+        x.fillStyle = ci % 2 ? '#5f7050' : '#7a4f36';
+        x.fillRect(wx - ww * 0.42, wy, ww * 0.36, wh); x.fillRect(wx + ww + ww * 0.06, wy, ww * 0.36, wh);
+        x.strokeStyle = 'rgba(0,0,0,0.25)'; x.lineWidth = 1;
+        for (let yy = wy + 4; yy < wy + wh; yy += 6) { x.beginPath(); x.moveTo(wx - ww * 0.42, yy); x.lineTo(wx - ww * 0.06, yy); x.moveTo(wx + ww + ww * 0.06, yy); x.lineTo(wx + ww + ww * 0.42, yy); x.stroke(); }
+      }
+      if (ci === 0 || ci === 3) { x.strokeStyle = 'rgba(0,0,0,0.35)'; x.lineWidth = 3; x.strokeRect(wx - 4, wy + wh - 3, ww + 8, 8); } // algún balconcillo
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = this._renderer.capabilities.getMaxAnisotropy();
+    return t;
+  }
+
+  /** Textura de PLANTA BAJA con CONTRASTE: piedra grisácea, zócalo oscuro, escaparate/
+   *  portal ancho y una banda de toldo comercial. Se repite en horizontal por vanos. */
+  _groundFloorTexture() {
+    const THREE = window.THREE, s = 128;
+    const c = document.createElement('canvas'); c.width = c.height = s;
+    const x = c.getContext('2d');
+    x.fillStyle = '#a89e8d'; x.fillRect(0, 0, s, s);                    // piedra grisácea (más fría/oscura que arriba)
+    x.fillStyle = '#5a5148'; x.fillRect(0, s - 18, s, 18);             // zócalo oscuro
+    x.fillStyle = 'rgba(0,0,0,0.22)'; x.fillRect(0, 0, s, 8);          // sombra bajo la 1ª planta
+    const ox = Math.round(s * 0.14), ow = Math.round(s * 0.72), oy = Math.round(s * 0.30), oh = Math.round(s * 0.52);
+    x.fillStyle = '#7a3b33'; x.fillRect(ox - 4, oy - 12, ow + 8, 12);  // toldo comercial (banda cálida)
+    x.fillStyle = '#181b21'; x.fillRect(ox, oy, ow, oh);               // escaparate/portal (hueco oscuro y ancho)
+    x.fillStyle = 'rgba(255,255,255,0.12)'; x.beginPath(); x.moveTo(ox, oy + oh); x.lineTo(ox + ow, oy); x.lineTo(ox + ow, oy + oh * 0.4); x.lineTo(ox + ow * 0.4, oy + oh); x.closePath(); x.fill();
+    x.strokeStyle = 'rgba(255,255,255,0.5)'; x.lineWidth = 3; x.strokeRect(ox, oy, ow, oh); // marco
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = this._renderer.capabilities.getMaxAnisotropy();
+    return t;
+  }
+
+  /** ÁRBOLES: impostores en CRUZ (dos planos con textura de árbol y recorte alfa) en
+   *  `InstancedMesh` (pocas llamadas de dibujo para decenas de miles). Se mezclan TIPOS
+   *  de frondosa propios de la zona (roble/castaño + matorral): una malla instanciada
+   *  por tipo, con su copa y verde. Cada árbol se apoya en el relieve, con altura y giro
+   *  variados. `list` viene de `scene.treesReady` (verde del satélite + OSM). */
+  _buildTrees(list) {
+    if (!list || !list.length || !this._localScene) return;
+    const THREE = window.THREE;
+    // tipos de frondosa: roble (ancho), castaño (alto y domado), matorral (bajo)
+    const kinds = [
+      { tex: this._treeTexture('oak'), size: 1.0, hue: 0.26, mix: 0.5 },
+      { tex: this._treeTexture('chestnut'), size: 1.18, hue: 0.2, mix: 0.34 },
+      { tex: this._treeTexture('bushy'), size: 0.66, hue: 0.3, mix: 0.16 },
+    ];
+    const geo = this._treeCrossGeometry();
+    const pick = (h) => { const r = h % 100; return r < 50 ? 0 : (r < 84 ? 1 : 2); }; // reparto
+    const buckets = [[], [], []];
+    for (const t of list) buckets[pick(Math.abs((t.x * 13.7 + t.z * 7.3) | 0))].push(t);
+    const grp = new THREE.Group();
+    const dummy = new THREE.Object3D(), col = new THREE.Color();
+    for (let k = 0; k < kinds.length; k++) {
+      const arr = buckets[k]; if (!arr.length) continue;
+      const tex = kinds[k].tex;
+      const mat = new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: 0x3a5a28, emissiveIntensity: 0.3, alphaTest: 0.5, transparent: false, side: THREE.DoubleSide, roughness: 1, metalness: 0 });
+      const mesh = new THREE.InstancedMesh(geo, mat, arr.length);
+      for (let i = 0; i < arr.length; i++) {
+        const t = arr[i], h = Math.max(2, (t.h || 6) * kinds[k].size), w = h * 0.82;
+        dummy.position.set(t.x, (t.y || 0) - 0.4, t.z);
+        dummy.rotation.set(0, (i * 2.3999) % (Math.PI * 2), 0);
+        dummy.scale.set(w, h, w); dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
+        const tt = t.tint == null ? 0.5 : t.tint;             // verde variado por árbol, con el matiz del tipo
+        col.setHSL(kinds[k].hue + tt * 0.05, 0.5 + tt * 0.15, 0.36 + tt * 0.16);
+        mesh.setColorAt(i, col);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      mesh.frustumCulled = false;
+      grp.add(mesh);
+    }
+    this._localScene.add(grp); this._treesGroup = grp;
+    this._applyShow();
+  }
+
+  /** Geometría de árbol: DOS planos perpendiculares (cruz) de 1×1 con la base en y=0,
+   *  para que desde cualquier ángulo del sobrevuelo lea como volumen. Normal hacia
+   *  arriba para que la copa reciba luz pareja (sin caras negras). */
+  _treeCrossGeometry() {
+    const THREE = window.THREE, g = new THREE.BufferGeometry();
+    const pos = [], uv = [], nor = [];
+    const quad = (ax, az) => { // plano vertical en la dirección (ax,az)
+      const hx = ax * 0.5, hz = az * 0.5;
+      pos.push(-hx, 0, -hz, hx, 0, hz, hx, 1, hz, -hx, 0, -hz, hx, 1, hz, -hx, 1, -hz);
+      uv.push(0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1);
+      for (let k = 0; k < 6; k++) nor.push(0, 1, 0);
+    };
+    quad(1, 0); quad(0, 1);
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+    return g;
+  }
+
+  /** Textura de árbol por TIPO (`oak` roble ancho e irregular / `chestnut` castaño alto
+   *  y domado / `bushy` matorral bajo). Copa en escala de grises (el color por instancia
+   *  la tiñe de verde) con volumen; tronco marrón; recorte alfa. */
+  _treeTexture(kind) {
+    const THREE = window.THREE, s = 128;
+    const c = document.createElement('canvas'); c.width = c.height = s;
+    const x = c.getContext('2d'); x.clearRect(0, 0, s, s);
+    const blob = (bx, by, br, dark) => {
+      const gx = bx * s, gy = by * s, gr = br * s;
+      const g = x.createRadialGradient(gx - gr * 0.3, gy - gr * 0.3, gr * 0.2, gx, gy, gr);
+      g.addColorStop(0, dark ? '#c4c4c4' : '#e8e8e8'); g.addColorStop(1, dark ? '#727272' : '#8c8c8c');
+      x.fillStyle = g; x.beginPath(); x.arc(gx, gy, gr, 0, 7); x.fill();
+    };
+    if (kind === 'chestnut') {          // alto y domado
+      x.fillStyle = '#5b432b'; x.fillRect(s * 0.46, s * 0.60, s * 0.08, s * 0.40);
+      blob(0.5, 0.22, 0.20); blob(0.5, 0.34, 0.28); blob(0.38, 0.42, 0.19); blob(0.62, 0.42, 0.19); blob(0.5, 0.5, 0.22, true);
+    } else if (kind === 'bushy') {      // matorral bajo y redondo
+      x.fillStyle = '#4d3a26'; x.fillRect(s * 0.47, s * 0.74, s * 0.06, s * 0.26);
+      blob(0.5, 0.6, 0.26); blob(0.36, 0.64, 0.18); blob(0.64, 0.64, 0.18); blob(0.5, 0.72, 0.2, true);
+    } else {                            // roble: copa ancha e irregular
+      x.fillStyle = '#5b432b'; x.fillRect(s * 0.46, s * 0.58, s * 0.08, s * 0.42);
+      blob(0.5, 0.38, 0.25); blob(0.29, 0.45, 0.19); blob(0.71, 0.45, 0.19); blob(0.42, 0.28, 0.16); blob(0.62, 0.29, 0.16); blob(0.5, 0.52, 0.21, true);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = this._renderer.capabilities.getMaxAnisotropy();
+    return t;
+  }
+
   /** Oculta los rótulos que se solapan en pantalla (prioriza los cercanos a la cámara). */
   _declutterLabels() {
     const items = this._labelItems; if (!items || !items.length) return;
@@ -1450,6 +1708,8 @@ class Flight3D extends DjiElement {
     if (this._kpGroup) this._kpGroup.visible = s.kp;
     if (this._horizonPlacesGroup) this._horizonPlacesGroup.visible = s.places;
     if (this._horizonWaterGroup) this._horizonWaterGroup.visible = s.water;
+    if (this._buildingsGroup) this._buildingsGroup.visible = s.buildings;
+    if (this._treesGroup) this._treesGroup.visible = s.trees;
     const hud = this.$('#hud'); if (hud) hud.hidden = !(s.hud && this._playing);
   }
 
@@ -2295,6 +2555,7 @@ class Flight3D extends DjiElement {
     this._cam.aspect = W / H; this._cam.updateProjectionMatrix();
 
     this._exporting = true;
+    this._setTreeExportLOD(true); // menos árboles durante la exportación (evita que se arrastre)
     const ac = (this._exportAbort = new AbortController());
     this._showExport(true); this._setExportProgress(0);
 
@@ -2362,9 +2623,22 @@ class Flight3D extends DjiElement {
     } finally {
       this._exporting = false; this._exportClock = null; this._exportAbort = null;
       this._cineMode = wasCine;
+      this._setTreeExportLOD(false); // restaura todos los árboles al terminar el export
       this._resize(); // devuelve el renderer/cámara a la resolución de pantalla
       this._stopFlyover(); this._showExport(false); this._applyOrbit();
     }
+  }
+
+  /** Reduce (o restaura) el nº de árboles renderizados durante la EXPORTACIÓN de vídeo:
+   *  con cientos de miles de billboards, el export a alta resolución se arrastraría. Como
+   *  las instancias están barajadas, bajar `count` adelgaza el bosque de forma uniforme. */
+  _setTreeExportLOD(on) {
+    const g = this._treesGroup; if (!g) return;
+    g.traverse((m) => {
+      if (!m.isInstancedMesh) return;
+      if (on) { if (m.userData._fullCount == null) m.userData._fullCount = m.count; m.count = Math.max(1, Math.floor(m.userData._fullCount * 0.4)); }
+      else if (m.userData._fullCount != null) { m.count = m.userData._fullCount; }
+    });
   }
 
   /** Pide al usuario un fichero de destino (File System Access API) y devuelve un
@@ -2558,7 +2832,7 @@ class Flight3D extends DjiElement {
     if (this._renderer) { this._renderer.dispose(); this._renderer = null; }
     this._three = null; this._localScene = null; this._scene = null; this._time = null; this._look = null;
     this._labelItems = null; this._terrainMesh = null; this._ray = null; this._home = null; this._kpMarks = null; this._camTween = null; this._free = null; this._pilot = null;
-    this._trackGroup = null; this._kpGroup = null; this._horizonPlacesGroup = null; this._horizonWaterGroup = null;
+    this._trackGroup = null; this._kpGroup = null; this._horizonPlacesGroup = null; this._horizonWaterGroup = null; this._buildingsGroup = null; this._treesGroup = null;
   }
 }
 
@@ -7582,6 +7856,8 @@ __x.default = {
   'v3d.opt.kp': 'Flight highlights',
   'v3d.opt.places': 'Towns and peaks',
   'v3d.opt.water': 'Rivers and reservoirs',
+  'v3d.opt.buildings': 'Buildings (3D)',
+  'v3d.opt.trees': 'Trees (3D)',
   'v3d.opt.hud': 'Telemetry (HUD)',
   'v3d.opt.size': 'Drone size',
   'v3d.size.l': 'Large',
@@ -7998,6 +8274,8 @@ __x.default = {
   'v3d.opt.kp': 'Hitos del vuelo',
   'v3d.opt.places': 'Pueblos y cimas',
   'v3d.opt.water': 'Ríos y embalses',
+  'v3d.opt.buildings': 'Edificios (3D)',
+  'v3d.opt.trees': 'Árboles (3D)',
   'v3d.opt.hud': 'Telemetría (HUD)',
   'v3d.opt.size': 'Tamaño del dron',
   'v3d.size.l': 'Grande',
@@ -9272,6 +9550,13 @@ const { solarPosition, lightPhase } = __req("js/solar.js");
 
 const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile';
 const TERRARIUM = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium';
+// WCS de Modelos Digitales del Terreno del IGN: MDT05 (5 m, de PNOA LiDAR) para
+// España. Sirve el relieve MUCHO más fino que Terrarium (SRTM ~30 m). Envía
+// `Access-Control-Allow-Origin: *`, así que se consume directo desde el navegador.
+const IGN_WCS = 'https://servicios.idee.es/wcs-inspire/mdt';
+// WFS INSPIRE de edificios del Catastro: huellas + nº de plantas de TODA España
+// (también aldeas, a diferencia de OSM). Con `Access-Control-Allow-Origin: *`.
+const CATASTRO_WFS = 'https://ovc.catastro.meh.es/INSPIRE/wfsBU.aspx';
 const MPD_LAT = 111320; // metros por grado de latitud
 
 /**
@@ -9322,6 +9607,250 @@ async function fetchTerrainDEM(b) {
       return top + (bot - top) * ty;
     },
   };
+}
+
+/**
+ * Parser mínimo de GeoTIFF de una banda entera de 16 bits SIN comprimir (justo lo
+ * que devuelve el WCS del IGN con `format=image/tiff`). No usa librería: lee la IFD
+ * y vuelca los píxeles a un Float32Array. Devuelve {width,height,grid} o null si no
+ * lo reconoce. La georreferencia no se lee del TIFF: se usa el bbox pedido (el WCS
+ * remuestrea justo a ese extent), lo que evita ambigüedades de orden de ejes.
+ * @param {ArrayBuffer} buf
+ */
+function parseGeoTiffInt16(buf) {
+  const dv = new DataView(buf);
+  if (buf.byteLength < 8) return null;
+  const le = dv.getUint16(0, false) === 0x4949; // 'II' little-endian, 'MM' big
+  const u16 = (o) => dv.getUint16(o, le);
+  const u32 = (o) => dv.getUint32(o, le);
+  if (dv.getUint16(2, le) !== 42) return null;
+  const ifd = u32(4);
+  const n = u16(ifd);
+  const SZ = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 8: 2, 9: 4, 11: 4, 12: 8 };
+  const tags = {};
+  for (let i = 0; i < n; i++) {
+    const e = ifd + 2 + i * 12, tag = u16(e), type = u16(e + 2), cnt = u32(e + 4);
+    const bytes = (SZ[type] || 1) * cnt;
+    tags[tag] = { type, cnt, voff: bytes <= 4 ? e + 8 : u32(e + 8) };
+  }
+  const nums = (t) => {
+    if (!t) return [];
+    const out = [], s = SZ[t.type] || 1;
+    for (let i = 0; i < t.cnt; i++) {
+      const o = t.voff + i * s;
+      out.push(t.type === 3 ? u16(o) : t.type === 4 ? u32(o) : t.type === 12 ? dv.getFloat64(o, le)
+        : t.type === 8 ? dv.getInt16(o, le) : dv.getUint8(o));
+    }
+    return out;
+  };
+  const width = nums(tags[256])[0], height = nums(tags[257])[0];
+  const signed = (nums(tags[339])[0] || 1) === 2; // SampleFormat: 2 = entero con signo
+  const stripOffsets = nums(tags[273]), stripCounts = nums(tags[279]);
+  const rowsPerStrip = nums(tags[278])[0] || height;
+  if (!width || !height || !stripOffsets.length) return null;
+  const grid = new Float32Array(width * height);
+  let p = 0;
+  for (let s = 0; s < stripOffsets.length && p < grid.length; s++) {
+    let o = stripOffsets[s];
+    const count = (stripCounts[s] ?? rowsPerStrip * width * 2) / 2;
+    for (let k = 0; k < count && p < grid.length; k++, o += 2) {
+      let v = signed ? dv.getInt16(o, le) : dv.getUint16(o, le);
+      if (v < -1000 || v > 9000) v = 0; // descarta nodata / valores absurdos
+      grid[p++] = v;
+    }
+  }
+  return { width, height, grid };
+}
+
+/**
+ * DEM del terreno del IGN (MDT05, 5 m) para un bbox en España. Pide una única
+ * cobertura GeoTIFF al WCS, acotando los píxeles a `budget` con SCALESIZE para que
+ * un mapa ancho no se dispare de tamaño, y devuelve un muestreador `heightAt` con
+ * la misma forma que `fetchTerrainDEM`. Lanza si falla (el llamante cae a Terrarium).
+ * @returns {Promise<{heightAt:(lat:number,lon:number)=>number, hiRes:boolean}>}
+ */
+async function fetchTerrainDEM_IGN(b, budget = 1200, timeoutMs = 18000) {
+  const CELL = 0.000045; // ~5 m por píxel del MDT05
+  const W = Math.max(2, Math.min(budget, Math.round((b.east - b.west) / CELL)));
+  const H = Math.max(2, Math.min(budget, Math.round((b.north - b.south) / CELL)));
+  const url = `${IGN_WCS}?service=WCS&version=2.0.1&request=GetCoverage`
+    + `&coverageId=Elevacion4258_5`
+    + `&subset=Lat(${b.south},${b.north})&subset=Long(${b.west},${b.east})`
+    + `&scalesize=long(${W}),lat(${H})&format=image/tiff`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let buf;
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    if (!res.ok) throw new Error('IGN WCS ' + res.status);
+    if (!(res.headers.get('content-type') || '').includes('tiff')) throw new Error('IGN WCS sin TIFF'); // excepción XML
+    buf = await res.arrayBuffer();
+  } finally { clearTimeout(timer); }
+  const t = parseGeoTiffInt16(buf);
+  if (!t || !t.width) throw new Error('GeoTIFF IGN ilegible');
+  const { width, height, grid } = t;
+  const dLon = (b.east - b.west) || 1e-6, dLat = (b.north - b.south) || 1e-6;
+  const at = (px, py) => grid[py * width + px];
+  return {
+    hiRes: true,
+    heightAt(lat, lon) {
+      const fx = Math.max(0, Math.min(width - 1.001, (lon - b.west) / dLon * (width - 1)));
+      const fy = Math.max(0, Math.min(height - 1.001, (b.north - lat) / dLat * (height - 1))); // fila 0 = norte
+      const xa = Math.floor(fx), ya = Math.floor(fy), tx = fx - xa, ty = fy - ya;
+      const top = at(xa, ya) + (at(xa + 1, ya) - at(xa, ya)) * tx;
+      const bot = at(xa, ya + 1) + (at(xa + 1, ya + 1) - at(xa, ya + 1)) * tx;
+      return top + (bot - top) * ty;
+    },
+  };
+}
+
+// Caché de DEM por bbox+fuente: la escena puede reconstruirse (IntersectionObserver,
+// resize) y así no se vuelve a descargar/parsear el terreno.
+const _demCache = new Map();
+
+/**
+ * Descarga las huellas de los edificios del Catastro en un bbox (WFS INSPIRE) y las
+ * devuelve como polígonos con nº de plantas, para extruir "casas con volumen" y
+ * tejados reales (mapeados con la foto satélite) en el visor 3D. Solo España.
+ * @param {{south:number,west:number,north:number,east:number}} bx
+ * @returns {Promise<Array<{ring:Array<[number,number]>, floors:number}>>}  ring = [lat,lon]
+ */
+function parseBuildingsGML(txt) {
+  const doc = new DOMParser().parseFromString(txt, 'application/xml');
+  const parts = Array.from(doc.getElementsByTagName('*')).filter((n) => n.localName === 'BuildingPart');
+  const out = [];
+  for (const p of parts) {
+    const kids = Array.from(p.getElementsByTagName('*'));
+    const pl = kids.find((n) => n.localName === 'posList');       // 1er anillo = exterior
+    if (!pl) continue;
+    const nums = pl.textContent.trim().split(/\s+/).map(Number);
+    const ring = [];
+    for (let i = 0; i + 1 < nums.length; i += 2) ring.push([nums[i], nums[i + 1]]); // [lat, lon]
+    if (ring.length < 4) continue;
+    const fEl = kids.find((n) => n.localName === 'numberOfFloorsAboveGround');
+    const floors = fEl ? Math.max(1, parseInt(fEl.textContent, 10) || 1) : 2; // 2 plantas por defecto
+    out.push({ ring, floors });
+  }
+  return out;
+}
+
+/**
+ * Descarga los edificios del Catastro en un bbox, TROCEADO en celdas pequeñas: el
+ * WFS del Catastro escala muy mal con el área (300 m ≈ 8 s, 1 km se cuelga), así que
+ * se parte en celdas de ~`cell` grados y se piden en paralelo (concurrencia limitada),
+ * con timeout por celda; las que fallan/vacían se ignoran. Robusto ante su lentitud.
+ */
+async function fetchBuildings(bx, { timeoutMs = 22000, cell = 0.0045, conc = 4 } = {}) {
+  const cols = Math.max(1, Math.ceil((bx.east - bx.west) / cell));
+  const rows = Math.max(1, Math.ceil((bx.north - bx.south) / cell));
+  const cells = [];
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++) cells.push({
+      west: bx.west + c * (bx.east - bx.west) / cols, east: bx.west + (c + 1) * (bx.east - bx.west) / cols,
+      south: bx.south + r * (bx.north - bx.south) / rows, north: bx.south + (r + 1) * (bx.north - bx.south) / rows,
+    });
+  const fetchCell = async (q) => {
+    const url = `${CATASTRO_WFS}?service=WFS&version=2.0.0&request=GetFeature`
+      + `&typenames=BU.BuildingPart&srsname=urn:ogc:def:crs:EPSG::4326`
+      + `&bbox=${q.south},${q.west},${q.north},${q.east},urn:ogc:def:crs:EPSG::4326&count=4000`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      if (!res.ok) return [];
+      return parseBuildingsGML(await res.text());
+    } catch { return []; } finally { clearTimeout(timer); }
+  };
+  const out = [];
+  for (let i = 0; i < cells.length; i += conc) {
+    const batch = await Promise.all(cells.slice(i, i + conc).map(fetchCell));
+    for (const a of batch) out.push(...a);
+  }
+  return out;
+}
+
+/**
+ * Hornea el relieve dentro de la textura satélite para que se vea 3D real aunque el
+ * terreno sea auto-iluminado (emissiveMap). Combina tres cosas, compuestas en
+ * `multiply` sobre el lienzo de la textura (así persiste aunque el sol esté bajo):
+ *  - hillshade direccional del sol (laderas al sol claras, en contra oscuras),
+ *  - OSCURECIDO por pendiente (marca paredes/farallones verticales),
+ *  - SOMBRAS PROYECTADAS reales del sol sobre el DEM (ray-march): montañas que
+ *    ensombrecen valles y paredes que tapan lo de detrás — clave a horas bajas.
+ * @param {HTMLCanvasElement} texCanvas  @param {{west,east,north,south}} b
+ * @param {(lat:number,lon:number)=>number} heightAt  @param {{x,y,z}} sun  @param {number} VE
+ */
+function reliefShade(texCanvas, b, heightAt, sun, VE) {
+  const OW = Math.min(1500, texCanvas.width);
+  const OH = Math.max(2, Math.round(OW * texCanvas.height / texCanvas.width));
+  const latMid = (b.north + b.south) / 2;
+  const eastM = (b.east - b.west) * 111320 * Math.cos(latMid * Math.PI / 180);
+  const southM = (b.north - b.south) * 110574;
+  const mx = eastM / OW, mz = southM / OH; // metros por píxel del overlay
+  const lonAt = (i) => b.west + (b.east - b.west) * i / (OW - 1);
+  const latAt = (j) => b.north + (b.south - b.north) * j / (OH - 1);
+  // alturas a resolución del overlay (una sola pasada; se reusa para el hillshade)
+  const hgt = new Float32Array(OW * OH);
+  for (let j = 0; j < OH; j++) { const lat = latAt(j); for (let i = 0; i < OW; i++) hgt[j * OW + i] = heightAt(lat, lonAt(i)); }
+  const Hc = (i, j) => hgt[Math.max(0, Math.min(OH - 1, j)) * OW + Math.max(0, Math.min(OW - 1, i))];
+
+  // --- sombras proyectadas del sol: ray-march en malla gruesa (más que de sobra;
+  //     las sombras son de escala grande). Cada punto mira hacia el sol y, si el
+  //     terreno se interpone por encima del rayo, queda en sombra. ---
+  const hm = Math.hypot(sun.x, sun.z) || 1e-3;   // componente horizontal del sol
+  const elevSlope = sun.y / hm;                  // subida del rayo por metro horizontal (tan de la elevación)
+  const SW = Math.min(560, OW), SH = Math.max(2, Math.round(SW * OH / OW));
+  const shadow = new Float32Array(SW * SH); shadow.fill(1);
+  if (elevSlope < 6) {                           // con el sol casi cenital las sombras son inapreciables
+    const smx = eastM / SW, smz = southM / SH;
+    const dirE = sun.x / hm, dirS = sun.z / hm;  // paso hacia el sol (este, sur) en celdas
+    const stepM = Math.hypot(dirE * smx, dirS * smz) || 1;
+    const hsG = new Float32Array(SW * SH);
+    for (let j = 0; j < SH; j++) { const lat = b.north + (b.south - b.north) * j / (SH - 1); for (let i = 0; i < SW; i++) hsG[j * SW + i] = heightAt(lat, b.west + (b.east - b.west) * i / (SW - 1)); }
+    const maxSteps = 180;
+    for (let j = 0; j < SH; j++)
+      for (let i = 0; i < SW; i++) {
+        const h0 = hsG[j * SW + i]; let fi = i, fj = j, dist = 0;
+        for (let k = 0; k < maxSteps; k++) {
+          fi += dirE; fj += dirS; dist += stepM;
+          const xi = fi | 0, yj = fj | 0;
+          if (xi < 0 || yj < 0 || xi >= SW || yj >= SH) break;
+          if (hsG[yj * SW + xi] > h0 + dist * elevSlope + 0.5) { shadow[j * SW + i] = 0.42; break; }
+        }
+      }
+  }
+  const shAt = (i, j) => { // muestreo bilineal del mapa de sombra (penumbra suave)
+    const fx = i / (OW - 1) * (SW - 1), fy = j / (OH - 1) * (SH - 1);
+    const xa = Math.min(SW - 2, fx | 0), ya = Math.min(SH - 2, fy | 0), tx = fx - xa, ty = fy - ya;
+    const a = shadow[ya * SW + xa], b2 = shadow[ya * SW + xa + 1], c = shadow[(ya + 1) * SW + xa], d = shadow[(ya + 1) * SW + xa + 1];
+    return (a + (b2 - a) * tx) + ((c + (d - c) * tx) - (a + (b2 - a) * tx)) * ty;
+  };
+
+  // --- composición final ---
+  const sl = Math.hypot(sun.x, sun.y, sun.z) || 1;
+  const sx = sun.x / sl, sy = sun.y / sl, sz = sun.z / sl;
+  const ov = document.createElement('canvas'); ov.width = OW; ov.height = OH;
+  const octx = ov.getContext('2d'); const img = octx.createImageData(OW, OH);
+  for (let j = 0; j < OH; j++)
+    for (let i = 0; i < OW; i++) {
+      const gx = (Hc(i + 1, j) - Hc(i - 1, j)) / (2 * mx); // pendiente este
+      const gz = (Hc(i, j + 1) - Hc(i, j - 1)) / (2 * mz); // pendiente sur
+      const nx = -VE * gx, ny = 1, nz = -VE * gz, nl = Math.hypot(nx, ny, nz) || 1;
+      const hs = Math.max(0, (nx * sx + ny * sy + nz * sz) / nl);      // iluminación por el sol
+      const slope = Math.hypot(VE * gx, VE * gz);
+      let fct = 0.6 + 0.7 * hs;                                         // relieve direccional
+      fct *= (1 - 0.5 * Math.min(1, slope / 2.2));                      // paredes: hasta -50%
+      fct *= shAt(i, j);                                                // sombra proyectada del sol
+      fct = Math.max(0.3, Math.min(1, fct));                            // solo oscurece (multiply)
+      const v = Math.round(fct * 255), k = (j * OW + i) * 4;
+      img.data[k] = v; img.data[k + 1] = v; img.data[k + 2] = v; img.data[k + 3] = 255;
+    }
+  octx.putImageData(img, 0, 0);
+  const tctx = texCanvas.getContext('2d');
+  tctx.save();
+  tctx.globalCompositeOperation = 'multiply'; tctx.imageSmoothingEnabled = true;
+  tctx.drawImage(ov, 0, 0, texCanvas.width, texCanvas.height);
+  tctx.restore();
 }
 
 /**
@@ -9380,7 +9909,7 @@ async function buildTexture(tc, boost = 4, maxTex = 8192) {
   // MB) cuelga/crashea navegadores con poca memoria; nos quedamos en 8192 por lado
   // (~84 MB) y ~600 teselas, que es lo que va sobrado en cualquier equipo.
   const cap = Math.min(maxTex || 8192, 8192);
-  if (boost > 0 && (cols * rows > 600 || cols * 256 > cap || rows * 256 > cap)) return buildTexture(tc, boost - 1, maxTex);
+  if (boost > 0 && (cols * rows > 900 || cols * 256 > cap || rows * 256 > cap)) return buildTexture(tc, boost - 1, maxTex);
   const cv = document.createElement('canvas');
   cv.width = cols * 256; cv.height = rows * 256;
   const ctx = cv.getContext('2d');
@@ -9454,6 +9983,85 @@ function buildWaterMask(texCanvas) {
   }
   mx.putImageData(out, 0, 0);
   return water > W * H * 0.006 ? m : null;
+}
+
+/**
+ * Dispersa ÁRBOLES a partir del verdor del satélite: muestrea la textura en una
+ * rejilla, marca los píxeles claramente verdes (vegetación) que no sean agua, y
+ * devuelve posiciones en el mundo con altura/tono variados (submuestreadas a `budget`
+ * para no pasarse). Es el mismo enfoque que la máscara de agua, pero para el verde.
+ * @returns {Array<{x:number,z:number,y:number,h:number,tint:number}>}
+ */
+function scatterTrees(texCanvas, water, b, X, Z, groundY, VE, budget = 480000) {
+  const W = 960, H = Math.max(1, Math.round(960 * texCanvas.height / texCanvas.width));
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const cx = cv.getContext('2d', { willReadFrequently: true });
+  cx.drawImage(texCanvas, 0, 0, W, H);
+  let d; try { d = cx.getImageData(0, 0, W, H).data; } catch { return []; }
+  let wd = null, WW = 0, WH = 0;
+  if (water) { try { const wc = water.getContext('2d', { willReadFrequently: true }); WW = water.width; WH = water.height; wd = wc.getImageData(0, 0, WW, WH).data; } catch { /* taint */ } }
+  const isWater = (u, v) => { if (!wd) return false; const px = Math.min(WW - 1, (u * WW) | 0), py = Math.min(WH - 1, (v * WH) | 0); return wd[(py * WW + px) * 4 + 1] < 200; };
+  // MÁSCARA DE AGUA para árboles, más inclusiva que buildWaterMask: capta el agua azul
+  // (azul>rojo) Y el turquesa/somero del embalse (azul relativamente alto sobre el verde).
+  // Luego se DILATA para excluir TODA la lámina de agua, incluida la vegetación de ribera
+  // y las islas verdes dentro del agua (que si no, se llenaban de árboles).
+  // Máscara de AGUA SOMERA (cola turquesa/cian del embalse) para DILATAR y cubrir también
+  // sus islas de vegetación. OJO: NO se puede meter aquí el agua oscura/teal, porque el
+  // bosque más denso también es azul-oscuro (b≈g) e idéntico por color → al dilatar se
+  // comería el bosque. Por eso aquí solo el turquesa CLARO (brillante y muy cian, r bajo),
+  // que el bosque oscuro nunca cumple. El agua azul profunda la quita el filtro por píxel.
+  const wet = new Uint8Array(W * H);
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+    const r = d[i], g = d[i + 1], bl = d[i + 2], mxc = Math.max(r, g, bl), mnc = Math.min(r, g, bl);
+    // (a) turquesa CLARO saturado; (b) agua PÁLIDA somera: brillante, poco saturada y con
+    // AZUL≥ROJO (el agua refleja el cielo → b≥r; la tierra/arena seca tiene r≥b). Ambas
+    // exigen brillo alto → el bosque oscuro (aunque sea teal) nunca cae aquí.
+    if ((mxc > 110 && (g + bl) * 0.5 > r + 30) || (mxc > 120 && mxc - mnc < 42 && bl >= r && g >= r)) wet[p] = 1;
+  }
+  const R = 7, tmp = new Uint8Array(W * H), wetD = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { let f = 0; for (let k = -R; k <= R; k++) { const xx = x + k; if (xx >= 0 && xx < W && wet[y * W + xx]) { f = 1; break; } } tmp[y * W + x] = f; }
+  for (let x = 0; x < W; x++) for (let y = 0; y < H; y++) { let f = 0; for (let k = -R; k <= R; k++) { const yy = y + k; if (yy >= 0 && yy < H && tmp[yy * W + x]) { f = 1; break; } } wetD[y * W + x] = f; }
+  // VEGETACIÓN + BOSQUE: en el satélite el bosque DENSO es VERDE OSCURO (poco brillo)
+  // y los claros/prados son verde más CLARO. Se detecta el verde (G domina, no gris ni
+  // agua) y se PONDERA por lo OSCURO que es: el bosque cerrado (oscuro) recibe muchos
+  // árboles y los prados claros/campos pocos.
+  const cand = []; let wsum = 0;
+  for (let py = 0; py < H; py++)
+    for (let px = 0; px < W; px++) {
+      const i = (py * W + px) * 4, r = d[i], g = d[i + 1], bl = d[i + 2];
+      const mxc = Math.max(r, g, bl);
+      if (mxc > 200 || mxc < 20) continue;            // ni campo claro/roca ni negro
+      if (g < r - 6) continue;                        // no rojo-dominante (campo seco)
+      // AGUA (embalse/río, aun turquesa): la vegetación tiene el AZUL BAJO y el ROJO ≥ AZUL
+      // (clorofila); el agua tiene el azul alto y el azul > rojo. Dos cortes complementarios.
+      if (bl > g * 0.82 || bl > r + 8) continue;
+      if (g - Math.min(r, bl) < 6) continue;          // no gris (sombra/roca)
+      const dark = Math.max(0, Math.min(1, (185 - mxc) / 150)); // más oscuro = más bosque
+      if (dark < 0.42) continue;                      // CORTE: prados/campos claros → sin árboles
+      if (wetD[py * W + px]) continue;                // dentro de la lámina de agua (dilatada) → sin árboles
+      const u = (px + 0.5) / W, v = (py + 0.5) / H;
+      const w = Math.pow(dark, 2.6);                  // concentra MUY fuerte en el bosque cerrado
+      cand.push([u, v, dark, w]); wsum += w;
+    }
+  if (!cand.length || wsum <= 0) return [];
+  const dLon = b.east - b.west, dLat = b.south - b.north;
+  let seed = 1234567; const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const out = [];
+  // reparte ~budget árboles, proporcional a "cuánto bosque" (oscuridad del verde), con jitter
+  for (const [u, v, dark, w] of cand) {
+    const exact = w / wsum * budget;
+    let nHere = Math.floor(exact); if (rnd() < exact - nHere) nHere++;
+    for (let j = 0; j < nHere; j++) {
+      const lon = b.west + (u + (rnd() - 0.5) / W) * dLon, lat = b.north + (v + (rnd() - 0.5) / H) * dLat;
+      // en bosque denso (oscuro), árboles más grandes → la masa cierra la copa
+      out.push({ x: X(lon), z: Z(lat), y: groundY(lat, lon), h: (6 + rnd() * 4) * (0.7 + dark * 1.15) * VE, tint: 0.28 + rnd() * 0.45 });
+    }
+    if (out.length >= budget * 1.3) break; // tope de seguridad
+  }
+  // baraja (Fisher-Yates determinista): el orden queda espacialmente aleatorio, así
+  // reducir el nº de instancias (LOD al exportar) adelgaza el bosque de forma UNIFORME
+  for (let i = out.length - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0; const t = out[i]; out[i] = out[j]; out[j] = t; }
+  return out;
 }
 
 /**
@@ -9591,15 +10199,31 @@ async function buildScene3D(model, opts = {}) {
   const Z = (lat) => -(lat - lat0) * MPD_LAT;
   const uv = (lat, lon) => [PX(lon) / tc.compW, PY(lat) / tc.compH];
 
-  const dem = await fetchTerrainDEM(b); // muestreador de altura (m), o null si falla
+  // DEM: en España, MDT05 del IGN (5 m, mucho más fino); fuera, o si el IGN falla,
+  // Terrarium mundial (~30 m). `hiRes` marca el DEM fino para densificar la malla.
+  const inSpain = b.south > 35 && b.north < 44.5 && b.west > -10 && b.east < 5;
+  const useIGN = inSpain && opts.demIGN !== false;
+  const demKey = (useIGN ? 'ign:' : 'ter:') + [b.west, b.east, b.north, b.south].map((v) => v.toFixed(5)).join(',');
+  let dem = _demCache.get(demKey) || null;
+  if (!dem) {
+    if (useIGN) {
+      try { dem = await fetchTerrainDEM_IGN(b); }
+      catch (e) { console.warn('[scene-3d] MDT05 IGN falló, uso Terrarium:', e.message); dem = null; }
+    }
+    if (!dem) dem = await fetchTerrainDEM(b); // muestreador de altura (m), o null si falla
+    if (dem) _demCache.set(demKey, dem);
+  }
   const heightAt = (lat, lon) => (dem ? dem.heightAt(lat, lon) : 0);
   // exageración vertical: el DEM libre (SRTM ~30 m) es suave; realzamos el relieve
-  // igual que Google Earth. Se aplica por igual a terreno y vuelo (la altura
-  // relativa del dron sobre el suelo se mantiene correcta).
-  const VE = opts.exaggeration ?? 1.7;
+  // igual que Google Earth. Con el MDT05 (5 m) el relieve ya es nítido, así que se
+  // realza menos. Se aplica por igual a terreno y vuelo (la altura relativa del
+  // dron sobre el suelo se mantiene correcta).
+  const VE = opts.exaggeration ?? (dem && dem.hiRes ? 1.2 : 1.7);
 
-  // el DEM Terrarium es denso, así que renderizamos una malla fina directamente
-  const rgrid = dem ? Math.max(24, Math.min(160, opts.grid ?? 128)) : 24;
+  // malla de render: con el DEM de 5 m se densifica bastante, porque el espaciado
+  // entre vértices es lo que de verdad limita el detalle visible del relieve (el
+  // DEM tiene mucho más). 340² ≈ 230k triángulos, holgado para la GPU.
+  const rgrid = dem ? Math.max(24, Math.min(dem.hiRes ? 340 : 160, opts.grid ?? (dem.hiRes ? 340 : 128))) : 24;
   const latOf = (r) => b.north + (b.south - b.north) * (r / (rgrid - 1));
   const lonOf = (c) => b.west + (b.east - b.west) * (c / (rgrid - 1));
 
@@ -9673,7 +10297,11 @@ async function buildScene3D(model, opts = {}) {
   };
 
   const texture = await buildTexture(tc, 4, opts.maxTex);
-  const water = buildWaterMask(texture); // máscara de agua (o null)
+  const water = buildWaterMask(texture); // máscara de agua (con la imagen limpia, antes de sombrear)
+  // ÁRBOLES: semillas por verdor del satélite (con la textura limpia, antes de sombrear)
+  const treeSeeds = dem && opts.trees !== false ? scatterTrees(texture, water, b, X, Z, groundY, VE) : [];
+  // hornea el relieve en la textura (paredes/farallones bien marcados) cuando hay DEM
+  if (dem) { try { reliefShade(texture, b, heightAt, sun.dir, VE); } catch (e) { console.warn('[scene-3d] reliefShade:', e.message); } }
   const world = await buildWorldTexture(4); // globo de la intro (más nítido)
 
   // rótulos del horizonte (cimas/pueblos de OSM): se consultan DENTRO del terreno
@@ -9699,9 +10327,47 @@ async function buildScene3D(model, opts = {}) {
     }))
     .catch(() => []);
 
+  // edificios del Catastro (casas con volumen + tejados reales). Solo España; se
+  // consultan en la ZONA DEL VUELO (no en todo el mapa ancho: el GML de una ciudad
+  // pesa varios MB) y se proyectan a ENU con u,v hacia la textura satélite (tejado).
+  let buildingsReady = Promise.resolve([]);
+  if (inSpain && opts.buildings !== false) {
+    // El WFS del Catastro es lento y escala fatal con el área, así que NO se pide todo
+    // el vuelo: se acota a una caja alrededor del CENTRO del vuelo (donde suele estar
+    // el pueblo/sujeto sobrevolado). ~0.9 km de lado, troceada en celdas por fetchBuildings.
+    const hLat = 0.004, hLon = 0.004 / Math.max(0.2, Math.cos(lat0 * Math.PI / 180));
+    const bx = {
+      south: Math.max(b.south, lat0 - hLat), north: Math.min(b.north, lat0 + hLat),
+      west: Math.max(b.west, lon0 - hLon), east: Math.min(b.east, lon0 + hLon),
+    };
+    if (bx.north > bx.south && bx.east > bx.west) {
+      buildingsReady = fetchBuildings(bx).then((list) => list.map((bd) => {
+        const contour = bd.ring.map(([la, lo]) => ({ x: X(lo), z: Z(la), u: PX(lo) / tc.compW, v: 1 - PY(la) / tc.compH }));
+        let baseG = Infinity;
+        for (const [la, lo] of bd.ring) { const g = groundY(la, lo); if (g < baseG) baseG = g; }
+        return { contour, baseY: baseG - 1.5 * VE, groundY: baseG, topY: baseG + bd.floors * 3.0 * VE, floors: bd.floors };
+      })).catch((err) => { console.warn('[scene-3d] Catastro edificios:', err.message); return []; });
+    }
+  }
+
+  // ÁRBOLES: semillas del satélite (ya calculadas) + árboles concretos de OSM
+  // (natural=tree) en el entorno del vuelo. En 2º plano; el componente los añade al
+  // resolver. Ante fallo de Overpass, se quedan solo los del satélite.
+  const treesReady = (async () => {
+    if (opts.trees === false) return treeSeeds;
+    let osm = [];
+    try {
+      const tb = expandBox(b, 0.25, 0.3, 1.5); // km: árboles OSM en el entorno del vuelo
+      const els = await fetchOverpass(`[out:json][timeout:20];node["natural"="tree"](${tb.south},${tb.west},${tb.north},${tb.east});out skel qt 5000;`);
+      let seed = 987; const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+      osm = (els || []).filter((e) => e.lat != null).map((e) => ({ x: X(e.lon), z: Z(e.lat), y: groundY(e.lat, e.lon), h: (5 + rnd() * 4) * VE, tint: 0.35 + rnd() * 0.35 }));
+    } catch { /* sin OSM: solo satélite */ }
+    return treeSeeds.concat(osm);
+  })();
+
   return {
     center: [lat0, lon0],
-    world, poisReady,
+    world, poisReady, buildingsReady, treesReady,
     // extensión del terreno en metros (para encuadrar la cámara)
     bounds: {
       x0: X(b.west), x1: X(b.east), z0: Z(b.north), z1: Z(b.south),

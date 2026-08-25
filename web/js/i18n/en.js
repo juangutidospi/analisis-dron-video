@@ -169,6 +169,8 @@ export default {
   'v3d.opt.kp': 'Flight highlights',
   'v3d.opt.places': 'Towns and peaks',
   'v3d.opt.water': 'Rivers and reservoirs',
+  'v3d.opt.buildings': 'Buildings (3D)',
+  'v3d.opt.trees': 'Trees (3D)',
   'v3d.opt.hud': 'Telemetry (HUD)',
   'v3d.opt.size': 'Drone size',
   'v3d.size.l': 'Large',
