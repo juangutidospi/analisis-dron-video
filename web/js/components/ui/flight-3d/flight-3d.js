@@ -17,7 +17,7 @@ export class Flight3D extends DjiElement {
   static styles = [styles];
 
   /** Capas visibles del render (las controla el panel de ajustes). */
-  _show = { track: true, kp: true, places: true, water: true, hud: true };
+  _show = { track: true, kp: true, places: true, water: true, buildings: true, trees: true, hud: true };
 
   /** Escala del marcador del dron (y su sombra), elegible en el panel de ajustes:
    *  1 = grande (original), 0.75 = intermedio, 0.5 = mitad. */
@@ -63,6 +63,8 @@ export class Flight3D extends DjiElement {
           <label><input type="checkbox" data-k="kp" checked><span>${t('v3d.opt.kp')}</span></label>
           <label><input type="checkbox" data-k="places" checked><span>${t('v3d.opt.places')}</span></label>
           <label><input type="checkbox" data-k="water" checked><span>${t('v3d.opt.water')}</span></label>
+          <label><input type="checkbox" data-k="buildings" checked><span>${t('v3d.opt.buildings')}</span></label>
+          <label><input type="checkbox" data-k="trees" checked><span>${t('v3d.opt.trees')}</span></label>
           <label><input type="checkbox" data-k="hud" checked><span>${t('v3d.opt.hud')}</span></label>
           <div class="v3d-size">
             <span class="v3d-size-l">${t('v3d.opt.size')}</span>
@@ -163,6 +165,16 @@ export class Flight3D extends DjiElement {
         if (token !== this._token || !this.isConnected) return;
         this._buildHorizonLabels(pois);
       }).catch(() => {});
+      // edificios del Catastro (casas con volumen + tejados reales): también en 2º plano
+      scene.buildingsReady?.then((list) => {
+        if (token !== this._token || !this.isConnected) return;
+        this._buildBuildings(list, scene);
+      }).catch(() => {});
+      // árboles (verde del satélite + OSM): en 2º plano, como los edificios
+      scene.treesReady?.then((list) => {
+        if (token !== this._token || !this.isConnected) return;
+        this._buildTrees(list);
+      }).catch(() => {});
     }).catch((err) => { console.error('[flight-3d]', err); this._fallback(); });
   }
 
@@ -190,7 +202,10 @@ export class Flight3D extends DjiElement {
     // paleta de cielo/luz según la fase solar real del vuelo
     const pal = this._skyPalette(data.sun);
     scene.background = new THREE.Color(pal.horizon);
-    scene.fog = new THREE.Fog(pal.horizon, span * 2.2, span * 7);
+    // perspectiva aérea: el terreno lejano se funde con el color del cielo (sensación
+    // de distancia). Empieza más cerca y satura antes que antes; los rótulos del
+    // horizonte llevan fog:false, así que no se difuminan.
+    scene.fog = new THREE.Fog(pal.horizon, span * 1.6, span * 5.0);
     scene.add(this._buildSky(data, pal));
 
     // luces: cielo/suelo + sol direccional desde la posición real del sol
@@ -704,6 +719,249 @@ export class Flight3D extends DjiElement {
     this._applyShow(); // respeta el estado actual del panel de ajustes
   }
 
+  /** Casas con VOLUMEN a partir de las huellas del Catastro (`data.buildingsReady`) y
+   *  su nº de plantas, con aire rural: TEJADO A CUATRO AGUAS (apex en el centroide)
+   *  mapeado con la foto satélite (la teja real vista desde arriba); MUROS con tono de
+   *  fachada VARIADO por edificio (para que no parezca maqueta) y un degradado de
+   *  oclusión oscureciendo la base. Todo se fusiona en dos mallas (muros + tejados). */
+  _buildBuildings(list, data) {
+    if (!list || !list.length || !this._localScene) return;
+    const THREE = window.THREE;
+    const KINDS = ['plaster', 'brick', 'shutter', 'stone']; // TIPOS de fachada distintos
+    const NV = KINDS.length;
+    const facPos = Array.from({ length: NV }, () => []); // plantas altas, una malla por tipo
+    const facCol = Array.from({ length: NV }, () => []);
+    const facUV = Array.from({ length: NV }, () => []);
+    const gPos = [], gCol = [], gUV = [];          // planta baja (una sola malla)
+    const roofPos = [], roofUV = [];
+    const BAY = 3.2;                               // ancho de un vano (m)
+    for (const bd of list) {
+      const c = bd.contour, n = c.length;
+      const closed = n > 1 && c[0].x === c[n - 1].x && c[0].z === c[n - 1].z;
+      const m = closed ? n - 1 : n;
+      if (m < 3) continue;
+      let cx = 0, cz = 0, cu = 0, cv = 0, minx = Infinity, maxx = -Infinity, minz = Infinity, maxz = -Infinity;
+      for (let i = 0; i < m; i++) { const v = c[i]; cx += v.x; cz += v.z; cu += v.u; cv += v.v; if (v.x < minx) minx = v.x; if (v.x > maxx) maxx = v.x; if (v.z < minz) minz = v.z; if (v.z > maxz) maxz = v.z; }
+      cx /= m; cz /= m; cu /= m; cv /= m;
+      const roofH = Math.min(Math.min(maxx - minx, maxz - minz) * 0.28, 3.5);
+      const floors = Math.max(1, bd.floors || 2);
+      const yb = bd.baseY, yg = bd.groundY != null ? bd.groundY : yb + 1.5, yt = bd.topY, yApex = yt + roofH;
+      const floorH = Math.max(1, (yt - yg) / floors);
+      const yG = floors >= 2 ? yg + floorH : yt;   // techo de la planta baja
+      const hash = Math.abs(Math.round(c[0].x * 7.13 + c[0].z * 3.71 + m * 13));
+      const kind = hash % NV;                       // TIPO de fachada de este edificio
+      const jit = 0.86 + (hash % 7) / 7 * 0.22;     // brillo por edificio (variedad sutil, sin cambiar el tipo)
+      const uOff = (hash % 3) * 0.37, vFloors = (floors - 1) / 2; // 2 plantas por tesela de fachada
+      for (let i = 0; i < m; i++) {
+        const a = c[i], b = c[(i + 1) % m];
+        const L = Math.hypot(b.x - a.x, b.z - a.z);
+        // planta baja (yb→yG): comercios/portales, base bien oscura para CONTRASTE
+        const Ug = Math.max(1, L / BAY), vg = (y) => (y - yg) / floorH;
+        const pushG = (x, y, z, f, u) => { gPos.push(x, y, z); const c2 = jit * f; gCol.push(c2, c2, c2); gUV.push(u, vg(y)); };
+        pushG(a.x, yb, a.z, 0.55, 0); pushG(b.x, yb, b.z, 0.55, Ug); pushG(b.x, yG, b.z, 1, Ug);
+        pushG(a.x, yb, a.z, 0.55, 0); pushG(b.x, yG, b.z, 1, Ug); pushG(a.x, yG, a.z, 1, 0);
+        if (floors >= 2) { // plantas altas (yG→yt): fachada del TIPO elegido
+          const Uf = Math.max(0.5, L / (2 * BAY));
+          const P = facPos[kind], C = facCol[kind], U = facUV[kind];
+          const pushF = (x, y, z, u, v) => { P.push(x, y, z); C.push(jit, jit, jit); U.push(u, v); };
+          pushF(a.x, yG, a.z, uOff, 0); pushF(b.x, yG, b.z, uOff + Uf, 0); pushF(b.x, yt, b.z, uOff + Uf, vFloors);
+          pushF(a.x, yG, a.z, uOff, 0); pushF(b.x, yt, b.z, uOff + Uf, vFloors); pushF(a.x, yt, a.z, uOff, vFloors);
+        }
+      }
+      for (let i = 0; i < m; i++) { // tejado a cuatro aguas (teja del satélite)
+        const a = c[i], b = c[(i + 1) % m];
+        roofPos.push(a.x, yt, a.z, b.x, yt, b.z, cx, yApex, cz);
+        roofUV.push(a.u, a.v, b.u, b.v, cu, cv);
+      }
+    }
+    const mkMesh = (pos, mat, uv, col) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      if (uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      if (col) g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      g.computeVertexNormals();
+      return new THREE.Mesh(g, mat);
+    };
+    // material de fachada por TIPO (la textura lleva el color/patrón; vertexColor solo varía el brillo)
+    const facMat = (tex) => new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.2, vertexColors: true, roughness: 0.94, metalness: 0, side: THREE.DoubleSide });
+    const groundTex = this._groundFloorTexture();
+    const groundMat = new THREE.MeshStandardMaterial({ map: groundTex, emissiveMap: groundTex, emissive: 0xffffff, emissiveIntensity: 0.18, vertexColors: true, roughness: 0.95, metalness: 0, side: THREE.DoubleSide });
+    const roofTex = new THREE.CanvasTexture(data.texture);
+    roofTex.colorSpace = THREE.SRGBColorSpace; roofTex.minFilter = THREE.LinearFilter; roofTex.generateMipmaps = false;
+    roofTex.anisotropy = this._renderer.capabilities.getMaxAnisotropy();
+    const roofMat = new THREE.MeshStandardMaterial({ map: roofTex, emissiveMap: roofTex, emissive: 0xffffff, emissiveIntensity: 0.85, roughness: 1, metalness: 0, side: THREE.DoubleSide });
+    const grp = new THREE.Group();
+    if (gPos.length) grp.add(mkMesh(gPos, groundMat, gUV, gCol));
+    for (let k = 0; k < NV; k++) if (facPos[k].length) grp.add(mkMesh(facPos[k], facMat(this._facadeVariant(KINDS[k])), facUV[k], facCol[k]));
+    if (roofPos.length) grp.add(mkMesh(roofPos, roofMat, roofUV, null));
+    this._localScene.add(grp); this._buildingsGroup = grp;
+    this._applyShow();
+  }
+
+  /** Textura de FACHADA de plantas altas, por TIPO (`plaster`/`brick`/`shutter`/`stone`):
+   *  cada uno con su color/patrón de muro y su estilo de ventana. Rejilla 2×2 (2 vanos ×
+   *  2 plantas) que se repite con RepeatWrapping; la UV mapea las filas a las plantas
+   *  reales. El color va en la textura (no en el vertexColor, que solo varía el brillo). */
+  _facadeVariant(kind) {
+    const THREE = window.THREE, s = 256, h = 128;
+    const c = document.createElement('canvas'); c.width = c.height = s;
+    const x = c.getContext('2d');
+    // --- muro base según el tipo ---
+    const base = { plaster: '#e7dabf', brick: '#9c5340', shutter: '#d7ac61', stone: '#cfc8b6' }[kind] || '#e7dabf';
+    x.fillStyle = base; x.fillRect(0, 0, s, s);
+    if (kind === 'brick') { // hiladas de ladrillo (mortero más claro, juntas alternas)
+      x.strokeStyle = 'rgba(220,190,170,0.5)'; x.lineWidth = 2;
+      for (let y = 0; y <= s; y += 11) { x.beginPath(); x.moveTo(0, y); x.lineTo(s, y); x.stroke(); }
+      x.lineWidth = 1.5; let row = 0;
+      for (let y = 0; y < s; y += 11, row++) for (let vx = (row % 2 ? 13 : 0); vx <= s; vx += 26) { x.beginPath(); x.moveTo(vx, y); x.lineTo(vx, y + 11); x.stroke(); }
+    } else if (kind === 'stone') { // sillería: junta clara en cuadrícula
+      x.strokeStyle = 'rgba(150,142,126,0.5)'; x.lineWidth = 1.5;
+      for (let y = 0; y <= s; y += 21) { x.beginPath(); x.moveTo(0, y); x.lineTo(s, y); x.stroke(); }
+      for (let vx = 0; vx <= s; vx += 32) { x.beginPath(); x.moveTo(vx, 0); x.lineTo(vx, s); x.stroke(); }
+    }
+    // --- ventanas: una por celda (2×2), estilo según el tipo ---
+    const cells = [[0, 0], [1, 0], [0, 1], [1, 1]];
+    for (let ci = 0; ci < 4; ci++) {
+      const ox = cells[ci][0] * h, oy = cells[ci][1] * h;
+      x.fillStyle = 'rgba(0,0,0,0.12)'; x.fillRect(ox, oy + h - 7, h, 7); // forjado
+      const wwf = kind === 'shutter' ? 0.34 : (kind === 'stone' ? 0.44 : 0.42);
+      const whf = kind === 'stone' ? 0.66 : 0.58;
+      const ww = Math.round(h * wwf), wh = Math.round(h * whf);
+      const wx = ox + Math.round((h - ww) / 2), wy = oy + Math.round(h * 0.15);
+      if (kind === 'brick') { x.fillStyle = '#e9e2d4'; x.fillRect(wx - 5, wy - 6, ww + 10, 6); x.fillRect(wx - 5, wy + wh, ww + 10, 6); } // dintel y alféizar de piedra
+      x.fillStyle = '#2b3038'; // hueco / cristal
+      if (kind === 'stone') { // arco de medio punto
+        x.beginPath(); x.moveTo(wx, wy + wh); x.lineTo(wx, wy + ww / 2); x.arc(wx + ww / 2, wy + ww / 2, ww / 2, Math.PI, 0); x.lineTo(wx + ww, wy + wh); x.closePath(); x.fill();
+      } else x.fillRect(wx, wy, ww, wh);
+      x.fillStyle = 'rgba(255,255,255,0.10)'; x.fillRect(wx, wy, ww, wh * 0.4); // reflejo
+      x.strokeStyle = 'rgba(255,255,255,0.6)'; x.lineWidth = 3; x.strokeRect(wx, wy, ww, wh); // marco
+      x.strokeStyle = 'rgba(255,255,255,0.38)'; x.lineWidth = 2;
+      x.beginPath(); x.moveTo(wx + ww / 2, wy); x.lineTo(wx + ww / 2, wy + wh); x.moveTo(wx, wy + wh / 2); x.lineTo(wx + ww, wy + wh / 2); x.stroke();
+      if (kind === 'shutter') { // contraventanas a los lados
+        x.fillStyle = ci % 2 ? '#5f7050' : '#7a4f36';
+        x.fillRect(wx - ww * 0.42, wy, ww * 0.36, wh); x.fillRect(wx + ww + ww * 0.06, wy, ww * 0.36, wh);
+        x.strokeStyle = 'rgba(0,0,0,0.25)'; x.lineWidth = 1;
+        for (let yy = wy + 4; yy < wy + wh; yy += 6) { x.beginPath(); x.moveTo(wx - ww * 0.42, yy); x.lineTo(wx - ww * 0.06, yy); x.moveTo(wx + ww + ww * 0.06, yy); x.lineTo(wx + ww + ww * 0.42, yy); x.stroke(); }
+      }
+      if (ci === 0 || ci === 3) { x.strokeStyle = 'rgba(0,0,0,0.35)'; x.lineWidth = 3; x.strokeRect(wx - 4, wy + wh - 3, ww + 8, 8); } // algún balconcillo
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = this._renderer.capabilities.getMaxAnisotropy();
+    return t;
+  }
+
+  /** Textura de PLANTA BAJA con CONTRASTE: piedra grisácea, zócalo oscuro, escaparate/
+   *  portal ancho y una banda de toldo comercial. Se repite en horizontal por vanos. */
+  _groundFloorTexture() {
+    const THREE = window.THREE, s = 128;
+    const c = document.createElement('canvas'); c.width = c.height = s;
+    const x = c.getContext('2d');
+    x.fillStyle = '#a89e8d'; x.fillRect(0, 0, s, s);                    // piedra grisácea (más fría/oscura que arriba)
+    x.fillStyle = '#5a5148'; x.fillRect(0, s - 18, s, 18);             // zócalo oscuro
+    x.fillStyle = 'rgba(0,0,0,0.22)'; x.fillRect(0, 0, s, 8);          // sombra bajo la 1ª planta
+    const ox = Math.round(s * 0.14), ow = Math.round(s * 0.72), oy = Math.round(s * 0.30), oh = Math.round(s * 0.52);
+    x.fillStyle = '#7a3b33'; x.fillRect(ox - 4, oy - 12, ow + 8, 12);  // toldo comercial (banda cálida)
+    x.fillStyle = '#181b21'; x.fillRect(ox, oy, ow, oh);               // escaparate/portal (hueco oscuro y ancho)
+    x.fillStyle = 'rgba(255,255,255,0.12)'; x.beginPath(); x.moveTo(ox, oy + oh); x.lineTo(ox + ow, oy); x.lineTo(ox + ow, oy + oh * 0.4); x.lineTo(ox + ow * 0.4, oy + oh); x.closePath(); x.fill();
+    x.strokeStyle = 'rgba(255,255,255,0.5)'; x.lineWidth = 3; x.strokeRect(ox, oy, ow, oh); // marco
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = this._renderer.capabilities.getMaxAnisotropy();
+    return t;
+  }
+
+  /** ÁRBOLES: impostores en CRUZ (dos planos con textura de árbol y recorte alfa) en
+   *  `InstancedMesh` (pocas llamadas de dibujo para decenas de miles). Se mezclan TIPOS
+   *  de frondosa propios de la zona (roble/castaño + matorral): una malla instanciada
+   *  por tipo, con su copa y verde. Cada árbol se apoya en el relieve, con altura y giro
+   *  variados. `list` viene de `scene.treesReady` (verde del satélite + OSM). */
+  _buildTrees(list) {
+    if (!list || !list.length || !this._localScene) return;
+    const THREE = window.THREE;
+    // tipos de frondosa: roble (ancho), castaño (alto y domado), matorral (bajo)
+    const kinds = [
+      { tex: this._treeTexture('oak'), size: 1.0, hue: 0.26, mix: 0.5 },
+      { tex: this._treeTexture('chestnut'), size: 1.18, hue: 0.2, mix: 0.34 },
+      { tex: this._treeTexture('bushy'), size: 0.66, hue: 0.3, mix: 0.16 },
+    ];
+    const geo = this._treeCrossGeometry();
+    const pick = (h) => { const r = h % 100; return r < 50 ? 0 : (r < 84 ? 1 : 2); }; // reparto
+    const buckets = [[], [], []];
+    for (const t of list) buckets[pick(Math.abs((t.x * 13.7 + t.z * 7.3) | 0))].push(t);
+    const grp = new THREE.Group();
+    const dummy = new THREE.Object3D(), col = new THREE.Color();
+    for (let k = 0; k < kinds.length; k++) {
+      const arr = buckets[k]; if (!arr.length) continue;
+      const tex = kinds[k].tex;
+      const mat = new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: 0x3a5a28, emissiveIntensity: 0.3, alphaTest: 0.5, transparent: false, side: THREE.DoubleSide, roughness: 1, metalness: 0 });
+      const mesh = new THREE.InstancedMesh(geo, mat, arr.length);
+      for (let i = 0; i < arr.length; i++) {
+        const t = arr[i], h = Math.max(2, (t.h || 6) * kinds[k].size), w = h * 0.82;
+        dummy.position.set(t.x, (t.y || 0) - 0.4, t.z);
+        dummy.rotation.set(0, (i * 2.3999) % (Math.PI * 2), 0);
+        dummy.scale.set(w, h, w); dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
+        const tt = t.tint == null ? 0.5 : t.tint;             // verde variado por árbol, con el matiz del tipo
+        col.setHSL(kinds[k].hue + tt * 0.05, 0.5 + tt * 0.15, 0.36 + tt * 0.16);
+        mesh.setColorAt(i, col);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      mesh.frustumCulled = false;
+      grp.add(mesh);
+    }
+    this._localScene.add(grp); this._treesGroup = grp;
+    this._applyShow();
+  }
+
+  /** Geometría de árbol: DOS planos perpendiculares (cruz) de 1×1 con la base en y=0,
+   *  para que desde cualquier ángulo del sobrevuelo lea como volumen. Normal hacia
+   *  arriba para que la copa reciba luz pareja (sin caras negras). */
+  _treeCrossGeometry() {
+    const THREE = window.THREE, g = new THREE.BufferGeometry();
+    const pos = [], uv = [], nor = [];
+    const quad = (ax, az) => { // plano vertical en la dirección (ax,az)
+      const hx = ax * 0.5, hz = az * 0.5;
+      pos.push(-hx, 0, -hz, hx, 0, hz, hx, 1, hz, -hx, 0, -hz, hx, 1, hz, -hx, 1, -hz);
+      uv.push(0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1);
+      for (let k = 0; k < 6; k++) nor.push(0, 1, 0);
+    };
+    quad(1, 0); quad(0, 1);
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+    return g;
+  }
+
+  /** Textura de árbol por TIPO (`oak` roble ancho e irregular / `chestnut` castaño alto
+   *  y domado / `bushy` matorral bajo). Copa en escala de grises (el color por instancia
+   *  la tiñe de verde) con volumen; tronco marrón; recorte alfa. */
+  _treeTexture(kind) {
+    const THREE = window.THREE, s = 128;
+    const c = document.createElement('canvas'); c.width = c.height = s;
+    const x = c.getContext('2d'); x.clearRect(0, 0, s, s);
+    const blob = (bx, by, br, dark) => {
+      const gx = bx * s, gy = by * s, gr = br * s;
+      const g = x.createRadialGradient(gx - gr * 0.3, gy - gr * 0.3, gr * 0.2, gx, gy, gr);
+      g.addColorStop(0, dark ? '#c4c4c4' : '#e8e8e8'); g.addColorStop(1, dark ? '#727272' : '#8c8c8c');
+      x.fillStyle = g; x.beginPath(); x.arc(gx, gy, gr, 0, 7); x.fill();
+    };
+    if (kind === 'chestnut') {          // alto y domado
+      x.fillStyle = '#5b432b'; x.fillRect(s * 0.46, s * 0.60, s * 0.08, s * 0.40);
+      blob(0.5, 0.22, 0.20); blob(0.5, 0.34, 0.28); blob(0.38, 0.42, 0.19); blob(0.62, 0.42, 0.19); blob(0.5, 0.5, 0.22, true);
+    } else if (kind === 'bushy') {      // matorral bajo y redondo
+      x.fillStyle = '#4d3a26'; x.fillRect(s * 0.47, s * 0.74, s * 0.06, s * 0.26);
+      blob(0.5, 0.6, 0.26); blob(0.36, 0.64, 0.18); blob(0.64, 0.64, 0.18); blob(0.5, 0.72, 0.2, true);
+    } else {                            // roble: copa ancha e irregular
+      x.fillStyle = '#5b432b'; x.fillRect(s * 0.46, s * 0.58, s * 0.08, s * 0.42);
+      blob(0.5, 0.38, 0.25); blob(0.29, 0.45, 0.19); blob(0.71, 0.45, 0.19); blob(0.42, 0.28, 0.16); blob(0.62, 0.29, 0.16); blob(0.5, 0.52, 0.21, true);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = this._renderer.capabilities.getMaxAnisotropy();
+    return t;
+  }
+
   /** Oculta los rótulos que se solapan en pantalla (prioriza los cercanos a la cámara). */
   _declutterLabels() {
     const items = this._labelItems; if (!items || !items.length) return;
@@ -731,6 +989,8 @@ export class Flight3D extends DjiElement {
     if (this._kpGroup) this._kpGroup.visible = s.kp;
     if (this._horizonPlacesGroup) this._horizonPlacesGroup.visible = s.places;
     if (this._horizonWaterGroup) this._horizonWaterGroup.visible = s.water;
+    if (this._buildingsGroup) this._buildingsGroup.visible = s.buildings;
+    if (this._treesGroup) this._treesGroup.visible = s.trees;
     const hud = this.$('#hud'); if (hud) hud.hidden = !(s.hud && this._playing);
   }
 
@@ -1576,6 +1836,7 @@ export class Flight3D extends DjiElement {
     this._cam.aspect = W / H; this._cam.updateProjectionMatrix();
 
     this._exporting = true;
+    this._setTreeExportLOD(true); // menos árboles durante la exportación (evita que se arrastre)
     const ac = (this._exportAbort = new AbortController());
     this._showExport(true); this._setExportProgress(0);
 
@@ -1643,9 +1904,22 @@ export class Flight3D extends DjiElement {
     } finally {
       this._exporting = false; this._exportClock = null; this._exportAbort = null;
       this._cineMode = wasCine;
+      this._setTreeExportLOD(false); // restaura todos los árboles al terminar el export
       this._resize(); // devuelve el renderer/cámara a la resolución de pantalla
       this._stopFlyover(); this._showExport(false); this._applyOrbit();
     }
+  }
+
+  /** Reduce (o restaura) el nº de árboles renderizados durante la EXPORTACIÓN de vídeo:
+   *  con cientos de miles de billboards, el export a alta resolución se arrastraría. Como
+   *  las instancias están barajadas, bajar `count` adelgaza el bosque de forma uniforme. */
+  _setTreeExportLOD(on) {
+    const g = this._treesGroup; if (!g) return;
+    g.traverse((m) => {
+      if (!m.isInstancedMesh) return;
+      if (on) { if (m.userData._fullCount == null) m.userData._fullCount = m.count; m.count = Math.max(1, Math.floor(m.userData._fullCount * 0.4)); }
+      else if (m.userData._fullCount != null) { m.count = m.userData._fullCount; }
+    });
   }
 
   /** Pide al usuario un fichero de destino (File System Access API) y devuelve un
@@ -1839,7 +2113,7 @@ export class Flight3D extends DjiElement {
     if (this._renderer) { this._renderer.dispose(); this._renderer = null; }
     this._three = null; this._localScene = null; this._scene = null; this._time = null; this._look = null;
     this._labelItems = null; this._terrainMesh = null; this._ray = null; this._home = null; this._kpMarks = null; this._camTween = null; this._free = null; this._pilot = null;
-    this._trackGroup = null; this._kpGroup = null; this._horizonPlacesGroup = null; this._horizonWaterGroup = null;
+    this._trackGroup = null; this._kpGroup = null; this._horizonPlacesGroup = null; this._horizonWaterGroup = null; this._buildingsGroup = null; this._treesGroup = null;
   }
 }
 

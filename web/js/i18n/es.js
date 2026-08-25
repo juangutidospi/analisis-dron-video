@@ -169,6 +169,8 @@ export default {
   'v3d.opt.kp': 'Hitos del vuelo',
   'v3d.opt.places': 'Pueblos y cimas',
   'v3d.opt.water': 'Ríos y embalses',
+  'v3d.opt.buildings': 'Edificios (3D)',
+  'v3d.opt.trees': 'Árboles (3D)',
   'v3d.opt.hud': 'Telemetría (HUD)',
   'v3d.opt.size': 'Tamaño del dron',
   'v3d.size.l': 'Grande',
