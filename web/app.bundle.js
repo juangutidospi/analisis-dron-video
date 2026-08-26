@@ -10898,23 +10898,28 @@ function applyWaterWaves(mat, spanX, spanZ) {
       // tras muestrear la máscara (texelRoughness): la onda solo actúa en el agua
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
 float wWave = 0.0;
+float wCrest = 0.0;
 #ifdef USE_ROUGHNESSMAP
 {
   float wWater = 1.0 - smoothstep(0.5, 0.85, texelRoughness.g);
   if (wWater > 0.0) {
     vec2 wp = vUv * uWaveScale;
-    float wA = sin(wp.x * 6.2832 + uWaveTime * 1.1) * sin(wp.y * 8.9 - uWaveTime * 0.8);
-    float wB = sin(wp.x * 3.7 - wp.y * 5.2 + uWaveTime * 1.7);
-    wWave = (wA * 0.6 + wB * 0.4) * wWater;
+    // tres ondas VIAJERAS con rumbos parecidos (el oleaje avanza, no palpita)
+    float w1 = sin(dot(wp, vec2(6.3, 2.1)) - uWaveTime * 1.6);
+    float w2 = sin(dot(wp, vec2(4.1, 3.4)) - uWaveTime * 1.1 + 1.7);
+    float w3 = sin(dot(wp, vec2(11.7, 5.9)) - uWaveTime * 2.6 + 4.0);
+    wWave = (w1 * 0.5 + w2 * 0.3 + w3 * 0.2) * wWater;
+    wCrest = pow(max(0.0, wWave), 3.0) * wWater;      // pico de la onda: espuma suave
     // crestas más lisas y valles más rugosos: el destello del sol chispea
-    roughnessFactor = clamp(roughnessFactor - wWave * 0.10, 0.04, 1.0);
-    diffuseColor.rgb *= 1.0 + wWave * 0.05;
+    roughnessFactor = clamp(roughnessFactor - wWave * 0.16, 0.03, 1.0);
+    diffuseColor.rgb *= 1.0 + wWave * 0.10;
+    diffuseColor.rgb += wCrest * 0.10;
   }
 }
 #endif`)
       // el terreno es sobre todo emisivo: la onda también modula el autobrillo
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-totalEmissiveRadiance *= 1.0 + wWave * 0.06;`);
+totalEmissiveRadiance *= 1.0 + wWave * 0.14 + wCrest * 0.25;`);
   };
   return time;
 }
