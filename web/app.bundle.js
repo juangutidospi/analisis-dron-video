@@ -720,6 +720,7 @@ __m["js/components/ui/flight-3d/flight-3d.js"] = function (__x, __req) {
 const { DjiElement } = __req("js/core/DjiElement.js");
 const { t } = __req("js/i18n/index.js");
 const { buildScene3D, altColor } = __req("js/scene-3d.js");
+const { applyWaterWaves } = __req("js/water-waves.js");
 const { createMp4Recorder, createMp4StreamRecorder, canExportVideo } = __req("js/flyover-export.js");
 const { downloadBlob } = __req("js/exports.js");
 const { styles } = __req("js/components/ui/flight-3d/flight-3d.css.js");
@@ -1214,6 +1215,8 @@ class Flight3D extends DjiElement {
       const wm = new THREE.CanvasTexture(data.water);
       wm.colorSpace = THREE.NoColorSpace; wm.minFilter = THREE.LinearFilter; wm.generateMipmaps = false;
       mat.roughnessMap = wm; mat.roughness = 1; mat.metalness = 0;
+      // oleaje animado: brillo y destello del agua en movimiento (mar, embalses, ríos)
+      this._waveTime = applyWaterWaves(mat, data.bounds.spanX, data.bounds.spanZ);
     }
     if (!data.terrain.hasDEM) mat.wireframe = false;
     return new THREE.Mesh(geo, mat);
@@ -2226,6 +2229,7 @@ class Flight3D extends DjiElement {
   /** Animaciones por fotograma independientes del tiempo del vuelo: hélices, LEDs
    *  de navegación y anti-solape de rótulos. Se usa en el bucle y en el export. */
   _animate() {
+    if (this._waveTime) this._waveTime.value = this._now() * 0.001; // oleaje del agua
     if (this._rotors) for (const r of this._rotors) r.rotation.y += 0.9; // hélices girando
     if (this._leds) { // parpadeo de las luces de navegación
       const t = this._now() * 0.006;
@@ -10855,6 +10859,54 @@ function paintFxLayers(ctx, W, H, key) {
 }
 
 Object.assign(__x, { FX, FX_KEYS, fxFilter, grainDataUri, paintFxLayers });
+
+};
+
+__m["js/water-waves.js"] = function (__x, __req) {
+// Oleaje del agua en el visor 3D: parche del shader del terreno (MeshStandardMaterial)
+// que anima el brillo y la rugosidad SOLO donde la máscara de agua (roughnessMap,
+// canal G bajo) marca agua. Dos octavas de senos que se desplazan: el destello del
+// sol chispea y la lámina de agua ondula, sin geometría ni texturas extra.
+
+const WAVELEN = 45; // longitud de onda aproximada del oleaje (m)
+
+/**
+ * @param {object} mat MeshStandardMaterial del terreno, con roughnessMap = máscara de agua
+ * @param {number} spanX ancho del terreno (m)  @param {number} spanZ fondo del terreno (m)
+ * @returns {{value:number}} uniform de tiempo (s): avanzarlo cada frame anima el oleaje
+ */
+function applyWaterWaves(mat, spanX, spanZ) {
+  const time = { value: 0 };
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uWaveTime = time;
+    shader.uniforms.uWaveScale = { value: [spanX / WAVELEN, spanZ / WAVELEN] };
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uWaveTime;\nuniform vec2 uWaveScale;')
+      // tras muestrear la máscara (texelRoughness): la onda solo actúa en el agua
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+float wWave = 0.0;
+#ifdef USE_ROUGHNESSMAP
+{
+  float wWater = 1.0 - smoothstep(0.5, 0.85, texelRoughness.g);
+  if (wWater > 0.0) {
+    vec2 wp = vUv * uWaveScale;
+    float wA = sin(wp.x * 6.2832 + uWaveTime * 1.1) * sin(wp.y * 8.9 - uWaveTime * 0.8);
+    float wB = sin(wp.x * 3.7 - wp.y * 5.2 + uWaveTime * 1.7);
+    wWave = (wA * 0.6 + wB * 0.4) * wWater;
+    // crestas más lisas y valles más rugosos: el destello del sol chispea
+    roughnessFactor = clamp(roughnessFactor - wWave * 0.10, 0.04, 1.0);
+    diffuseColor.rgb *= 1.0 + wWave * 0.05;
+  }
+}
+#endif`)
+      // el terreno es sobre todo emisivo: la onda también modula el autobrillo
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+totalEmissiveRadiance *= 1.0 + wWave * 0.06;`);
+  };
+  return time;
+}
+
+Object.assign(__x, { applyWaterWaves });
 
 };
 
