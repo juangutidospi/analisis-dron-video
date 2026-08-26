@@ -170,6 +170,7 @@ function timeChart(host, series, dur, cfgs) {
   const scales = [];
   cfgs.forEach((cf, ci) => {
     const vals = series.map(q => q[cf.k]).filter(v => v != null);
+    if (!vals.length) { scales.push({ Y: null, cf }); return; } // serie sin datos: ni eje ni trazo (índices alineados con dots)
     let vmin = cf.min != null ? cf.min : Math.min(...vals);
     let vmax = Math.max(...vals);
     if (vmin === vmax) vmax = vmin + 1;
@@ -5140,11 +5141,18 @@ class FlightReport extends DjiElement {
   }
 
   _gimbalTpl(r) {
-    return `
-      <section class="blk">
+    const head = `
         <div class="eyebrow">${escapeHtml(t('gim.eyebrow'))}</div>
         <h2>${escapeHtml(t('gim.title'))}</h2>
-        <p class="sub">${escapeHtml(t('gim.sub'))}</p>
+        <p class="sub">${escapeHtml(t('gim.sub'))}</p>`;
+    // Algunos modelos (p. ej. DJI Neo 2) no incluyen el cuaternión en el SRT
+    if (r.pitch[0] == null) {
+      return `<section class="blk">${head}
+        <app-callout variant="warn" title="${escapeHtml(t('gim.na.t'))}">${escapeHtml(t('gim.na.d'))}</app-callout>
+      </section>`;
+    }
+    return `
+      <section class="blk">${head}
         <div class="card">
           <h3>${escapeHtml(t('gim.h3'))}</h3>
           <div class="legend"><span><span class="sw" style="background:var(--c-green)"></span>${escapeHtml(t('gim.legend'))}</span></div>
@@ -5202,7 +5210,8 @@ class FlightReport extends DjiElement {
       { k: 'iso', color: '--c-blue', fmt: (v) => `${Math.round(v)}`, label: t('cam.iso'), unit: '', dec: 0 },
       { k: 'ct', color: '--c-yellow', fmt: (v) => `${Math.round(v / 100) / 10}k`, label: strip(t('cam.ct')), unit: 'K', dec: 0 },
     ] };
-    this.$('#c-gb').data = { series: S, dur, cfgs: [{ k: 'pitch', color: '--c-green', area: true, fmt: (v) => `${Math.round(v)}°`, label: strip(t('gim.legend')), unit: '°', dec: 0 }] };
+    const gb = this.$('#c-gb'); // ausente si el vuelo no trae datos de gimbal
+    if (gb) gb.data = { series: S, dur, cfgs: [{ k: 'pitch', color: '--c-green', area: true, fmt: (v) => `${Math.round(v)}°`, label: strip(t('gim.legend')), unit: '°', dec: 0 }] };
 
     this.$('#map').flight = { model: this.model, kps: this.kps };
     this.$('#v3d').flight = { model: this.model };
@@ -8008,6 +8017,8 @@ __x.default = {
   'gim.h3': 'Estimated camera tilt (pitch)',
   'gim.legend': 'Estimated pitch (°)',
   'gim.note': 'Estimated range: {min}° to {max}°. Value derived from the quaternion; DJI\'s exact axis convention is undocumented, so take it as approximate.',
+  'gim.na.t': '🎥 No gimbal data',
+  'gim.na.d': 'This flight\'s SRT does not include the stabilizer orientation (pp_current quaternions), so the camera tilt cannot be estimated.',
 
   // report · location and data
   'loc.eyebrow': 'Location and data',
@@ -8426,6 +8437,8 @@ __x.default = {
   'gim.h3': 'Inclinación estimada de cámara (pitch)',
   'gim.legend': 'Pitch estimado (°)',
   'gim.note': 'Rango estimado: {min}° a {max}°. Valor derivado del cuaternión; la convención exacta de ejes de DJI no está documentada, tómalo como aproximado.',
+  'gim.na.t': '🎥 Sin datos de gimbal',
+  'gim.na.d': 'El SRT de este vuelo no incluye la orientación del estabilizador (cuaterniones pp_current), así que no se puede estimar la inclinación de la cámara.',
 
   // informe · ubicación y datos
   'loc.eyebrow': 'Ubicación y datos',
