@@ -548,11 +548,18 @@ export class FlightReport extends DjiElement {
   }
 
   _gimbalTpl(r) {
-    return `
-      <section class="blk">
+    const head = `
         <div class="eyebrow">${escapeHtml(t('gim.eyebrow'))}</div>
         <h2>${escapeHtml(t('gim.title'))}</h2>
-        <p class="sub">${escapeHtml(t('gim.sub'))}</p>
+        <p class="sub">${escapeHtml(t('gim.sub'))}</p>`;
+    // Algunos modelos (p. ej. DJI Neo 2) no incluyen el cuaternión en el SRT
+    if (r.pitch[0] == null) {
+      return `<section class="blk">${head}
+        <app-callout variant="warn" title="${escapeHtml(t('gim.na.t'))}">${escapeHtml(t('gim.na.d'))}</app-callout>
+      </section>`;
+    }
+    return `
+      <section class="blk">${head}
         <div class="card">
           <h3>${escapeHtml(t('gim.h3'))}</h3>
           <div class="legend"><span><span class="sw" style="background:var(--c-green)"></span>${escapeHtml(t('gim.legend'))}</span></div>
@@ -610,7 +617,8 @@ export class FlightReport extends DjiElement {
       { k: 'iso', color: '--c-blue', fmt: (v) => `${Math.round(v)}`, label: t('cam.iso'), unit: '', dec: 0 },
       { k: 'ct', color: '--c-yellow', fmt: (v) => `${Math.round(v / 100) / 10}k`, label: strip(t('cam.ct')), unit: 'K', dec: 0 },
     ] };
-    this.$('#c-gb').data = { series: S, dur, cfgs: [{ k: 'pitch', color: '--c-green', area: true, fmt: (v) => `${Math.round(v)}°`, label: strip(t('gim.legend')), unit: '°', dec: 0 }] };
+    const gb = this.$('#c-gb'); // ausente si el vuelo no trae datos de gimbal
+    if (gb) gb.data = { series: S, dur, cfgs: [{ k: 'pitch', color: '--c-green', area: true, fmt: (v) => `${Math.round(v)}°`, label: strip(t('gim.legend')), unit: '°', dec: 0 }] };
 
     this.$('#map').flight = { model: this.model, kps: this.kps };
     this.$('#v3d').flight = { model: this.model };

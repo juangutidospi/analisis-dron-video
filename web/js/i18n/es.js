@@ -321,6 +321,8 @@ export default {
   'gim.h3': 'Inclinación estimada de cámara (pitch)',
   'gim.legend': 'Pitch estimado (°)',
   'gim.note': 'Rango estimado: {min}° a {max}°. Valor derivado del cuaternión; la convención exacta de ejes de DJI no está documentada, tómalo como aproximado.',
+  'gim.na.t': '🎥 Sin datos de gimbal',
+  'gim.na.d': 'El SRT de este vuelo no incluye la orientación del estabilizador (cuaterniones pp_current), así que no se puede estimar la inclinación de la cámara.',
 
   // informe · ubicación y datos
   'loc.eyebrow': 'Ubicación y datos',

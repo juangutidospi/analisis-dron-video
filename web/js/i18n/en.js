@@ -321,6 +321,8 @@ export default {
   'gim.h3': 'Estimated camera tilt (pitch)',
   'gim.legend': 'Estimated pitch (°)',
   'gim.note': 'Estimated range: {min}° to {max}°. Value derived from the quaternion; DJI\'s exact axis convention is undocumented, so take it as approximate.',
+  'gim.na.t': '🎥 No gimbal data',
+  'gim.na.d': 'This flight\'s SRT does not include the stabilizer orientation (pp_current quaternions), so the camera tilt cannot be estimated.',
 
   // report · location and data
   'loc.eyebrow': 'Location and data',

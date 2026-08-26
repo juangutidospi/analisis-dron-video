@@ -28,6 +28,7 @@ export function timeChart(host, series, dur, cfgs) {
   const scales = [];
   cfgs.forEach((cf, ci) => {
     const vals = series.map(q => q[cf.k]).filter(v => v != null);
+    if (!vals.length) { scales.push({ Y: null, cf }); return; } // serie sin datos: ni eje ni trazo (índices alineados con dots)
     let vmin = cf.min != null ? cf.min : Math.min(...vals);
     let vmax = Math.max(...vals);
     if (vmin === vmax) vmax = vmin + 1;
