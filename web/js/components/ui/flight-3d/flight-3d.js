@@ -1,6 +1,7 @@
 import { DjiElement } from '../../../core/DjiElement.js';
 import { t } from '../../../i18n/index.js';
 import { buildScene3D, altColor } from '../../../scene-3d.js';
+import { applyWaterWaves } from '../../../water-waves.js';
 import { createMp4Recorder, createMp4StreamRecorder, canExportVideo } from '../../../flyover-export.js';
 import { downloadBlob } from '../../../exports.js';
 import { styles } from './flight-3d.css.js';
@@ -495,6 +496,8 @@ export class Flight3D extends DjiElement {
       const wm = new THREE.CanvasTexture(data.water);
       wm.colorSpace = THREE.NoColorSpace; wm.minFilter = THREE.LinearFilter; wm.generateMipmaps = false;
       mat.roughnessMap = wm; mat.roughness = 1; mat.metalness = 0;
+      // oleaje animado: brillo y destello del agua en movimiento (mar, embalses, ríos)
+      this._waveTime = applyWaterWaves(mat, data.bounds.spanX, data.bounds.spanZ);
     }
     if (!data.terrain.hasDEM) mat.wireframe = false;
     return new THREE.Mesh(geo, mat);
@@ -1507,6 +1510,7 @@ export class Flight3D extends DjiElement {
   /** Animaciones por fotograma independientes del tiempo del vuelo: hélices, LEDs
    *  de navegación y anti-solape de rótulos. Se usa en el bucle y en el export. */
   _animate() {
+    if (this._waveTime) this._waveTime.value = this._now() * 0.001; // oleaje del agua
     if (this._rotors) for (const r of this._rotors) r.rotation.y += 0.9; // hélices girando
     if (this._leds) { // parpadeo de las luces de navegación
       const t = this._now() * 0.006;
